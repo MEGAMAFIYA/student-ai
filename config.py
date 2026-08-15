@@ -1,0 +1,46 @@
+"""
+Sozlamalar: har bir funksiya uchun alohida AI provider/model/key.
+Barchasi .env fayl (yoki Render Environment Variables) orqali boshqariladi.
+"""
+
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
+
+# Standart (umumiy) bepul kalitlar — funksiyaga alohida kalit berilmasa shular ishlatiladi
+DEFAULT_GEMINI_KEY = os.getenv("GEMINI_API_KEY", "")
+DEFAULT_GROQ_KEY = os.getenv("GROQ_API_KEY", "")
+
+
+def _cfg(prefix: str, default_model: str, default_provider: str = "gemini") -> dict:
+    """
+    <PREFIX>_PROVIDER, <PREFIX>_MODEL, <PREFIX>_API_KEY, <PREFIX>_BASE_URL
+    environment o'zgaruvchilaridan har bir funksiya uchun sozlama yig'adi.
+    """
+    provider = os.getenv(f"{prefix}_PROVIDER", default_provider).lower()
+
+    if provider == "groq":
+        default_key = DEFAULT_GROQ_KEY
+    else:
+        default_key = DEFAULT_GEMINI_KEY
+
+    return {
+        "provider": provider,
+        "api_key": os.getenv(f"{prefix}_API_KEY", default_key),
+        "model": os.getenv(f"{prefix}_MODEL", default_model),
+        "base_url": os.getenv(f"{prefix}_BASE_URL", ""),
+    }
+
+
+# Har bir funksiya uchun mustaqil AI sozlamasi
+UNIVERSAL_CHAT_AI = _cfg("UNIVERSAL_CHAT", "gemini-2.5-flash")
+COURSE_WORK_AI = _cfg("COURSE_WORK", "gemini-2.5-flash")
+TRANSLATE_AI = _cfg("TRANSLATE", "gemini-2.5-flash")
+EDIT_PDF_AI = _cfg("EDIT_PDF", "gemini-2.5-flash")
+GUIDE_AI = _cfg("GUIDE", "gemini-2.5-flash")
+VISION_AI = _cfg("VISION", "gemini-2.5-flash")
+
+MAX_TELEGRAM_TEXT = 3800
