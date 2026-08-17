@@ -35,13 +35,57 @@ FONT_REGULAR = "DejaVuSerif"
 FONT_BOLD = "DejaVuSerif-Bold"
 FONT_ITALIC = "DejaVuSerif-Italic"
 
+# Agar fonts/ papkasida shrift fayllari bo'lmasa (masalan, git orqali
+# ko'chirilmagan bo'lsa), bot birinchi marta ishga tushganda ularni
+# ushbu bepul ochiq CDN'dan avtomatik yuklab oladi — qo'lda fayl
+# ko'chirish shart emas.
+_FONT_SOURCES = {
+    "DejaVuSerif.ttf": [
+        "https://cdn.jsdelivr.net/npm/dejavu-fonts-ttf@2.37.3/ttf/DejaVuSerif.ttf",
+        "https://raw.githubusercontent.com/senotrusov/dejavu-fonts-ttf/master/ttf/DejaVuSerif.ttf",
+    ],
+    "DejaVuSerif-Bold.ttf": [
+        "https://cdn.jsdelivr.net/npm/dejavu-fonts-ttf@2.37.3/ttf/DejaVuSerif-Bold.ttf",
+        "https://raw.githubusercontent.com/senotrusov/dejavu-fonts-ttf/master/ttf/DejaVuSerif-Bold.ttf",
+    ],
+    "DejaVuSerif-Italic.ttf": [
+        "https://cdn.jsdelivr.net/npm/dejavu-fonts-ttf@2.37.3/ttf/DejaVuSerif-Italic.ttf",
+        "https://raw.githubusercontent.com/senotrusov/dejavu-fonts-ttf/master/ttf/DejaVuSerif-Italic.ttf",
+    ],
+}
+
 _fonts_ready = False
+
+
+def _download_missing_fonts():
+    os.makedirs(_FONTS_DIR, exist_ok=True)
+    import urllib.request
+
+    for filename, urls in _FONT_SOURCES.items():
+        path = os.path.join(_FONTS_DIR, filename)
+        if os.path.exists(path) and os.path.getsize(path) > 50_000:
+            continue
+        last_error = None
+        for url in urls:
+            try:
+                urllib.request.urlretrieve(url, path)
+                if os.path.getsize(path) > 50_000:
+                    last_error = None
+                    break
+            except Exception as e:
+                last_error = e
+        if last_error:
+            raise RuntimeError(
+                f"Shrift fayli topilmadi va yuklab bo'lmadi: {filename} ({last_error}). "
+                "fonts/ papkasiga DejaVuSerif shriftlarini qo'lda joylashtiring."
+            )
 
 
 def _ensure_fonts():
     global _fonts_ready
     if _fonts_ready:
         return
+    _download_missing_fonts()
     pdfmetrics.registerFont(TTFont(FONT_REGULAR, os.path.join(_FONTS_DIR, "DejaVuSerif.ttf")))
     pdfmetrics.registerFont(TTFont(FONT_BOLD, os.path.join(_FONTS_DIR, "DejaVuSerif-Bold.ttf")))
     pdfmetrics.registerFont(TTFont(FONT_ITALIC, os.path.join(_FONTS_DIR, "DejaVuSerif-Italic.ttf")))
