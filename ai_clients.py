@@ -12,7 +12,7 @@ from urllib.parse import quote
 import httpx
 import google.generativeai as genai
 
-from config import DEFAULT_GROQ_KEY
+from config import DEFAULT_GROQ_KEY, GROQ_FALLBACK_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +120,7 @@ async def ask_ai(
 
     if provider != "groq" and DEFAULT_GROQ_KEY:
         result = await _call_groq(
-            {"api_key": DEFAULT_GROQ_KEY, "model": "llama-3.3-70b-versatile", "base_url": ""},
+            {"api_key": DEFAULT_GROQ_KEY, "model": GROQ_FALLBACK_MODEL, "base_url": ""},
             prompt, system, history,
         )
         if result:
