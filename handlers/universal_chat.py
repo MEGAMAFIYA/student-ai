@@ -16,7 +16,7 @@ from telegram.constants import ParseMode, ChatAction
 
 from config import UNIVERSAL_CHAT_AI, TRANSLATE_AI
 from ai_clients import ask_ai
-from pdf_tools import make_pdf, count_pdf_pages
+from pdf_tools import build_course_work_pdf, count_pdf_pages
 from handlers.menu import main_menu_keyboard, MENU_CALLBACKS
 from handlers import course_work
 
@@ -111,21 +111,24 @@ async def _try_course_work(update: Update, context: ContextTypes.DEFAULT_TYPE, t
 
     status = await update.message.reply_text(
         f"💬 Bu so'rovni *Kurs ishi* funksiyasiga yubordim.\n"
-        f"⏳ *{topic}* mavzusida {pages} betlik kurs ishi tayyorlanmoqda...",
+        f"⏳ *{topic}* mavzusida {pages} betlik kurs ishi tayyorlanmoqda...\nReja tuzilmoqda...",
         parse_mode=ParseMode.MARKDOWN,
     )
 
-    content = await course_work.generate_course_work(topic, pages, status, context)
-    if not content:
+    sections = await course_work.generate_course_work(topic, pages, status)
+    if not sections:
         await status.edit_text("❌ Kurs ishini yaratib bo'lmadi.")
         return
 
-    pdf_buf = make_pdf(topic.title(), content)
+    pdf_buf = build_course_work_pdf(topic, sections)
     actual_pages = count_pdf_pages(pdf_buf)
 
     await update.message.reply_document(
         document=InputFile(pdf_buf, filename=f"{topic[:40]}.pdf"),
-        caption=f"📄 {topic}\n📎 {actual_pages} bet",
+        caption=(
+            f"📄 {topic}\n📎 {actual_pages} bet (so'ralgan: {pages}+)\n"
+            "✅ Titul, mundarija, kirish, 3 bob, xulosa va adabiyotlar ro'yxati bilan."
+        ),
         reply_markup=main_menu_keyboard(),
     )
     try:
