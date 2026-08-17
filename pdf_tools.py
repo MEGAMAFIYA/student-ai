@@ -2,6 +2,7 @@
 PDF va rasm bilan bog'liq umumiy funksiyalar.
 """
 
+import os
 import re
 from io import BytesIO
 
@@ -13,10 +14,38 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
 from reportlab.platypus.tableofcontents import TableOfContents
 from reportlab.lib.units import cm, mm
 from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_JUSTIFY
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 
 
 def _escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+# ============================================================
+# UNICODE SHRIFTLAR (DejaVu Serif) — loyiha ichida bundle qilingan,
+# shuning uchun Render kabi istalgan serverda ham ishlaydi.
+# reportlab'ning standart Times-Roman shrifti o'zbekcha tutuq belgisi
+# (ʻ) va boshqa maxsus belgilarni chizolmasligi (■ bo'lib chiqishi)
+# sababli, bu muammoni butunlay bartaraf etadi.
+# ============================================================
+
+_FONTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
+FONT_REGULAR = "DejaVuSerif"
+FONT_BOLD = "DejaVuSerif-Bold"
+FONT_ITALIC = "DejaVuSerif-Italic"
+
+_fonts_ready = False
+
+
+def _ensure_fonts():
+    global _fonts_ready
+    if _fonts_ready:
+        return
+    pdfmetrics.registerFont(TTFont(FONT_REGULAR, os.path.join(_FONTS_DIR, "DejaVuSerif.ttf")))
+    pdfmetrics.registerFont(TTFont(FONT_BOLD, os.path.join(_FONTS_DIR, "DejaVuSerif-Bold.ttf")))
+    pdfmetrics.registerFont(TTFont(FONT_ITALIC, os.path.join(_FONTS_DIR, "DejaVuSerif-Italic.ttf")))
+    _fonts_ready = True
 
 
 # ============================================================
@@ -25,6 +54,7 @@ def _escape(text: str) -> str:
 
 def make_pdf(title: str, content: str, lowercase: bool = False) -> BytesIO:
     """Matnni chiroyli formatlangan A4 PDF ga aylantiradi. '#' bilan boshlangan qatorlar sarlavha bo'ladi."""
+    _ensure_fonts()
     if lowercase:
         content = content.lower()
 
@@ -41,15 +71,15 @@ def make_pdf(title: str, content: str, lowercase: bool = False) -> BytesIO:
     styles = getSampleStyleSheet()
 
     title_style = ParagraphStyle(
-        "TitleStyle", parent=styles["Title"], fontSize=20,
+        "TitleStyle", parent=styles["Title"], fontName=FONT_BOLD, fontSize=20,
         alignment=TA_CENTER, spaceAfter=18, textColor="#1a5490",
     )
     body_style = ParagraphStyle(
-        "BodyStyle", parent=styles["Normal"], fontSize=12,
+        "BodyStyle", parent=styles["Normal"], fontName=FONT_REGULAR, fontSize=12,
         leading=19, alignment=TA_LEFT,
     )
     h2_style = ParagraphStyle(
-        "H2Style", parent=styles["Heading2"], fontSize=14,
+        "H2Style", parent=styles["Heading2"], fontName=FONT_BOLD, fontSize=14,
         spaceBefore=12, spaceAfter=8, textColor="#2a6fb0",
     )
 
@@ -98,7 +128,7 @@ def _footer(canvas, doc):
     if doc.page == 1:
         return
     canvas.saveState()
-    canvas.setFont("Times-Roman", 10)
+    canvas.setFont(FONT_REGULAR, 10)
     canvas.drawRightString(A4[0] - 1 * cm, 1.2 * cm, str(doc.page))
     canvas.restoreState()
 
@@ -132,6 +162,7 @@ def build_course_work_pdf(topic: str, sections: dict, meta: dict | None = None) 
            "yonalish": str, "rahbar": str, "shahar": str} — barchasi ixtiyoriy
     """
     meta = meta or {}
+    _ensure_fonts()
     buffer = BytesIO()
     doc = _CourseWorkDoc(
         buffer, pagesize=A4,
@@ -140,31 +171,31 @@ def build_course_work_pdf(topic: str, sections: dict, meta: dict | None = None) 
     )
 
     title_style = ParagraphStyle(
-        "CWTitle", fontName="Times-Bold", fontSize=14,
+        "CWTitle", fontName=FONT_BOLD, fontSize=14,
         alignment=TA_CENTER, leading=18, spaceAfter=6,
     )
     title_small = ParagraphStyle(
-        "CWTitleSmall", fontName="Times-Roman", fontSize=13,
+        "CWTitleSmall", fontName=FONT_REGULAR, fontSize=13,
         alignment=TA_CENTER, leading=17, spaceAfter=6,
     )
     meta_style = ParagraphStyle(
-        "CWMeta", fontName="Times-Roman", fontSize=13,
+        "CWMeta", fontName=FONT_REGULAR, fontSize=13,
         alignment=TA_LEFT, leading=20, spaceAfter=10,
     )
     body = ParagraphStyle(
-        "CWBody", fontName="Times-Roman", fontSize=12,
+        "CWBody", fontName=FONT_REGULAR, fontSize=12,
         leading=18, alignment=TA_JUSTIFY, firstLineIndent=10 * mm, spaceAfter=6,
     )
     ref_style = ParagraphStyle(
-        "CWRef", fontName="Times-Roman", fontSize=11,
+        "CWRef", fontName=FONT_REGULAR, fontSize=11,
         leading=15, alignment=TA_JUSTIFY, spaceAfter=6,
     )
     chapter_toc = ParagraphStyle(
-        "CWChapterTOC", fontName="Times-Bold", fontSize=15,
+        "CWChapterTOC", fontName=FONT_BOLD, fontSize=15,
         alignment=TA_CENTER, spaceBefore=0, spaceAfter=16,
     )
     section_toc = ParagraphStyle(
-        "CWSectionTOC", fontName="Times-Bold", fontSize=12,
+        "CWSectionTOC", fontName=FONT_BOLD, fontSize=12,
         spaceBefore=12, spaceAfter=8,
     )
 
@@ -192,8 +223,8 @@ def build_course_work_pdf(topic: str, sections: dict, meta: dict | None = None) 
     story.append(Paragraph("MUNDARIJA", chapter_toc))
     toc = TableOfContents()
     toc.levelStyles = [
-        ParagraphStyle(name="TOCHeading1", fontName="Times-Bold", fontSize=12, leftIndent=0, firstLineIndent=0, spaceBefore=8, leading=15),
-        ParagraphStyle(name="TOCHeading2", fontName="Times-Roman", fontSize=11, leftIndent=10, firstLineIndent=0, spaceBefore=4, leading=13),
+        ParagraphStyle(name="TOCHeading1", fontName=FONT_BOLD, fontSize=12, leftIndent=0, firstLineIndent=0, spaceBefore=8, leading=15),
+        ParagraphStyle(name="TOCHeading2", fontName=FONT_REGULAR, fontSize=11, leftIndent=10, firstLineIndent=0, spaceBefore=4, leading=13),
     ]
     story.append(toc)
     story.append(PageBreak())
