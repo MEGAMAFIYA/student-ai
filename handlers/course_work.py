@@ -1,10 +1,14 @@
+
 """
 📘 Kurs ishi / loyiha — bet soni va mavzu so'raladi, shundan so'ng:
-1) reja tuziladi (I/II/III bob nomlari va kichik bo'limlari),
-2) kirish, har bir bob va xulosa alohida-alohida generatsiya qilinadi,
-3) adabiyotlar ro'yxati tuziladi,
-4) hajm yetmasa eng qisqa bob avtomatik kengaytiriladi,
-5) titul, avtomatik mundarija (TOC), boblar, xulosa va adabiyotlar bilan PDF yasaladi.
+1) reja tuziladi (I/II/III bob nomlari va har biriga 3 tadan kichik bo'lim),
+2) kirish generatsiya qilinadi,
+3) HAR BIR kichik bo'lim (1.1, 1.2, 1.3...) ALOHIDA-ALOHIDA, o'ziga tegishli
+   hajmga (taxminan 2.5-3 bet) to'lguncha yozdiriladi, keyin navbatdagi bo'limga o'tiladi,
+4) xulosa va adabiyotlar ro'yxati generatsiya qilinadi,
+5) PDF quriladi va HAQIQIY sahifa soni o'lchanadi — agar so'ralgan sahifadan kam
+   bo'lsa, eng qisqa bob avtomatik kengaytirilib qayta quriladi (shu tariqa natija
+   har doim so'ralgan sahifa sonidan KAM bo'lmasligi kafolatlanadi).
 
 Tuzilma va hajm ulushlari (Kirish 5-8%, har bob ~15-25%, Xulosa ~10%) talabalar
 uchun rasmiy uslubiy qo'llanmalarga asoslangan.
@@ -29,11 +33,17 @@ CW_PAGES, CW_TOPIC = range(2)
 
 WORDS_PER_PAGE = 380
 MAX_PAGES = 150
-MAX_EXPAND_ROUNDS = 8
+
+# Xavfsizlik zahirasi: so'z hisobi bilan sahifa hisobi orasidagi tafovutni
+# qoplash uchun boshlang'ich generatsiyada biroz ko'proq maqsad qo'yiladi.
+SAFETY_MARGIN = 1.10
 
 SHARE_KIRISH = 0.07
 SHARE_BOB = 0.24        # har bir bob uchun (3 ta bob => taxminan 72%)
 SHARE_XULOSA = 0.10
+
+MAX_SUBSECTION_FILL_ROUNDS = 6   # bitta kichik bo'limni to'ldirish uchun maksimal urinish
+MAX_PDF_EXPAND_ROUNDS = 30       # yakuniy PDF sahifa sonini yetkazish uchun maksimal urinish
 
 _ROMAN = {1: "I", 2: "II", 3: "III"}
 
@@ -74,7 +84,7 @@ async def entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(
         "📘 *Kurs ishi / loyiha*\n\n"
         "PDF necha betdan iborat bo'lishi kerak? (masalan: 10, 20, 30)\n"
-        "Belgilagan bet sonidan kam bo'lmaydi.",
+        "Belgilagan bet sonidan kam bo'lmaydi (ko'proq chiqishi mumkin).",
         parse_mode=ParseMode.MARKDOWN,
     )
     return CW_PAGES
@@ -108,7 +118,9 @@ async def receive_topic_and_generate(update: Update, context: ContextTypes.DEFAU
 
     await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
     status = await update.message.reply_text(
-        f"⏳ *{topic}* mavzusida {pages} betlik kurs ishi tayyorlanmoqda...\nReja tuzilmoqda...",
+        f"⏳ *{topic}* mavzusida {pages}+ betlik kurs ishi tayyorlanmoqda...\n"
+        "Bu bir necha daqiqa vaqt olishi mumkin (bo'lim-bo'lim yozib chiqiladi). "
+        "Reja tuzilmoqda...",
         parse_mode=ParseMode.MARKDOWN,
     )
 
@@ -118,13 +130,12 @@ async def receive_topic_and_generate(update: Update, context: ContextTypes.DEFAU
 
 
 async def _generate_and_send(update, context, topic: str, pages: int, status):
-    sections = await generate_course_work(topic, pages, status)
-    if not sections:
+    result = await generate_course_work(topic, pages, status)
+    if not result:
         await status.edit_text("❌ Kurs ishini yaratib bo'lmadi. Birozdan so'ng qayta urinib ko'ring.")
         return
 
-    pdf_buf = build_course_work_pdf(topic, sections)
-    actual_pages = count_pdf_pages(pdf_buf)
+    sections, pdf_buf, actual_pages = result
 
     await update.message.reply_document(
         document=InputFile(pdf_buf, filename=f"{topic[:40]}.pdf"),
@@ -141,13 +152,14 @@ async def _generate_and_send(update, context, topic: str, pages: int, status):
         pass
 
 
-async def generate_course_work(topic: str, pages: int, status_msg=None) -> dict | None:
+async def generate_course_work(topic: str, pages: int, status_msg=None):
     """
-    Kurs ishini tuzilgan holda generatsiya qiladi: reja -> kirish -> 3 bob -> xulosa
-    -> adabiyotlar. Natija build_course_work_pdf() ga to'g'ridan-to'g'ri beriladi.
+    Kurs ishini tuzilgan holda generatsiya qiladi va HAQIQIY PDF sahifa soni
+    so'ralgan sahifa sonidan kam bo'lmagunicha kengaytirib boradi.
+    Qaytaradi: (sections dict, pdf_buffer, actual_pages) yoki None (xato bo'lsa).
     Boshqa modullar (masalan universal_chat) ham shu funksiyadan foydalanadi.
     """
-    target_words = pages * WORDS_PER_PAGE
+    target_words = int(pages * WORDS_PER_PAGE * SAFETY_MARGIN)
 
     async def _status(text):
         if status_msg:
@@ -169,21 +181,12 @@ async def generate_course_work(topic: str, pages: int, status_msg=None) -> dict 
 
     bobs = []
     for i in (1, 2, 3):
-        await _status(f"⏳ *{topic}* — {_ROMAN[i]}-bob yozilmoqda...")
-        bob_nomi = plan.get(f"bob{i}_nomi", DEFAULT_PLAN[f"bob{i}_nomi"])
-        bolimlari = plan.get(f"bob{i}_bolimlari", DEFAULT_PLAN[f"bob{i}_bolimlari"]) or DEFAULT_PLAN[f"bob{i}_bolimlari"]
-        content = await _generate_section(
-            topic, f"{_ROMAN[i]}-BOB. {bob_nomi}",
-            (
-                f"Kurs ishining {i}-bobini yoz. Bob nomi: \"{bob_nomi}\". "
-                f"Bob quyidagi {len(bolimlari)} ta kichik bo'limdan iborat bo'lsin, "
-                "har birini ALOHIDA QATORDA aynan shu ko'rinishda sarlavha bilan boshla "
-                f"(masalan \"{i}.1. <sarlavha matni>\"), so'ng shu bo'lim matnini yoz:\n"
-                + "\n".join(f"{i}.{j + 1}. {b}" for j, b in enumerate(bolimlari))
-            ),
-            int(target_words * SHARE_BOB),
-        )
-        bobs.append({"title": f"{_ROMAN[i]}-BOB. {bob_nomi.upper()}", "content": content or ""})
+        bob_nomi = plan.get(f"bob{i}_nomi") or DEFAULT_PLAN[f"bob{i}_nomi"]
+        bolimlari = plan.get(f"bob{i}_bolimlari") or DEFAULT_PLAN[f"bob{i}_bolimlari"]
+        bob_target_words = int(target_words * SHARE_BOB)
+
+        content = await _generate_bob(topic, i, bob_nomi, bolimlari, bob_target_words, _status)
+        bobs.append({"title": f"{_ROMAN[i]}-BOB. {bob_nomi.upper()}", "content": content})
 
     await _status(f"⏳ *{topic}* — xulosa yozilmoqda...")
     xulosa = await _generate_section(
@@ -204,17 +207,25 @@ async def generate_course_work(topic: str, pages: int, status_msg=None) -> dict 
         "adabiyotlar": adabiyotlar or "",
     }
 
+    # ===== HAQIQIY PDF SAHIFA SONIGA QARAB KENGAYTIRISH =====
+    pdf_buf = build_course_work_pdf(topic, sections)
+    actual_pages = count_pdf_pages(pdf_buf)
+
     rounds = 0
-    while _total_words(sections) < target_words and rounds < MAX_EXPAND_ROUNDS and sections["bobs"]:
+    while actual_pages < pages and rounds < MAX_PDF_EXPAND_ROUNDS:
         rounds += 1
+        await _status(
+            f"⏳ *{topic}* — hajm kengaytirilmoqda ({actual_pages}/{pages} bet, "
+            f"{rounds}-urinish)..."
+        )
         shortest = min(sections["bobs"], key=lambda b: len(b["content"].split()))
-        await _status(f"⏳ *{topic}* — matn kengaytirilmoqda ({rounds}-urinish)...")
         addition = await ask_ai(
             COURSE_WORK_AI,
             (
-                f"'{topic}' mavzusidagi kurs ishining \"{shortest['title']}\" bo'limini davom "
-                "ettiring: mavzuga oid qo'shimcha tahlil, misol yoki tushuntirish qo'shing. "
-                "Mavzudan chiqmang, avvalgi matnni takrorlamang. Faqat yangi matnni yozing."
+                f"'{topic}' mavzusidagi kurs ishining \"{shortest['title']}\" bobiga "
+                "qo'shimcha kichik bo'lim yoki chuqurroq tahlil, misol, statistik "
+                "ma'lumot qo'shing. Mavzudan chiqmang, avvalgi matnni takrorlamang. "
+                "Faqat yangi matnni yozing (kamida 400 so'z)."
             ),
             _COURSE_SYSTEM.format(topic=topic),
         )
@@ -222,7 +233,48 @@ async def generate_course_work(topic: str, pages: int, status_msg=None) -> dict 
             break
         shortest["content"] = shortest["content"].rstrip() + "\n\n" + addition.strip()
 
-    return sections
+        pdf_buf = build_course_work_pdf(topic, sections)
+        actual_pages = count_pdf_pages(pdf_buf)
+
+    return sections, pdf_buf, actual_pages
+
+
+async def _generate_bob(topic: str, bob_num: int, bob_nomi: str, bolimlari: list, bob_target_words: int, status_cb) -> str:
+    """Bobning har bir kichik bo'limini ALOHIDA generatsiya qiladi va har birini
+    o'ziga ajratilgan hajmga (taxminan 2.5-3 bet) yetguncha to'ldiradi."""
+    n = max(len(bolimlari), 1)
+    per_sub_words = max(int(bob_target_words / n), 850)  # ~2.2+ bet minimal
+
+    parts = []
+    for j, sub_title in enumerate(bolimlari, start=1):
+        label = f"{bob_num}.{j}. {sub_title}"
+        await status_cb(f"⏳ *{topic}* — {label} yozilmoqda...")
+
+        content = await _generate_section(
+            topic, label,
+            f"Kurs ishining \"{sub_title}\" nomli kichik bo'limini yoz.",
+            per_sub_words,
+        ) or ""
+
+        fill_rounds = 0
+        while len(content.split()) < per_sub_words and fill_rounds < MAX_SUBSECTION_FILL_ROUNDS:
+            fill_rounds += 1
+            addition = await ask_ai(
+                COURSE_WORK_AI,
+                (
+                    f"'{topic}' mavzusidagi \"{sub_title}\" nomli bo'limni davom ettiring: "
+                    "qo'shimcha tushuntirish, misol yoki tahlil bilan boyiting. Mavzudan "
+                    "chiqmang, avvalgi matnni takrorlamang. Faqat yangi matnni yozing."
+                ),
+                _COURSE_SYSTEM.format(topic=topic),
+            )
+            if not addition:
+                break
+            content = content.rstrip() + "\n\n" + addition.strip()
+
+        parts.append(f"{bob_num}.{j}. {sub_title}\n{content}")
+
+    return "\n\n".join(parts)
 
 
 async def _generate_plan(topic: str) -> dict:
@@ -271,10 +323,3 @@ async def _generate_references(topic: str) -> str:
     )
     result = await ask_ai(COURSE_WORK_AI, prompt, system)
     return result or ""
-
-
-def _total_words(sections: dict) -> int:
-    n = len(sections.get("kirish", "").split()) + len(sections.get("xulosa", "").split())
-    for b in sections.get("bobs", []):
-        n += len(b["content"].split())
-    return n
