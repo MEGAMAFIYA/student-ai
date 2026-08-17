@@ -2,20 +2,26 @@
 PDF va rasm bilan bog'liq umumiy funksiyalar.
 """
 
+import re
 from io import BytesIO
 
 from PIL import Image
 from pypdf import PdfReader
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-from reportlab.lib.units import cm
-from reportlab.lib.enums import TA_LEFT, TA_CENTER
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
+from reportlab.platypus.tableofcontents import TableOfContents
+from reportlab.lib.units import cm, mm
+from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_JUSTIFY
 
 
 def _escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
+
+# ============================================================
+# ODDIY PDF (Tarjima, PDF tahrirlash, Qo'llanma uchun)
+# ============================================================
 
 def make_pdf(title: str, content: str, lowercase: bool = False) -> BytesIO:
     """Matnni chiroyli formatlangan A4 PDF ga aylantiradi. '#' bilan boshlangan qatorlar sarlavha bo'ladi."""
@@ -66,6 +72,167 @@ def make_pdf(title: str, content: str, lowercase: bool = False) -> BytesIO:
     buffer.seek(0)
     return buffer
 
+
+# ============================================================
+# KURS ISHI PDF — titul, avtomatik mundarija (TOC), 3 bob, xulosa,
+# adabiyotlar ro'yxati. Rasmiy uslubiy qo'llanma talablariga mos:
+# Times New Roman uslubi, chap 30mm/o'ng 10mm/tepa-past 20mm,
+# har bob yangi sahifadan, sahifa raqami pastki o'ngda.
+# ============================================================
+
+_HEADING_RE = re.compile(r"^\d+\.\d+\.?\s+\S")
+
+
+class _CourseWorkDoc(SimpleDocTemplate):
+    def afterFlowable(self, flowable):
+        if isinstance(flowable, Paragraph):
+            text = flowable.getPlainText()
+            style_name = getattr(flowable.style, "name", "")
+            if style_name == "CWChapterTOC":
+                self.notify("TOCEntry", (0, text, self.page))
+            elif style_name == "CWSectionTOC":
+                self.notify("TOCEntry", (1, text, self.page))
+
+
+def _footer(canvas, doc):
+    if doc.page == 1:
+        return
+    canvas.saveState()
+    canvas.setFont("Times-Roman", 10)
+    canvas.drawRightString(A4[0] - 1 * cm, 1.2 * cm, str(doc.page))
+    canvas.restoreState()
+
+
+def _split_paragraphs(text: str) -> list[str]:
+    return [p.strip() for p in (text or "").split("\n\n") if p.strip()]
+
+
+def _parse_section_blocks(text: str):
+    """Bob matnini o'qib, '1.1. Sarlavha' ko'rinishidagi qatorlarni kichik sarlavha
+    sifatida, qolganini oddiy abzas sifatida ajratadi."""
+    blocks = []
+    for para in _split_paragraphs(text):
+        lines = para.split("\n")
+        first_line = lines[0].strip()
+        if _HEADING_RE.match(first_line) and len(first_line.split()) <= 14:
+            blocks.append((_escape(first_line), True))
+            rest = "\n".join(lines[1:]).strip()
+            if rest:
+                blocks.append((_escape(rest).replace("\n", "<br/>"), False))
+        else:
+            blocks.append((_escape(para).replace("\n", "<br/>"), False))
+    return blocks
+
+
+def build_course_work_pdf(topic: str, sections: dict, meta: dict | None = None) -> BytesIO:
+    """
+    sections: {"kirish": str, "bobs": [{"title": str, "content": str}, ...],
+               "xulosa": str, "adabiyotlar": str}
+    meta: {"muassasa": str, "kafedra": str, "bajaruvchi": str, "guruh": str,
+           "yonalish": str, "rahbar": str, "shahar": str} — barchasi ixtiyoriy
+    """
+    meta = meta or {}
+    buffer = BytesIO()
+    doc = _CourseWorkDoc(
+        buffer, pagesize=A4,
+        leftMargin=3 * cm, rightMargin=1 * cm,
+        topMargin=2 * cm, bottomMargin=2 * cm,
+    )
+
+    title_style = ParagraphStyle(
+        "CWTitle", fontName="Times-Bold", fontSize=14,
+        alignment=TA_CENTER, leading=18, spaceAfter=6,
+    )
+    title_small = ParagraphStyle(
+        "CWTitleSmall", fontName="Times-Roman", fontSize=13,
+        alignment=TA_CENTER, leading=17, spaceAfter=6,
+    )
+    meta_style = ParagraphStyle(
+        "CWMeta", fontName="Times-Roman", fontSize=13,
+        alignment=TA_LEFT, leading=20, spaceAfter=10,
+    )
+    body = ParagraphStyle(
+        "CWBody", fontName="Times-Roman", fontSize=12,
+        leading=18, alignment=TA_JUSTIFY, firstLineIndent=10 * mm, spaceAfter=6,
+    )
+    ref_style = ParagraphStyle(
+        "CWRef", fontName="Times-Roman", fontSize=11,
+        leading=15, alignment=TA_JUSTIFY, spaceAfter=6,
+    )
+    chapter_toc = ParagraphStyle(
+        "CWChapterTOC", fontName="Times-Bold", fontSize=15,
+        alignment=TA_CENTER, spaceBefore=0, spaceAfter=16,
+    )
+    section_toc = ParagraphStyle(
+        "CWSectionTOC", fontName="Times-Bold", fontSize=12,
+        spaceBefore=12, spaceAfter=8,
+    )
+
+    story = []
+
+    # ===== 1-bet: TITUL =====
+    story.append(Spacer(1, 2 * cm))
+    story.append(Paragraph(_escape(meta.get("muassasa", "_" * 42 + " UNIVERSITETI")), title_style))
+    story.append(Paragraph(_escape(meta.get("kafedra", "_" * 38 + " kafedrasi")), title_style))
+    story.append(Spacer(1, 2.5 * cm))
+    story.append(Paragraph("KURS ISHI", title_style))
+    story.append(Paragraph(f"«{_escape(topic)}»", title_small))
+    story.append(Paragraph("mavzusida", title_small))
+    story.append(Spacer(1, 3 * cm))
+    story.append(Paragraph(f"Bajaruvchi: {meta.get('bajaruvchi', '_' * 32)}", meta_style))
+    story.append(Paragraph(f"Guruh: {meta.get('guruh', '_' * 18)}", meta_style))
+    story.append(Paragraph(f"Ta'lim yo'nalishi: {meta.get('yonalish', '_' * 28)}", meta_style))
+    story.append(Spacer(1, 1 * cm))
+    story.append(Paragraph(f"Kurs ishi rahbari: {meta.get('rahbar', '_' * 24)}", meta_style))
+    story.append(Spacer(1, 3 * cm))
+    story.append(Paragraph(f"{meta.get('shahar', '_' * 12)}, 20{meta.get('yil', '__')} yil", title_small))
+    story.append(PageBreak())
+
+    # ===== 2-bet: MUNDARIJA =====
+    story.append(Paragraph("MUNDARIJA", chapter_toc))
+    toc = TableOfContents()
+    toc.levelStyles = [
+        ParagraphStyle(name="TOCHeading1", fontName="Times-Bold", fontSize=12, leftIndent=0, firstLineIndent=0, spaceBefore=8, leading=15),
+        ParagraphStyle(name="TOCHeading2", fontName="Times-Roman", fontSize=11, leftIndent=10, firstLineIndent=0, spaceBefore=4, leading=13),
+    ]
+    story.append(toc)
+    story.append(PageBreak())
+
+    # ===== KIRISH =====
+    story.append(Paragraph("KIRISH", chapter_toc))
+    for para in _split_paragraphs(sections.get("kirish", "")):
+        story.append(Paragraph(_escape(para).replace("\n", "<br/>"), body))
+    story.append(PageBreak())
+
+    # ===== BOBLAR =====
+    for bob in sections.get("bobs", []):
+        story.append(Paragraph(_escape(bob["title"]), chapter_toc))
+        for text, is_heading in _parse_section_blocks(bob.get("content", "")):
+            story.append(Paragraph(text, section_toc if is_heading else body))
+        story.append(PageBreak())
+
+    # ===== XULOSA =====
+    story.append(Paragraph("XULOSA", chapter_toc))
+    for para in _split_paragraphs(sections.get("xulosa", "")):
+        story.append(Paragraph(_escape(para).replace("\n", "<br/>"), body))
+    story.append(PageBreak())
+
+    # ===== ADABIYOTLAR ROʻYXATI =====
+    story.append(Paragraph("FOYDALANILGAN ADABIYOTLAR RO'YXATI", chapter_toc))
+    for line in (sections.get("adabiyotlar", "") or "").split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        story.append(Paragraph(_escape(line), ref_style))
+
+    doc.multiBuild(story, onFirstPage=_footer, onLaterPages=_footer)
+    buffer.seek(0)
+    return buffer
+
+
+# ============================================================
+# UMUMIY YORDAMCHI FUNKSIYALAR
+# ============================================================
 
 def count_pdf_pages(buffer: BytesIO) -> int:
     buffer.seek(0)
