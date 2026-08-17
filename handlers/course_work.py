@@ -1,4 +1,3 @@
-
 """
 📘 Kurs ishi / loyiha — bet soni va mavzu so'raladi, shundan so'ng:
 1) reja tuziladi (I/II/III bob nomlari va har biriga 3 tadan kichik bo'lim),
@@ -51,8 +50,22 @@ _COURSE_SYSTEM = (
     "Siz tajribali oʻqituvchi va ilmiy muharrirsiz. Faqat '{topic}' mavzusi doirasida, "
     "undan chetga chiqmasdan yozing. Oʻzbek tilida, ilmiy-akademik uslubda (uchinchi "
     "shaxsda, shaxs olmoshlarisiz) yozing. Faqat soʻralgan boʻlim matnini yozing, "
-    "boshqa izoh, sarlavha yoki tushuntirish qoʻshmang."
+    "boshqa izoh, sarlavha yoki tushuntirish qoʻshmang. MUHIM: bir xil fikr yoki "
+    "jumlani turli soʻzlar bilan qayta-qayta takrorlamang — har bir abzas albatta "
+    "yangi, aniq maʼlumot, misol yoki dalil olib kelsin. Umumiy va mavhum gaplar "
+    "oʻrniga aniq faktlar, raqamlar, holatlar keltiring."
 )
+
+# Bo'limni kengaytirishda har safar boshqa jihatga urg'u berish uchun —
+# shu orqali "davom ettir" so'rovlari bir xil fikrni takrorlamaydi.
+_EXPAND_ANGLES = [
+    "amaliy misollar va real holatlar (case study)",
+    "aniq raqamlar, me'yorlar yoki tadqiqot natijalari",
+    "xalqaro tajriba yoki qiyosiy tahlil",
+    "muammoning sabab-oqibat bog'liqligi",
+    "amaliy tavsiya va yechimlar",
+    "ushbu sohadagi zamonaviy tendensiyalar",
+]
 
 DEFAULT_PLAN = {
     "bob1_nomi": "Mavzuning nazariy va meʼyoriy asoslari",
@@ -170,12 +183,19 @@ async def generate_course_work(topic: str, pages: int, status_msg=None):
 
     plan = await _generate_plan(topic)
 
+    bob_nomlari_matni = "; ".join(
+        f"{_ROMAN[i]}-bob – {plan.get(f'bob{i}_nomi') or DEFAULT_PLAN[f'bob{i}_nomi']}"
+        for i in (1, 2, 3)
+    )
+
     await _status(f"⏳ *{topic}* — kirish yozilmoqda...")
     kirish = await _generate_section(
         topic, "KIRISH",
         "Kurs ishining KIRISH qismini yoz: mavzuning dolzarbligi, tadqiqot maqsadi, "
-        "tadqiqot vazifalari (3-5 ta), tadqiqot obyekti, tadqiqot predmeti va ishning "
-        "tuzilishi haqida qisqacha ma'lumot bo'lsin.",
+        "tadqiqot vazifalari (3-5 ta), tadqiqot obyekti, tadqiqot predmeti haqida "
+        "qisqacha ma'lumot bo'lsin. \"Ishning tuzilishi\" bandida FAQAT quyidagi haqiqiy "
+        f"bo'limlarni sanab o'ting va boshqa hech qanday bo'lim nomini o'ylab topmang: "
+        f"Kirish; {bob_nomlari_matni}; Xulosa; Foydalanilgan adabiyotlar ro'yxati.",
         int(target_words * SHARE_KIRISH),
     )
 
@@ -213,6 +233,7 @@ async def generate_course_work(topic: str, pages: int, status_msg=None):
 
     rounds = 0
     while actual_pages < pages and rounds < MAX_PDF_EXPAND_ROUNDS:
+        angle = _EXPAND_ANGLES[rounds % len(_EXPAND_ANGLES)]
         rounds += 1
         await _status(
             f"⏳ *{topic}* — hajm kengaytirilmoqda ({actual_pages}/{pages} bet, "
@@ -223,9 +244,9 @@ async def generate_course_work(topic: str, pages: int, status_msg=None):
             COURSE_WORK_AI,
             (
                 f"'{topic}' mavzusidagi kurs ishining \"{shortest['title']}\" bobiga "
-                "qo'shimcha kichik bo'lim yoki chuqurroq tahlil, misol, statistik "
-                "ma'lumot qo'shing. Mavzudan chiqmang, avvalgi matnni takrorlamang. "
-                "Faqat yangi matnni yozing (kamida 400 so'z)."
+                f"yangi qo'shimcha kichik qism yozing. FAQAT quyidagi yangi jihatga e'tibor "
+                f"bering: {angle}. Avvalgi matnda aytilgan fikrlarni HECH QANDAY shaklda "
+                "takrorlamang — faqat yangi, qo'shimcha ma'lumot yozing (kamida 400 so'z)."
             ),
             _COURSE_SYSTEM.format(topic=topic),
         )
@@ -258,13 +279,15 @@ async def _generate_bob(topic: str, bob_num: int, bob_nomi: str, bolimlari: list
 
         fill_rounds = 0
         while len(content.split()) < per_sub_words and fill_rounds < MAX_SUBSECTION_FILL_ROUNDS:
+            angle = _EXPAND_ANGLES[fill_rounds % len(_EXPAND_ANGLES)]
             fill_rounds += 1
             addition = await ask_ai(
                 COURSE_WORK_AI,
                 (
-                    f"'{topic}' mavzusidagi \"{sub_title}\" nomli bo'limni davom ettiring: "
-                    "qo'shimcha tushuntirish, misol yoki tahlil bilan boyiting. Mavzudan "
-                    "chiqmang, avvalgi matnni takrorlamang. Faqat yangi matnni yozing."
+                    f"'{topic}' mavzusidagi \"{sub_title}\" nomli bo'limga yangi abzas(lar) "
+                    f"qo'shing. Bu safar FAQAT quyidagi yangi jihatga e'tibor bering: {angle}. "
+                    "Avvalgi matnda aytilgan fikrlarni HECH QANDAY shaklda takrorlamang — "
+                    "faqat yangi, qo'shimcha ma'lumot yozing."
                 ),
                 _COURSE_SYSTEM.format(topic=topic),
             )
