@@ -56,6 +56,34 @@ async def cancel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
+async def group_enable_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    if chat.type not in ("group", "supergroup"):
+        await update.message.reply_text(
+            "ℹ️ Bu buyruq faqat guruhlarda ishlatiladi. Shaxsiy chatda Universal chat "
+            "har doim faol."
+        )
+        return
+    context.chat_data["group_active"] = True
+    await update.message.reply_text(
+        "✅ *Universal chat* ushbu guruhda yoqildi.\n\n"
+        "Menga murojaat qilish uchun xabaringizda *dase* so'zini ishlating "
+        "(masalan: \"dase bugun qanaqa kun\") yoki mening xabarimga reply qiling.\n\n"
+        "⚠️ Eslatma: guruhda barcha xabarlarni ko'rishim uchun @BotFather orqali "
+        "\"Group Privacy\" sozlamasini o'chirib qo'yish kerak bo'lishi mumkin.",
+        parse_mode=ParseMode.MARKDOWN,
+    )
+
+
+async def group_disable_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    if chat.type not in ("group", "supergroup"):
+        await update.message.reply_text("ℹ️ Bu buyruq faqat guruhlarda ishlatiladi.")
+        return
+    context.chat_data["group_active"] = False
+    await update.message.reply_text("❌ Universal chat ushbu guruhda o'chirildi.")
+
+
 async def back_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
