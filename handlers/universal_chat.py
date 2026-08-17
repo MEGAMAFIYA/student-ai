@@ -143,10 +143,7 @@ async def _try_course_work(update: Update, context: ContextTypes.DEFAULT_TYPE, t
 
     pages = int(m.group(1))
     topic = (text[: m.start()] + text[m.end():]).strip()
-    strip_words = r"^(haqida|mavzusida|kurs ishi|kurs loyihasi|kurs proyekti|yoz|tayyorla)[\s:,-]*"
-    topic = re.sub(strip_words, "", topic, flags=re.IGNORECASE).strip()
-    strip_words_end = r"[\s:,-]*(haqida|mavzusida|kurs ishi|kurs loyihasi|kurs proyekti|yoz|tayyorla)$"
-    topic = re.sub(strip_words_end, "", topic, flags=re.IGNORECASE).strip()
+    topic = course_work.clean_topic(topic)
 
     if not topic:
         await _redirect_to_menu(update, "course_work")
@@ -160,7 +157,10 @@ async def _try_course_work(update: Update, context: ContextTypes.DEFAULT_TYPE, t
 
     result = await course_work.generate_course_work(topic, pages, status)
     if not result:
-        await status.edit_text("❌ Kurs ishini yaratib bo'lmadi.")
+        await status.edit_text(
+            "❌ Kurs ishini yaratib bo'lmadi — AI xizmatlari hozir javob bermayapti. "
+            "Birozdan so'ng qayta urinib ko'ring."
+        )
         return
 
     sections, pdf_buf, actual_pages = result
