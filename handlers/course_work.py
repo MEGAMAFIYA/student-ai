@@ -43,8 +43,39 @@ SHARE_XULOSA = 0.10
 
 MAX_SUBSECTION_FILL_ROUNDS = 6   # bitta kichik bo'limni to'ldirish uchun maksimal urinish
 MAX_PDF_EXPAND_ROUNDS = 30       # yakuniy PDF sahifa sonini yetkazish uchun maksimal urinish
+MIN_ACCEPTABLE_WORDS = 60        # shundan kam so'z yozilsa — AI umuman ishlamagan deb hisoblanadi
 
 _ROMAN = {1: "I", 2: "II", 3: "III"}
+
+# Mavzu matnini tozalashda olib tashlanadigan ortiqcha ibora va so'zlar
+# (boshida yoki oxirida bo'lsa). Iterativ tarzda (o'zgarish qolmaguncha)
+# qo'llaniladi, chunki bir nechta ibora ketma-ket kelishi mumkin
+# (masalan "... mavzusida kurs ishi").
+_TOPIC_FILLER_START = re.compile(
+    r"^(haqida|mavzusida|kurs ishi|kurs loyihasi|kurs proyekti|yoz|tayyorla|"
+    r"li|ul|ol|div|span|br|p)[\s:,.\-]+",
+    re.IGNORECASE,
+)
+_TOPIC_FILLER_END = re.compile(
+    r"[\s:,.\-]+(haqida|mavzusida|kurs ishi|kurs loyihasi|kurs proyekti|yoz|tayyorla)$",
+    re.IGNORECASE,
+)
+
+
+def clean_topic(raw: str) -> str:
+    """Foydalanuvchi yozgan mavzu matnidan ortiqcha ibora va tasodifiy
+    artefaktlarni (masalan HTML teg qoldig'i "li", "mavzusida kurs ishi"
+    kabi takroriy jumlalar) olib tashlaydi. O'zgarish qolmaguncha
+    (iterativ) ishlaydi, shu bilan ketma-ket kelgan bir necha ortiqcha
+    iborani ham to'liq tozalaydi."""
+    text = raw.strip().strip("<>").strip()
+    for _ in range(6):
+        new_text = _TOPIC_FILLER_START.sub("", text)
+        new_text = _TOPIC_FILLER_END.sub("", new_text).strip()
+        if new_text == text or not new_text:
+            break
+        text = new_text
+    return text or raw.strip()
 
 _COURSE_SYSTEM = (
     "Siz tajribali oʻqituvchi va ilmiy muharrirsiz. Faqat '{topic}' mavzusi doirasida, "
@@ -126,7 +157,7 @@ async def receive_pages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def receive_topic_and_generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    topic = update.message.text.strip()
+    topic = clean_topic(update.message.text.strip())
     pages = context.user_data.get("cw_pages", 10)
 
     await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
@@ -145,7 +176,10 @@ async def receive_topic_and_generate(update: Update, context: ContextTypes.DEFAU
 async def _generate_and_send(update, context, topic: str, pages: int, status):
     result = await generate_course_work(topic, pages, status)
     if not result:
-        await status.edit_text("❌ Kurs ishini yaratib bo'lmadi. Birozdan so'ng qayta urinib ko'ring.")
+        await status.edit_text(
+            "❌ Kurs ishini yaratib bo'lmadi — AI xizmatlari hozir javob bermayapti "
+            "(yuklama yoki texnik uzilish bo'lishi mumkin). Birozdan so'ng qayta urinib ko'ring."
+        )
         return
 
     sections, pdf_buf, actual_pages = result
@@ -226,6 +260,17 @@ async def generate_course_work(topic: str, pages: int, status_msg=None):
         "xulosa": xulosa or "",
         "adabiyotlar": adabiyotlar or "",
     }
+
+    # ===== AI UMUMAN ISHLAMAGANMI — TEKSHIRISH =====
+    # Agar barcha AI provayderlar (Gemini/Groq/Pollinations) ishlamay qolgan bo'lsa,
+    # yozilgan matn deyarli bo'sh qoladi. Bunday holda BO'SH/BUZUQ PDF yubormasdan,
+    # generatsiya muvaffaqiyatsiz bo'lganini aniq bildiramiz.
+    if _total_words(sections) < MIN_ACCEPTABLE_WORDS:
+        logger.error(
+            f"Kurs ishi generatsiyasi deyarli bo'sh natija berdi ('{topic}') — "
+            "AI provayderlar ishlamagan bo'lishi mumkin."
+        )
+        return None
 
     # ===== HAQIQIY PDF SAHIFA SONIGA QARAB KENGAYTIRISH =====
     pdf_buf = build_course_work_pdf(topic, sections)
@@ -346,3 +391,10 @@ async def _generate_references(topic: str) -> str:
     )
     result = await ask_ai(COURSE_WORK_AI, prompt, system)
     return result or ""
+
+
+def _total_words(sections: dict) -> int:
+    n = len(sections.get("kirish", "").split()) + len(sections.get("xulosa", "").split())
+    for b in sections.get("bobs", []):
+        n += len(b["content"].split())
+    return n
