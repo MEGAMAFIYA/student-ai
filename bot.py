@@ -11,6 +11,7 @@ import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
 
+from telegram import BotCommand, BotCommandScopeDefault, BotCommandScopeAllGroupChats
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -28,6 +29,20 @@ logging.basicConfig(
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
+
+BOT_COMMANDS = [
+    BotCommand("start", "Botni ishga tushirish / asosiy menyu"),
+    BotCommand("yoqish", "Guruhda Universal chatni yoqish"),
+    BotCommand("ochirish", "Guruhda Universal chatni o'chirish"),
+    BotCommand("cancel", "Joriy amalni bekor qilish"),
+]
+
+
+async def _post_init(application):
+    """Telegram '/' tugmasi bosilganda ko'rinadigan buyruqlar ro'yxatini o'rnatadi
+    (shaxsiy chatlar va guruhlar uchun alohida-alohida)."""
+    await application.bot.set_my_commands(BOT_COMMANDS, scope=BotCommandScopeDefault())
+    await application.bot.set_my_commands(BOT_COMMANDS, scope=BotCommandScopeAllGroupChats())
 
 
 # ============================================================
@@ -155,11 +170,14 @@ def main():
         .read_timeout(60)
         .write_timeout(60)
         .pool_timeout(60)
+        .post_init(_post_init)
         .build()
     )
 
     app.add_handler(CommandHandler("start", menu.start_cmd))
     app.add_handler(CommandHandler("cancel", menu.cancel_cmd))
+    app.add_handler(CommandHandler("yoqish", menu.group_enable_cmd))
+    app.add_handler(CommandHandler("ochirish", menu.group_disable_cmd))
 
     # Har bir funksiya uchun alohida conversation (bosqichma-bosqich so'rov-javob)
     app.add_handler(build_course_work_conv())
