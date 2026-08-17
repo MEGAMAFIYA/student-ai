@@ -13,6 +13,10 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 # Standart (umumiy) bepul kalitlar — funksiyaga alohida kalit berilmasa shular ishlatiladi
 DEFAULT_GEMINI_KEY = os.getenv("GEMINI_API_KEY", "")
 DEFAULT_GROQ_KEY = os.getenv("GROQ_API_KEY", "")
+# Groq modellari tez-tez eskirib(deprecated) qolishi mumkin (masalan
+# llama-3.3-70b-versatile 2026-yil iyunida o'chirildi) — shuning uchun
+# zaxira model .env orqali sozlanadi, kodni o'zgartirish shart emas.
+GROQ_FALLBACK_MODEL = os.getenv("GROQ_FALLBACK_MODEL", "openai/gpt-oss-120b")
 
 
 def _cfg(prefix: str, default_model: str, default_provider: str = "gemini") -> dict:
