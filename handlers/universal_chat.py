@@ -1,9 +1,14 @@
 """
 💬 UNIVERSAL CHAT — hech qanday conversation faol bo'lmaganda ishlaydigan
-asosiy matn handler. Oddiy savolga Gemini javob beradi; agar xabarda boshqa
-funksiyaga tegishli buyruq va yetarli ma'lumot bo'lsa, o'sha funksiyani
-o'zi ishga tushirib, javobni foydalanuvchiga qaytaradi. Yetarli ma'lumot
-bo'lmasa, tegishli funksiya tugmasini taklif qiladi.
+asosiy matn handler.
+
+- Shaxsiy chatda: barcha xabarlarga javob beradi (avvalgidek).
+- Guruhda: faqat /yoqish bilan faollashtirilgandan keyin, va faqat xabarda
+  "dase" so'zi ishlatilganda YOKI botning oldingi xabariga reply qilinganda javob beradi.
+- Suhbat tarixi har bir chat uchun saqlanadi (oxirgi bir necha savol-javob) —
+  shu orqali bot oldingi savollarni "eslab qoladi".
+- Agar xabarda boshqa funksiyaga tegishli buyruq va yetarli ma'lumot bo'lsa,
+  o'sha funksiyani o'zi ishga tushirib, javobni foydalanuvchiga qaytaradi.
 """
 
 import logging
@@ -41,6 +46,9 @@ TARGET_LANG_HINTS = {
 }
 
 PAGE_RE = re.compile(r"(\d{1,3})\s*(bet|varoq|sahifa)", re.IGNORECASE)
+TRIGGER_RE = re.compile(r"\bdase\b", re.IGNORECASE)
+
+MAX_HISTORY_TURNS = 8  # nechta so'rov-javob juftligi saqlanadi (chatga qarab)
 
 
 def detect_intent(text: str) -> str:
@@ -55,10 +63,31 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
 
+    chat = update.effective_chat
+    is_group = chat.type in ("group", "supergroup")
     user_text = update.message.text.strip()
+
+    if is_group:
+        if not context.chat_data.get("group_active", False):
+            return  # guruhda universal chat hali yoqilmagan
+
+        is_reply_to_bot = bool(
+            update.message.reply_to_message
+            and update.message.reply_to_message.from_user
+            and update.message.reply_to_message.from_user.id == context.bot.id
+        )
+        trigger_match = TRIGGER_RE.search(user_text)
+
+        if not (trigger_match or is_reply_to_bot):
+            return  # "dase" yo'q va bot xabariga reply ham emas
+
+        if trigger_match:
+            stripped = TRIGGER_RE.sub("", user_text, count=1).strip(" ,:.!-")
+            user_text = stripped or user_text
+
     intent = detect_intent(user_text)
 
-    await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
+    await context.bot.send_chat_action(chat.id, ChatAction.TYPING)
 
     if intent == "course_work":
         await _try_course_work(update, context, user_text)
@@ -74,16 +103,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _redirect_to_menu(update, intent)
         return
 
+    await _chat_with_history(update, context, user_text)
+
+
+async def _chat_with_history(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str):
+    history = context.chat_data.setdefault("history", [])
+
     response = await ask_ai(
         UNIVERSAL_CHAT_AI,
         user_text,
-        "Siz do'stona va bilimdon AI yordamchisiz. O'zbek tilida (agar foydalanuvchi "
-        "boshqa tilda yozmasa), aniq va foydali javob bering.",
+        "Siz do'stona va bilimdon AI yordamchisiz (ismingiz — Dase). O'zbek tilida "
+        "(agar foydalanuvchi boshqa tilda yozmasa), aniq va foydali javob bering. "
+        "Suhbat tarixidan foydalanib, oldingi savollarni hisobga oling.",
+        history=history,
     )
 
     if not response:
         await update.message.reply_text("❌ Hozircha javob berib bo'lmadi. Birozdan so'ng qayta urinib ko'ring.")
         return
+
+    history.append({"role": "user", "content": user_text})
+    history.append({"role": "assistant", "content": response})
+    max_items = MAX_HISTORY_TURNS * 2
+    if len(history) > max_items:
+        del history[: len(history) - max_items]
 
     if len(response) > 3800:
         bio = BytesIO(response.encode("utf-8"))
@@ -111,17 +154,16 @@ async def _try_course_work(update: Update, context: ContextTypes.DEFAULT_TYPE, t
 
     status = await update.message.reply_text(
         f"💬 Bu so'rovni *Kurs ishi* funksiyasiga yubordim.\n"
-        f"⏳ *{topic}* mavzusida {pages} betlik kurs ishi tayyorlanmoqda...\nReja tuzilmoqda...",
+        f"⏳ *{topic}* mavzusida {pages}+ betlik kurs ishi tayyorlanmoqda...\nReja tuzilmoqda...",
         parse_mode=ParseMode.MARKDOWN,
     )
 
-    sections = await course_work.generate_course_work(topic, pages, status)
-    if not sections:
+    result = await course_work.generate_course_work(topic, pages, status)
+    if not result:
         await status.edit_text("❌ Kurs ishini yaratib bo'lmadi.")
         return
 
-    pdf_buf = build_course_work_pdf(topic, sections)
-    actual_pages = count_pdf_pages(pdf_buf)
+    sections, pdf_buf, actual_pages = result
 
     await update.message.reply_document(
         document=InputFile(pdf_buf, filename=f"{topic[:40]}.pdf"),
