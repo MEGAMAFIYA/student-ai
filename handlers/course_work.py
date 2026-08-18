@@ -100,10 +100,14 @@ _COURSE_SYSTEM = (
     "Siz tajribali oʻqituvchi va ilmiy muharrirsiz. Faqat '{topic}' mavzusi doirasida, "
     "undan chetga chiqmasdan yozing. Oʻzbek tilida, ilmiy-akademik uslubda (uchinchi "
     "shaxsda, shaxs olmoshlarisiz) yozing. Faqat soʻralgan boʻlim matnini yozing, "
-    "boshqa izoh, sarlavha yoki tushuntirish qoʻshmang. MUHIM: bir xil fikr yoki "
-    "jumlani turli soʻzlar bilan qayta-qayta takrorlamang — har bir abzas albatta "
-    "yangi, aniq maʼlumot, misol yoki dalil olib kelsin. Umumiy va mavhum gaplar "
-    "oʻrniga aniq faktlar, raqamlar, holatlar keltiring."
+    "boshqa izoh, sarlavha yoki tushuntirish qoʻshmang — sarlavhani alohida qo'shmang, "
+    "chunki u allaqachon hujjatda mavjud. MUHIM: bir xil fikr yoki jumlani turli "
+    "soʻzlar bilan qayta-qayta takrorlamang — har bir abzas albatta yangi, aniq "
+    "maʼlumot, misol yoki dalil olib kelsin. Umumiy va mavhum gaplar oʻrniga aniq "
+    "faktlar, raqamlar, holatlar keltiring. FORMATLASH: hech qanday Markdown belgisi "
+    "(**, ##, `, -) yoki LaTeX/matematik formula yozuvi (\\, {}, ^, _) ishlatmang — "
+    "formulalarni oddiy matn ko'rinishida yozing (masalan 'EI = 0.35 x Pfiz + 0.25 x "
+    "Pbio'). Faqat oddiy, sodda matn abzaslari yozing."
 )
 
 # Bo'limni kengaytirishda har safar boshqa jihatga urg'u berish uchun —
@@ -116,6 +120,58 @@ _EXPAND_ANGLES = [
     "amaliy tavsiya va yechimlar",
     "ushbu sohadagi zamonaviy tendensiyalar",
 ]
+
+# AI rad javobi berganini aniqlash uchun — bunday javob HECH QACHON hujjatga
+# kiritilmasligi kerak, aksincha qayta uriniladi (ask_retry ichida tekshiriladi).
+_REFUSAL_RE = re.compile(
+    r"^\s*(i'?m sorry|i cannot fulfill|i can'?t fulfill|i am unable to|i'?m unable to|"
+    r"as an ai(?: language model)?|i cannot assist|i can'?t assist|i can'?t help|"
+    r"kechirasiz,?\s*(lekin|ammo|biroq)|uzr,?\s*(lekin|ammo|biroq)|"
+    r"men bunga yordam bera olmayman|bu so'rovni bajara olmayman)",
+    re.IGNORECASE,
+)
+
+# AI javobida tasodifan chiqib qolishi mumkin bo'lgan Markdown/LaTeX izlarini
+# tozalash uchun — promptdagi taqiq yetarli bo'lmagan hollarda ikkinchi himoya.
+_MD_BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
+_LATEX_TEXT_RE = re.compile(r"\\text\{([^}]*)\}")
+_LATEX_TIMES_RE = re.compile(r"\\times")
+_LATEX_SUBSUP_RE = re.compile(r"[_^]\{([^}]*)\}")
+_LATEX_BRACKETS_RE = re.compile(r"\\[\[\]()]")
+_LATEX_CMD_RE = re.compile(r"\\[a-zA-Z]+")
+
+
+def _is_refusal(text: str) -> bool:
+    if not text or not text.strip():
+        return True
+    return bool(_REFUSAL_RE.search(text[:200]))
+
+
+def _clean_ai_text(text: str) -> str:
+    if not text:
+        return text
+    text = _MD_BOLD_RE.sub(r"\1", text)
+    text = _LATEX_TEXT_RE.sub(r"\1", text)
+    text = _LATEX_TIMES_RE.sub("x", text)
+    text = _LATEX_SUBSUP_RE.sub(r"(\1)", text)
+    text = _LATEX_BRACKETS_RE.sub("", text)
+    text = _LATEX_CMD_RE.sub("", text)
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    return text.strip()
+
+
+def _strip_duplicate_heading(content: str, sub_title: str) -> str:
+    """AI ba'zan o'zi ham bo'lim sarlavhasini qaytarib yuboradi — bu holda
+    hujjatda sarlavha ikki marta chiqadi. Birinchi qator sarlavhaga mos
+    kelsa, uni olib tashlaydi."""
+    if not content:
+        return content
+    parts = content.split("\n", 1)
+    first_line = re.sub(r"^[\s*#]*\d*\.?\d*\.?\s*", "", parts[0]).strip().rstrip(".:").lower()
+    title_norm = sub_title.strip().rstrip(".:").lower()
+    if first_line and (first_line == title_norm or title_norm.startswith(first_line) or first_line.startswith(title_norm[:25])):
+        return parts[1].lstrip("\n") if len(parts) > 1 else ""
+    return content
 
 DEFAULT_PLAN = {
     "bob1_nomi": "Mavzuning nazariy va meʼyoriy asoslari",
@@ -219,13 +275,16 @@ async def _generate_and_send(update, context, topic: str, pages: int, status):
         pass
 
 
-async def _ask_retry(prompt: str, system: str, attempts: int = RETRY_ATTEMPTS, delay: int = RETRY_DELAY_SEC) -> str | None:
+async def _ask_retry(prompt: str, system: str, attempts: int = RETRY_ATTEMPTS, delay: int = RETRY_DELAY_SEC, raw: bool = False) -> str | None:
     """ask_ai ni bir necha marta qayta urinib chaqiradi — vaqtinchalik limit/tarmoq
-    xatolarida bitta muvaffaqiyatsiz urinish butun bo'limni bo'sh qoldirmasligi uchun."""
+    xatolarida bitta muvaffaqiyatsiz urinish butun bo'limni bo'sh qoldirmasligi uchun.
+    AI rad javobi (masalan "I'm sorry, I can't fulfill...") aniqlansa ham qayta
+    uriniladi — bunday javob hech qachon hujjatga kiritilmaydi. raw=True bo'lsa
+    (masalan JSON javoblarda) Markdown/LaTeX tozalash qo'llanilmaydi."""
     for i in range(attempts):
         result = await ask_ai(COURSE_WORK_AI, prompt, system)
-        if result and result.strip():
-            return result
+        if result and result.strip() and not _is_refusal(result):
+            return result if raw else _clean_ai_text(result)
         if i < attempts - 1:
             await asyncio.sleep(delay)
     return None
@@ -352,6 +411,7 @@ async def _generate_one_subsection(topic: str, heading: str, sub_title: str, tar
         f"Taxminan {max(target_words, 150)} so'zdan iborat bo'lsin.",
         _COURSE_SYSTEM.format(topic=topic),
     ) or ""
+    content = _strip_duplicate_heading(content, sub_title)
 
     fill_rounds = 0
     while len(content.split()) < target_words and fill_rounds < MAX_SUBSECTION_FILL_ROUNDS:
@@ -362,13 +422,14 @@ async def _generate_one_subsection(topic: str, heading: str, sub_title: str, tar
                 f"'{topic}' mavzusidagi \"{sub_title}\" nomli bo'limga yangi abzas(lar) "
                 f"qo'shing. Bu safar FAQAT quyidagi yangi jihatga e'tibor bering: {angle}. "
                 "Avvalgi matnda aytilgan fikrlarni HECH QANDAY shaklda takrorlamang — "
-                "faqat yangi, qo'shimcha ma'lumot yozing."
+                "faqat yangi, qo'shimcha ma'lumot yozing. Bo'lim sarlavhasini qaytarmang."
             ),
             _COURSE_SYSTEM.format(topic=topic),
             attempts=2,
         )
         if not addition:
             break
+        addition = _strip_duplicate_heading(addition, sub_title)
         content = content.rstrip() + "\n\n" + addition.strip()
 
     return content
@@ -463,7 +524,7 @@ async def _generate_plan(topic: str) -> dict:
         '"bob2_nomi": "...", "bob2_bolimlari": ["...", "...", "..."], '
         '"bob3_nomi": "...", "bob3_bolimlari": ["...", "...", "..."]}'
     )
-    raw = await _ask_retry(prompt, system, attempts=2)
+    raw = await _ask_retry(prompt, system, attempts=2, raw=True)
     if not raw:
         return DEFAULT_PLAN
     try:
@@ -479,7 +540,8 @@ async def _generate_plan(topic: str) -> dict:
 
 async def _generate_section(topic: str, section_label: str, instruction: str, target_words: int) -> str | None:
     prompt = f"[{section_label}]\n{instruction}\n\nTaxminan {max(target_words, 150)} so'zdan iborat bo'lsin."
-    return await _ask_retry(prompt, _COURSE_SYSTEM.format(topic=topic))
+    result = await _ask_retry(prompt, _COURSE_SYSTEM.format(topic=topic))
+    return _strip_duplicate_heading(result, section_label) if result else result
 
 
 async def _generate_references(topic: str) -> str:
