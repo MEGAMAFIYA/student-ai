@@ -5,14 +5,18 @@
 3) HAR BIR kichik bo'lim (1.1, 1.2, 1.3...) ALOHIDA-ALOHIDA, o'ziga tegishli
    hajmga (taxminan 2.5-3 bet) to'lguncha yozdiriladi, keyin navbatdagi bo'limga o'tiladi,
 4) xulosa va adabiyotlar ro'yxati generatsiya qilinadi,
-5) PDF quriladi va HAQIQIY sahifa soni o'lchanadi — agar so'ralgan sahifadan kam
-   bo'lsa, eng qisqa bob avtomatik kengaytirilib qayta quriladi (shu tariqa natija
-   har doim so'ralgan sahifa sonidan KAM bo'lmasligi kafolatlanadi).
+5) NAZORATCHI: har bir kichik bo'lim, kirish, xulosa va adabiyotlar ro'yxati ALOHIDA
+   tekshiriladi — biror qism bo'sh yoki juda qisqa chiqqan bo'lsa (AI xatosi/limit
+   tufayli), FAQAT o'sha qism bir necha marta qayta yozdiriladi, to'liq hujjat
+   qayta yozilmaydi,
+6) PDF quriladi va HAQIQIY sahifa soni o'lchanadi — agar so'ralgan sahifadan kam
+   bo'lsa, eng qisqa bob avtomatik kengaytirilib qayta quriladi.
 
 Tuzilma va hajm ulushlari (Kirish 5-8%, har bob ~15-25%, Xulosa ~10%) talabalar
 uchun rasmiy uslubiy qo'llanmalarga asoslangan.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -45,6 +49,14 @@ MAX_SUBSECTION_FILL_ROUNDS = 6   # bitta kichik bo'limni to'ldirish uchun maksim
 MAX_PDF_EXPAND_ROUNDS = 30       # yakuniy PDF sahifa sonini yetkazish uchun maksimal urinish
 MIN_ACCEPTABLE_WORDS = 60        # shundan kam so'z yozilsa — AI umuman ishlamagan deb hisoblanadi
 
+# ===== NAZORATCHI (to'liqlik tekshiruvi) sozlamalari =====
+MIN_SECTION_WORDS = 40           # kirish/xulosa "bo'sh emas" deb hisoblanishi uchun minimal so'z
+MIN_SUBSECTION_WORDS = 40        # har bir kichik bo'lim uchun minimal so'z
+MIN_REFERENCES_CHARS = 50        # adabiyotlar ro'yxati "bo'sh emas" deb hisoblanishi uchun
+MAX_COMPLETENESS_ROUNDS = 3      # to'liqlikni tekshirish-tuzatish tsikli necha marta takrorlanadi
+RETRY_ATTEMPTS = 3               # bitta AI so'rovi necha marta qayta urinilishi
+RETRY_DELAY_SEC = 3              # urinishlar orasidagi kutish (soniya)
+
 _ROMAN = {1: "I", 2: "II", 3: "III"}
 
 # Mavzu matnini tozalashda olib tashlanadigan ortiqcha ibora va so'zlar
@@ -52,23 +64,29 @@ _ROMAN = {1: "I", 2: "II", 3: "III"}
 # qo'llaniladi, chunki bir nechta ibora ketma-ket kelishi mumkin
 # (masalan "... mavzusida kurs ishi").
 _TOPIC_FILLER_START = re.compile(
-    r"^(haqida|mavzusida|kurs ishi|kurs loyihasi|kurs proyekti|yoz|tayyorla|"
+    r"^(haqida|mavzusida|shu mavzuda|kurs ishi|kurs loyihasi|kurs proyekti|"
+    r"tayyorlab ber|yozib ber|yoz|tayyorla|kerak|iltimos|"
     r"li|ul|ol|div|span|br|p)[\s:,.\-]+",
     re.IGNORECASE,
 )
 _TOPIC_FILLER_END = re.compile(
-    r"[\s:,.\-]+(haqida|mavzusida|kurs ishi|kurs loyihasi|kurs proyekti|yoz|tayyorla)$",
+    r"[\s:,.\-]+(haqida|mavzusida|shu mavzuda|kurs ishi|kurs loyihasi|kurs proyekti|"
+    r"tayyorlab ber|yozib ber|yoz|tayyorla|kerak|iltimos)$",
     re.IGNORECASE,
 )
+# Matn ichida (o'rtada) uchraydigan yakka "li" so'zi — odatda HTML <li> teg
+# qoldig'i, hech qanday o'zbekcha ma'noga ega emas.
+_STRAY_LI = re.compile(r"(?<=\s)li(?=\s)", re.IGNORECASE)
 
 
 def clean_topic(raw: str) -> str:
     """Foydalanuvchi yozgan mavzu matnidan ortiqcha ibora va tasodifiy
-    artefaktlarni (masalan HTML teg qoldig'i "li", "mavzusida kurs ishi"
-    kabi takroriy jumlalar) olib tashlaydi. O'zgarish qolmaguncha
-    (iterativ) ishlaydi, shu bilan ketma-ket kelgan bir necha ortiqcha
-    iborani ham to'liq tozalaydi."""
+    artefaktlarni (masalan HTML teg qoldig'i "li", "mavzusida kurs ishi",
+    "shu mavzuda ... tayyorlab ber" kabi buyruq jumlalari) olib tashlaydi.
+    O'zgarish qolmaguncha (iterativ) ishlaydi."""
     text = raw.strip().strip("<>").strip()
+    text = _STRAY_LI.sub(" ", text)
+    text = re.sub(r"\s{2,}", " ", text).strip()
     for _ in range(6):
         new_text = _TOPIC_FILLER_START.sub("", text)
         new_text = _TOPIC_FILLER_END.sub("", new_text).strip()
@@ -76,6 +94,7 @@ def clean_topic(raw: str) -> str:
             break
         text = new_text
     return text or raw.strip()
+
 
 _COURSE_SYSTEM = (
     "Siz tajribali oʻqituvchi va ilmiy muharrirsiz. Faqat '{topic}' mavzusi doirasida, "
@@ -178,7 +197,8 @@ async def _generate_and_send(update, context, topic: str, pages: int, status):
     if not result:
         await status.edit_text(
             "❌ Kurs ishini yaratib bo'lmadi — AI xizmatlari hozir javob bermayapti "
-            "(yuklama yoki texnik uzilish bo'lishi mumkin). Birozdan so'ng qayta urinib ko'ring."
+            "yoki ba'zi bo'limlarni bir necha urinishdan keyin ham to'liq yoza olmadi. "
+            "Birozdan so'ng qayta urinib ko'ring."
         )
         return
 
@@ -199,10 +219,24 @@ async def _generate_and_send(update, context, topic: str, pages: int, status):
         pass
 
 
+async def _ask_retry(prompt: str, system: str, attempts: int = RETRY_ATTEMPTS, delay: int = RETRY_DELAY_SEC) -> str | None:
+    """ask_ai ni bir necha marta qayta urinib chaqiradi — vaqtinchalik limit/tarmoq
+    xatolarida bitta muvaffaqiyatsiz urinish butun bo'limni bo'sh qoldirmasligi uchun."""
+    for i in range(attempts):
+        result = await ask_ai(COURSE_WORK_AI, prompt, system)
+        if result and result.strip():
+            return result
+        if i < attempts - 1:
+            await asyncio.sleep(delay)
+    return None
+
+
 async def generate_course_work(topic: str, pages: int, status_msg=None):
     """
-    Kurs ishini tuzilgan holda generatsiya qiladi va HAQIQIY PDF sahifa soni
-    so'ralgan sahifa sonidan kam bo'lmagunicha kengaytirib boradi.
+    Kurs ishini tuzilgan holda generatsiya qiladi, NAZORATCHI orqali har bir
+    bo'limning to'liqligini tekshirib, bo'sh qolgan qismlarni qayta yozdiradi,
+    so'ng HAQIQIY PDF sahifa soni so'ralgan sahifa sonidan kam bo'lmagunicha
+    kengaytirib boradi.
     Qaytaradi: (sections dict, pdf_buffer, actual_pages) yoki None (xato bo'lsa).
     Boshqa modullar (masalan universal_chat) ham shu funksiyadan foydalanadi.
     """
@@ -221,17 +255,21 @@ async def generate_course_work(topic: str, pages: int, status_msg=None):
         f"{_ROMAN[i]}-bob – {plan.get(f'bob{i}_nomi') or DEFAULT_PLAN[f'bob{i}_nomi']}"
         for i in (1, 2, 3)
     )
-
-    await _status(f"⏳ *{topic}* — kirish yozilmoqda...")
-    kirish = await _generate_section(
-        topic, "KIRISH",
+    kirish_instruction = (
         "Kurs ishining KIRISH qismini yoz: mavzuning dolzarbligi, tadqiqot maqsadi, "
         "tadqiqot vazifalari (3-5 ta), tadqiqot obyekti, tadqiqot predmeti haqida "
         "qisqacha ma'lumot bo'lsin. \"Ishning tuzilishi\" bandida FAQAT quyidagi haqiqiy "
         f"bo'limlarni sanab o'ting va boshqa hech qanday bo'lim nomini o'ylab topmang: "
-        f"Kirish; {bob_nomlari_matni}; Xulosa; Foydalanilgan adabiyotlar ro'yxati.",
-        int(target_words * SHARE_KIRISH),
+        f"Kirish; {bob_nomlari_matni}; Xulosa; Foydalanilgan adabiyotlar ro'yxati."
     )
+    xulosa_instruction = (
+        "Kurs ishining XULOSA qismini yoz: o'rganilgan masala bo'yicha asosiy xulosalar, "
+        "aniqlangan kamchiliklar va ularni bartaraf etish yo'llari, taklif etilgan "
+        "yechimlarning foydasi, ishning amaliy ahamiyati."
+    )
+
+    await _status(f"⏳ *{topic}* — kirish yozilmoqda...")
+    kirish = await _generate_section(topic, "KIRISH", kirish_instruction, int(target_words * SHARE_KIRISH)) or ""
 
     bobs = []
     for i in (1, 2, 3):
@@ -239,36 +277,35 @@ async def generate_course_work(topic: str, pages: int, status_msg=None):
         bolimlari = plan.get(f"bob{i}_bolimlari") or DEFAULT_PLAN[f"bob{i}_bolimlari"]
         bob_target_words = int(target_words * SHARE_BOB)
 
-        content = await _generate_bob(topic, i, bob_nomi, bolimlari, bob_target_words, _status)
-        bobs.append({"title": f"{_ROMAN[i]}-BOB. {bob_nomi.upper()}", "content": content})
+        subsections = await _generate_bob(topic, i, bolimlari, bob_target_words, _status)
+        bob = {"title": f"{_ROMAN[i]}-BOB. {bob_nomi.upper()}", "subsections": subsections}
+        bob["content"] = _bob_content(bob)
+        bobs.append(bob)
 
     await _status(f"⏳ *{topic}* — xulosa yozilmoqda...")
-    xulosa = await _generate_section(
-        topic, "XULOSA",
-        "Kurs ishining XULOSA qismini yoz: o'rganilgan masala bo'yicha asosiy xulosalar, "
-        "aniqlangan kamchiliklar va ularni bartaraf etish yo'llari, taklif etilgan "
-        "yechimlarning foydasi, ishning amaliy ahamiyati.",
-        int(target_words * SHARE_XULOSA),
-    )
+    xulosa = await _generate_section(topic, "XULOSA", xulosa_instruction, int(target_words * SHARE_XULOSA)) or ""
 
     await _status(f"⏳ *{topic}* — adabiyotlar ro'yxati tuzilmoqda...")
-    adabiyotlar = await _generate_references(topic)
+    adabiyotlar = await _generate_references(topic) or ""
 
-    sections = {
-        "kirish": kirish or "",
-        "bobs": bobs,
-        "xulosa": xulosa or "",
-        "adabiyotlar": adabiyotlar or "",
-    }
+    sections = {"kirish": kirish, "bobs": bobs, "xulosa": xulosa, "adabiyotlar": adabiyotlar}
 
-    # ===== AI UMUMAN ISHLAMAGANMI — TEKSHIRISH =====
-    # Agar barcha AI provayderlar (Gemini/Groq/Pollinations) ishlamay qolgan bo'lsa,
-    # yozilgan matn deyarli bo'sh qoladi. Bunday holda BO'SH/BUZUQ PDF yubormasdan,
-    # generatsiya muvaffaqiyatsiz bo'lganini aniq bildiramiz.
+    # ===== NAZORATCHI: to'liqlikni tekshirish va bo'sh qolgan qismlarni tuzatish =====
+    complete = await _ensure_complete(
+        topic, sections, target_words, kirish_instruction, xulosa_instruction, _status
+    )
+
     if _total_words(sections) < MIN_ACCEPTABLE_WORDS:
         logger.error(
             f"Kurs ishi generatsiyasi deyarli bo'sh natija berdi ('{topic}') — "
             "AI provayderlar ishlamagan bo'lishi mumkin."
+        )
+        return None
+
+    if not complete:
+        logger.error(
+            f"Kurs ishining ba'zi bo'limlari {MAX_COMPLETENESS_ROUNDS} marta urinishdan "
+            f"keyin ham to'ldirilmadi ('{topic}')."
         )
         return None
 
@@ -285,8 +322,7 @@ async def generate_course_work(topic: str, pages: int, status_msg=None):
             f"{rounds}-urinish)..."
         )
         shortest = min(sections["bobs"], key=lambda b: len(b["content"].split()))
-        addition = await ask_ai(
-            COURSE_WORK_AI,
+        addition = await _ask_retry(
             (
                 f"'{topic}' mavzusidagi kurs ishining \"{shortest['title']}\" bobiga "
                 f"yangi qo'shimcha kichik qism yozing. FAQAT quyidagi yangi jihatga e'tibor "
@@ -294,6 +330,7 @@ async def generate_course_work(topic: str, pages: int, status_msg=None):
                 "takrorlamang — faqat yangi, qo'shimcha ma'lumot yozing (kamida 400 so'z)."
             ),
             _COURSE_SYSTEM.format(topic=topic),
+            attempts=2,
         )
         if not addition:
             break
@@ -305,44 +342,113 @@ async def generate_course_work(topic: str, pages: int, status_msg=None):
     return sections, pdf_buf, actual_pages
 
 
-async def _generate_bob(topic: str, bob_num: int, bob_nomi: str, bolimlari: list, bob_target_words: int, status_cb) -> str:
+def _bob_content(bob: dict) -> str:
+    return "\n\n".join(f"{s['heading']}\n{s['content']}".strip() for s in bob["subsections"])
+
+
+async def _generate_one_subsection(topic: str, heading: str, sub_title: str, target_words: int) -> str:
+    content = await _ask_retry(
+        f"[{heading}]\nKurs ishining \"{sub_title}\" nomli kichik bo'limini yoz.\n\n"
+        f"Taxminan {max(target_words, 150)} so'zdan iborat bo'lsin.",
+        _COURSE_SYSTEM.format(topic=topic),
+    ) or ""
+
+    fill_rounds = 0
+    while len(content.split()) < target_words and fill_rounds < MAX_SUBSECTION_FILL_ROUNDS:
+        angle = _EXPAND_ANGLES[fill_rounds % len(_EXPAND_ANGLES)]
+        fill_rounds += 1
+        addition = await _ask_retry(
+            (
+                f"'{topic}' mavzusidagi \"{sub_title}\" nomli bo'limga yangi abzas(lar) "
+                f"qo'shing. Bu safar FAQAT quyidagi yangi jihatga e'tibor bering: {angle}. "
+                "Avvalgi matnda aytilgan fikrlarni HECH QANDAY shaklda takrorlamang — "
+                "faqat yangi, qo'shimcha ma'lumot yozing."
+            ),
+            _COURSE_SYSTEM.format(topic=topic),
+            attempts=2,
+        )
+        if not addition:
+            break
+        content = content.rstrip() + "\n\n" + addition.strip()
+
+    return content
+
+
+async def _generate_bob(topic: str, bob_num: int, bolimlari: list, bob_target_words: int, status_cb) -> list:
     """Bobning har bir kichik bo'limini ALOHIDA generatsiya qiladi va har birini
     o'ziga ajratilgan hajmga (taxminan 2.5-3 bet) yetguncha to'ldiradi."""
     n = max(len(bolimlari), 1)
     per_sub_words = max(int(bob_target_words / n), 850)  # ~2.2+ bet minimal
 
-    parts = []
+    subsections = []
     for j, sub_title in enumerate(bolimlari, start=1):
-        label = f"{bob_num}.{j}. {sub_title}"
-        await status_cb(f"⏳ *{topic}* — {label} yozilmoqda...")
+        heading = f"{bob_num}.{j}. {sub_title}"
+        await status_cb(f"⏳ *{topic}* — {heading} yozilmoqda...")
+        content = await _generate_one_subsection(topic, heading, sub_title, per_sub_words)
+        subsections.append({"heading": heading, "content": content})
 
-        content = await _generate_section(
-            topic, label,
-            f"Kurs ishining \"{sub_title}\" nomli kichik bo'limini yoz.",
-            per_sub_words,
-        ) or ""
+    return subsections
 
-        fill_rounds = 0
-        while len(content.split()) < per_sub_words and fill_rounds < MAX_SUBSECTION_FILL_ROUNDS:
-            angle = _EXPAND_ANGLES[fill_rounds % len(_EXPAND_ANGLES)]
-            fill_rounds += 1
-            addition = await ask_ai(
-                COURSE_WORK_AI,
-                (
-                    f"'{topic}' mavzusidagi \"{sub_title}\" nomli bo'limga yangi abzas(lar) "
-                    f"qo'shing. Bu safar FAQAT quyidagi yangi jihatga e'tibor bering: {angle}. "
-                    "Avvalgi matnda aytilgan fikrlarni HECH QANDAY shaklda takrorlamang — "
-                    "faqat yangi, qo'shimcha ma'lumot yozing."
-                ),
-                _COURSE_SYSTEM.format(topic=topic),
-            )
-            if not addition:
-                break
-            content = content.rstrip() + "\n\n" + addition.strip()
 
-        parts.append(f"{bob_num}.{j}. {sub_title}\n{content}")
+async def _ensure_complete(topic, sections, target_words, kirish_instruction, xulosa_instruction, status_cb) -> bool:
+    """NAZORATCHI: har bir bo'limni alohida tekshiradi (kirish, har bir kichik
+    bo'lim, xulosa, adabiyotlar). Bo'sh yoki juda qisqa qolgan qismlarni FAQAT
+    o'zini qayta yozdiradi (butun hujjatni emas). MAX_COMPLETENESS_ROUNDS marta
+    takrorlanadi. Qaytaradi: hammasi to'liqmi (True/False)."""
+    for attempt in range(1, MAX_COMPLETENESS_ROUNDS + 1):
+        problems = _find_incomplete(sections)
+        if not problems:
+            return True
 
-    return "\n\n".join(parts)
+        await status_cb(
+            f"⏳ *{topic}* — {len(problems)} ta bo'lim to'liq emas, tuzatilmoqda "
+            f"({attempt}-tekshiruv)..."
+        )
+        logger.warning(f"Kurs ishi '{topic}': {len(problems)} ta bo'lim to'liq emas ({attempt}-tekshiruv).")
+
+        for p in problems:
+            if p["type"] == "kirish":
+                new_val = await _generate_section(topic, "KIRISH", kirish_instruction, int(target_words * SHARE_KIRISH))
+                if new_val and len(new_val.split()) >= MIN_SECTION_WORDS:
+                    sections["kirish"] = new_val
+
+            elif p["type"] == "xulosa":
+                new_val = await _generate_section(topic, "XULOSA", xulosa_instruction, int(target_words * SHARE_XULOSA))
+                if new_val and len(new_val.split()) >= MIN_SECTION_WORDS:
+                    sections["xulosa"] = new_val
+
+            elif p["type"] == "adabiyotlar":
+                new_val = await _generate_references(topic)
+                if new_val and len(new_val.strip()) >= MIN_REFERENCES_CHARS:
+                    sections["adabiyotlar"] = new_val
+
+            elif p["type"] == "subsection":
+                bob = sections["bobs"][p["bob_index"]]
+                sub = bob["subsections"][p["sub_index"]]
+                sub_title = re.sub(r"^\d+\.\d+\.\s*", "", sub["heading"])
+                new_content = await _generate_one_subsection(
+                    topic, sub["heading"], sub_title, MIN_SUBSECTION_WORDS + 500
+                )
+                if new_content and len(new_content.split()) >= MIN_SUBSECTION_WORDS:
+                    sub["content"] = new_content
+                bob["content"] = _bob_content(bob)
+
+    return not _find_incomplete(sections)
+
+
+def _find_incomplete(sections: dict) -> list:
+    problems = []
+    if len(sections.get("kirish", "").split()) < MIN_SECTION_WORDS:
+        problems.append({"type": "kirish"})
+    for bi, bob in enumerate(sections.get("bobs", [])):
+        for si, sub in enumerate(bob["subsections"]):
+            if len(sub["content"].split()) < MIN_SUBSECTION_WORDS:
+                problems.append({"type": "subsection", "bob_index": bi, "sub_index": si})
+    if len(sections.get("xulosa", "").split()) < MIN_SECTION_WORDS:
+        problems.append({"type": "xulosa"})
+    if len(sections.get("adabiyotlar", "").strip()) < MIN_REFERENCES_CHARS:
+        problems.append({"type": "adabiyotlar"})
+    return problems
 
 
 async def _generate_plan(topic: str) -> dict:
@@ -357,7 +463,7 @@ async def _generate_plan(topic: str) -> dict:
         '"bob2_nomi": "...", "bob2_bolimlari": ["...", "...", "..."], '
         '"bob3_nomi": "...", "bob3_bolimlari": ["...", "...", "..."]}'
     )
-    raw = await ask_ai(COURSE_WORK_AI, prompt, system)
+    raw = await _ask_retry(prompt, system, attempts=2)
     if not raw:
         return DEFAULT_PLAN
     try:
@@ -373,7 +479,7 @@ async def _generate_plan(topic: str) -> dict:
 
 async def _generate_section(topic: str, section_label: str, instruction: str, target_words: int) -> str | None:
     prompt = f"[{section_label}]\n{instruction}\n\nTaxminan {max(target_words, 150)} so'zdan iborat bo'lsin."
-    return await ask_ai(COURSE_WORK_AI, prompt, _COURSE_SYSTEM.format(topic=topic))
+    return await _ask_retry(prompt, _COURSE_SYSTEM.format(topic=topic))
 
 
 async def _generate_references(topic: str) -> str:
@@ -389,7 +495,7 @@ async def _generate_references(topic: str) -> str:
         "Har bir yozuvni to'liq bibliografik formatda yoz (muallif, nom, shahar, nashriyot, "
         "yil). Faqat ro'yxatni yoz, boshqa izoh berma."
     )
-    result = await ask_ai(COURSE_WORK_AI, prompt, system)
+    result = await _ask_retry(prompt, system)
     return result or ""
 
 
