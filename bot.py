@@ -45,6 +45,21 @@ async def _post_init(application):
     await application.bot.set_my_commands(BOT_COMMANDS, scope=BotCommandScopeAllGroupChats())
 
 
+async def _error_handler(update, context):
+    """Har qanday kutilmagan xatoni ushlaydi va logga yozadi — shu orqali
+    foydalanuvchi hech qanday xabarsiz "osilib" qolmaydi, aksincha aniq
+    xato xabarini oladi."""
+    logger.error("Kutilmagan xato yuz berdi:", exc_info=context.error)
+    try:
+        if update and getattr(update, "effective_message", None):
+            await update.effective_message.reply_text(
+                "❌ Kutilmagan xatolik yuz berdi. Iltimos, qayta urinib ko'ring "
+                "yoki /start bilan boshidan boshlang."
+            )
+    except Exception:
+        pass
+
+
 # ============================================================
 # RENDER HTTP HEALTH SERVER
 # ============================================================
@@ -191,6 +206,8 @@ def main():
 
     # UNIVERSAL CHAT — hech qanday conversation faol bo'lmaganda ishlaydi
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, universal_chat.handle_message))
+
+    app.add_error_handler(_error_handler)
 
     print("✅ Bot tayyor! /start yuboring.")
     app.run_polling()
