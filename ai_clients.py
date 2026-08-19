@@ -16,6 +16,8 @@ from config import DEFAULT_GROQ_KEY, GROQ_FALLBACK_MODEL
 
 logger = logging.getLogger(__name__)
 
+GEMINI_TIMEOUT_SEC = 90  # Gemini javob bermasa, cheksiz kutmaslik uchun
+
 _gemini_model_cache: dict[tuple[str, str], object] = {}
 
 # history formati: [{"role": "user"|"assistant", "content": "..."}, ...]
@@ -42,11 +44,18 @@ async def _call_gemini(cfg: dict, prompt: str, system: str, history: list | None
                 for turn in history
             ]
             chat = model.start_chat(history=gemini_history)
-            resp = await asyncio.to_thread(chat.send_message, full_prompt)
+            resp = await asyncio.wait_for(
+                asyncio.to_thread(chat.send_message, full_prompt), timeout=GEMINI_TIMEOUT_SEC
+            )
         else:
-            resp = await asyncio.to_thread(model.generate_content, full_prompt)
+            resp = await asyncio.wait_for(
+                asyncio.to_thread(model.generate_content, full_prompt), timeout=GEMINI_TIMEOUT_SEC
+            )
 
         return resp.text
+    except asyncio.TimeoutError:
+        logger.error(f"Gemini timeout ({cfg.get('model')}): {GEMINI_TIMEOUT_SEC}s ichida javob kelmadi.")
+        return None
     except Exception as e:
         logger.error(f"Gemini xato ({cfg.get('model')}): {e}")
         return None
@@ -134,8 +143,13 @@ async def ask_gemini_vision(cfg: dict, image, caption: str) -> str | None:
         return None
     try:
         model = _get_gemini_model(cfg["api_key"], cfg["model"])
-        resp = await asyncio.to_thread(model.generate_content, [caption, image])
+        resp = await asyncio.wait_for(
+            asyncio.to_thread(model.generate_content, [caption, image]), timeout=GEMINI_TIMEOUT_SEC
+        )
         return resp.text
+    except asyncio.TimeoutError:
+        logger.error(f"Gemini vision timeout: {GEMINI_TIMEOUT_SEC}s ichida javob kelmadi.")
+        return None
     except Exception as e:
         logger.error(f"Gemini vision xato: {e}")
         return None
