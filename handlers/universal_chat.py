@@ -11,6 +11,7 @@ asosiy matn handler.
   o'sha funksiyani o'zi ishga tushirib, javobni foydalanuvchiga qaytaradi.
 """
 
+import asyncio
 import logging
 import re
 from io import BytesIO
@@ -155,7 +156,15 @@ async def _try_course_work(update: Update, context: ContextTypes.DEFAULT_TYPE, t
         parse_mode=ParseMode.MARKDOWN,
     )
 
-    result = await course_work.generate_course_work(topic, pages, status)
+    try:
+        result = await asyncio.wait_for(
+            course_work.generate_course_work(topic, pages, status),
+            timeout=course_work.OVERALL_TIMEOUT_SEC,
+        )
+    except asyncio.TimeoutError:
+        logger.error(f"Kurs ishi generatsiyasi vaqt chegarasidan oshdi ('{topic}').")
+        result = None
+
     if not result:
         await status.edit_text(
             "❌ Kurs ishini yaratib bo'lmadi — AI xizmatlari hozir javob bermayapti. "
