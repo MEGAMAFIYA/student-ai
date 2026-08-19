@@ -56,6 +56,7 @@ MIN_REFERENCES_CHARS = 50        # adabiyotlar ro'yxati "bo'sh emas" deb hisobla
 MAX_COMPLETENESS_ROUNDS = 3      # to'liqlikni tekshirish-tuzatish tsikli necha marta takrorlanadi
 RETRY_ATTEMPTS = 3               # bitta AI so'rovi necha marta qayta urinilishi
 RETRY_DELAY_SEC = 3              # urinishlar orasidagi kutish (soniya)
+OVERALL_TIMEOUT_SEC = 25 * 60    # butun kurs ishi generatsiyasi uchun yakuniy xavfsizlik chegarasi
 
 _ROMAN = {1: "I", 2: "II", 3: "III"}
 
@@ -249,7 +250,12 @@ async def receive_topic_and_generate(update: Update, context: ContextTypes.DEFAU
 
 
 async def _generate_and_send(update, context, topic: str, pages: int, status):
-    result = await generate_course_work(topic, pages, status)
+    try:
+        result = await asyncio.wait_for(generate_course_work(topic, pages, status), timeout=OVERALL_TIMEOUT_SEC)
+    except asyncio.TimeoutError:
+        logger.error(f"Kurs ishi generatsiyasi {OVERALL_TIMEOUT_SEC}s ichida tugamadi ('{topic}').")
+        result = None
+
     if not result:
         await status.edit_text(
             "❌ Kurs ishini yaratib bo'lmadi — AI xizmatlari hozir javob bermayapti "
