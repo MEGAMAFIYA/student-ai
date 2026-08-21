@@ -40,11 +40,11 @@ def _cfg(prefix: str, default_model: str, default_provider: str = "gemini") -> d
 
 
 # Har bir funksiya uchun mustaqil AI sozlamasi
-UNIVERSAL_CHAT_AI = _cfg("UNIVERSAL_CHAT", "gemini-2.5-flash")
-COURSE_WORK_AI = _cfg("COURSE_WORK", "gemini-2.5-flash")
-TRANSLATE_AI = _cfg("TRANSLATE", "gemini-2.5-flash")
-EDIT_PDF_AI = _cfg("EDIT_PDF", "gemini-2.5-flash")
-GUIDE_AI = _cfg("GUIDE", "gemini-2.5-flash")
-VISION_AI = _cfg("VISION", "gemini-2.5-flash")
+UNIVERSAL_CHAT_AI = _cfg("UNIVERSAL_CHAT", "gemini-3.6-flash")
+COURSE_WORK_AI = _cfg("COURSE_WORK", "gemini-3.6-flash")
+TRANSLATE_AI = _cfg("TRANSLATE", "gemini-3.6-flash")
+EDIT_PDF_AI = _cfg("EDIT_PDF", "gemini-3.6-flash")
+GUIDE_AI = _cfg("GUIDE", "gemini-3.6-flash")
+VISION_AI = _cfg("VISION", "gemini-3.6-flash")
 
 MAX_TELEGRAM_TEXT = 3800
