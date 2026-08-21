@@ -106,7 +106,8 @@ _COURSE_SYSTEM = (
     "soʻzlar bilan qayta-qayta takrorlamang — har bir abzas albatta yangi, aniq "
     "maʼlumot, misol yoki dalil olib kelsin. Umumiy va mavhum gaplar oʻrniga aniq "
     "faktlar, raqamlar, holatlar keltiring. FORMATLASH: hech qanday Markdown belgisi "
-    "(**, ##, `, -) yoki LaTeX/matematik formula yozuvi (\\, {}, ^, _) ishlatmang — "
+    "(**, ##, `, -) yoki LaTeX/matematik formula yozuvi (backslash, jingalak qavslar, "
+    "^, _) ishlatmang — "
     "formulalarni oddiy matn ko'rinishida yozing (masalan 'EI = 0.35 x Pfiz + 0.25 x "
     "Pbio'). Faqat oddiy, sodda matn abzaslari yozing."
 )
