@@ -25,6 +25,7 @@ from telegram.ext import (
 
 from config import TELEGRAM_TOKEN
 from handlers import menu, universal_chat, course_work, translate as translate_handler, images_to_pdf, edit_pdf, guide, inline_query
+from pdf_tools import make_pdf
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -63,11 +64,45 @@ async def _error_handler(update, context):
 
 
 # ============================================================
-# RENDER HTTP HEALTH SERVER
+# RENDER HTTP HEALTH SERVER + INLINE PLACEHOLDER PDF
 # ============================================================
+# Inline rejimda "kurs ishi" so'ralganda, Telegram'ga darhol (AI hali javob
+# bermasdan turib) bitta "hujjat turidagi" natija ko'rsatishimiz kerak —
+# aks holda keyinchalik uni haqiqiy PDF bilan almashtirib bo'lmaydi (Telegram
+# matn xabarini hujjatga aylantirishga ruxsat bermaydi, lekin hujjatni
+# boshqa hujjatga almashtirishga ruxsat beradi). Shuning uchun shu yerda
+# kichik "⏳ tayyorlanmoqda..." PDF generatsiya qilib, health-server orqali
+# ochiq (https) manzildan xizmat qilamiz — Telegram uni o'sha yerdan bir
+# marta yuklab oladi.
+
+_PLACEHOLDER_PDF_BYTES: bytes = b""
+_PLACEHOLDER_PDF_PATH = "/placeholder.pdf"
+
+
+def _build_placeholder_pdf() -> bytes:
+    try:
+        buf = make_pdf(
+            "Talaba AI",
+            "Hujjat tayyorlanmoqda...\n\nBiroz kuting, tez orada shu joyga tayyor "
+            "kurs ishi (PDF) qo'yiladi. Agar bu matn hali ham ko'rinayotgan bo'lsa, "
+            "generatsiya davom etmoqda yoki xatolik yuz bergan bo'lishi mumkin.",
+        )
+        return buf.getvalue()
+    except Exception as e:
+        logger.error(f"Placeholder PDF yaratishda xato: {e}", exc_info=True)
+        return b""
+
 
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.path == _PLACEHOLDER_PDF_PATH and _PLACEHOLDER_PDF_BYTES:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/pdf")
+            self.send_header("Content-Length", str(len(_PLACEHOLDER_PDF_BYTES)))
+            self.end_headers()
+            self.wfile.write(_PLACEHOLDER_PDF_BYTES)
+            return
+
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.end_headers()
@@ -83,6 +118,8 @@ class HealthHandler(BaseHTTPRequestHandler):
 
 
 def start_health_server():
+    global _PLACEHOLDER_PDF_BYTES
+    _PLACEHOLDER_PDF_BYTES = _build_placeholder_pdf()
     try:
         port = int(os.getenv("PORT", "10000"))
         server = HTTPServer(("0.0.0.0", port), HealthHandler)
