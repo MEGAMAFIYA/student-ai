@@ -19,23 +19,43 @@ logger = logging.getLogger(__name__)
 GEMINI_TIMEOUT_SEC = 90  # Gemini javob bermasa, cheksiz kutmaslik uchun
 
 _gemini_model_cache: dict[tuple[str, str], object] = {}
+# google-generativeai kutubxonasining genai.configure() chaqiruvi JARAYON
+# DARAJASIDA GLOBAL holatni o'zgartiradi (bitta API kalitni "joriy" qilib
+# qo'yadi). Loyihada har bir funksiya (kurs ishi, tarjima va h.k.) uchun
+# ALOHIDA Gemini kalit sozlash imkoniyati borligi sababli (.env'dagi
+# *_API_KEY), agar ikki foydalanuvchi BIR VAQTDA turli kalitga ega
+# funksiyalarni birinchi marta chaqirsa, configure()+model yaratish
+# oralig'ida ular bir-biriga aralashib ketishi (noto'g'ri kalit bilan
+# so'rov ketishi) nazariy jihatdan mumkin edi. Bu qulf FAQAT shu juda
+# qisqa (millisoniyalik) konfiguratsiya bosqichini qulflaydi — asosiy,
+# UZOQ davom etadigan tarmoq so'rovi (generate_content/send_message)
+# qulfdan TASHQARIDA, to'liq parallel ishlaydi, shuning uchun bu
+# boshqa foydalanuvchilarni BLOKLAMAYDI.
+_gemini_config_lock = asyncio.Lock()
 
 # history formati: [{"role": "user"|"assistant", "content": "..."}, ...]
 
 
-def _get_gemini_model(api_key: str, model_name: str):
+async def _get_gemini_model_safe(api_key: str, model_name: str):
     key = (api_key, model_name)
-    if key not in _gemini_model_cache:
+    cached = _gemini_model_cache.get(key)
+    if cached is not None:
+        return cached
+    async with _gemini_config_lock:
+        cached = _gemini_model_cache.get(key)  # boshqa task shu orada tayyorlab bo'lgan bo'lishi mumkin
+        if cached is not None:
+            return cached
         genai.configure(api_key=api_key)
-        _gemini_model_cache[key] = genai.GenerativeModel(model_name)
-    return _gemini_model_cache[key]
+        model = genai.GenerativeModel(model_name)
+        _gemini_model_cache[key] = model
+        return model
 
 
 async def _call_gemini(cfg: dict, prompt: str, system: str, history: list | None) -> str | None:
     if not cfg.get("api_key"):
         return None
     try:
-        model = _get_gemini_model(cfg["api_key"], cfg["model"])
+        model = await _get_gemini_model_safe(cfg["api_key"], cfg["model"])
         full_prompt = f"{system}\n\n{prompt}" if system else prompt
 
         if history:
@@ -142,7 +162,7 @@ async def ask_gemini_vision(cfg: dict, image, caption: str) -> str | None:
     if not cfg.get("api_key"):
         return None
     try:
-        model = _get_gemini_model(cfg["api_key"], cfg["model"])
+        model = await _get_gemini_model_safe(cfg["api_key"], cfg["model"])
         resp = await asyncio.wait_for(
             asyncio.to_thread(model.generate_content, [caption, image]), timeout=GEMINI_TIMEOUT_SEC
         )
