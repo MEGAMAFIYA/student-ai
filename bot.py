@@ -33,6 +33,14 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
+# httpx/telegram kutubxonalari har 10 soniyada "getUpdates" so'rovini INFO
+# darajasida yozib, logni to'ldirib yuboradi va botning O'Z harakatlari
+# (kurs ishi bosqichlari, AI chaqiruvlari) shular orasida ko'zdan yo'qoladi.
+# Shuning uchun bu kutubxonalarni WARNING darajasiga tushiramiz — faqat
+# haqiqiy xatoliklar ko'rinadi, muvaffaqiyatli getUpdates spami yo'qoladi.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("telegram").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 BOT_COMMANDS = [
