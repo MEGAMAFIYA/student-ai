@@ -14,8 +14,17 @@ funksiyalarning MODEL qiymati bir vaqtda shu nomga o'zgaradi.
 Kelajakda yangi funksiya (masalan rasm generatsiyasi) qo'shilsa, uni ham
 shu menyuga qo'shish uchun config.AI_FUNCTIONS / AI_FUNCTION_LABELS ga bitta
 qator qo'shish kifoya — bu fayl o'zgarishsiz ishlayveradi.
+
+MUHIM: bu yerda parse_mode="HTML" ishlatiladi, Markdown EMAS. Sabab — API
+kalit, model nomi kabi qiymatlar foydalanuvchi tomonidan kiritiladi va ular
+"*", "_", "`" kabi Markdown maxsus belgilarini o'z ichiga olishi mumkin
+(masalan API kalitni "****" bilan bekitganda). Markdown rejimida bunday
+juftlashmagan belgilar "can't find end of the entity" xatosiga olib keladi.
+HTML rejimida esa faqat &, <, > belgilarini escape qilish kifoya (_esc()),
+qolgan barcha belgilar (shu jumladan * va _) muammosiz ko'rsatiladi.
 """
 
+import html
 import logging
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -35,6 +44,13 @@ _FIELD_LABELS = {
 }
 
 
+def _esc(value: str) -> str:
+    """HTML rejimida xavfsiz ko'rsatish uchun &, <, > belgilarini escape qiladi.
+    Foydalanuvchi kiritgan HAR QANDAY qiymat (API kalit, model nomi, URL)
+    ekranga chiqarilishidan oldin albatta shu orqali o'tishi kerak."""
+    return html.escape(str(value), quote=False)
+
+
 def _is_admin(update: Update) -> bool:
     user = update.effective_user
     return bool(user and user.id in config.ADMIN_IDS)
@@ -50,7 +66,7 @@ def _mask_key(value: str) -> str:
 
 def _main_menu_text() -> str:
     return (
-        "🔧 *Developer — AI sozlamalari*\n\n"
+        "🔧 <b>Developer — AI sozlamalari</b>\n\n"
         "Har bir funksiya uchun AI provider, model, API kalit va bazaviy "
         "URL manzilini shu yerdan boshqarishingiz mumkin.\n\n"
         "Bo'limni tanlang:"
@@ -73,14 +89,17 @@ def _main_menu_keyboard() -> InlineKeyboardMarkup:
 
 def _func_menu_text(prefix: str) -> str:
     cfg = config.AI_FUNCTIONS[prefix]
-    label = config.AI_FUNCTION_LABELS[prefix]
-    base_url = cfg.get("base_url") or "(bo'sh — standart ishlatiladi)"
+    label = _esc(config.AI_FUNCTION_LABELS[prefix])
+    base_url = _esc(cfg.get("base_url") or "(bo'sh — standart ishlatiladi)")
+    provider = _esc(cfg.get("provider") or "—")
+    model = _esc(cfg.get("model") or "—")
+    api_key = _esc(_mask_key(cfg.get("api_key", "")))
     return (
         f"{label} — AI sozlamalari\n\n"
-        f"PROVIDER: `{cfg.get('provider') or '—'}`\n"
-        f"MODEL: `{cfg.get('model') or '—'}`\n"
-        f"API_KEY: `{_mask_key(cfg.get('api_key', ''))}`\n"
-        f"BASE_URL: `{base_url}`\n\n"
+        f"PROVIDER: <code>{provider}</code>\n"
+        f"MODEL: <code>{model}</code>\n"
+        f"API_KEY: <code>{api_key}</code>\n"
+        f"BASE_URL: <code>{base_url}</code>\n\n"
         "O'zgartirish uchun maydonni tanlang:"
     )
 
@@ -115,7 +134,7 @@ async def entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data.clear()
     msg = await update.message.reply_text(
-        _main_menu_text(), reply_markup=_main_menu_keyboard(), parse_mode="Markdown"
+        _main_menu_text(), reply_markup=_main_menu_keyboard(), parse_mode="HTML"
     )
     context.user_data["dev_msg"] = (msg.chat_id, msg.message_id)
     return DEV_MENU
@@ -126,7 +145,7 @@ async def _edit_menu(context: ContextTypes.DEFAULT_TYPE, text: str, keyboard: In
     chat_id, message_id = context.user_data["dev_msg"]
     await context.bot.edit_message_text(
         chat_id=chat_id, message_id=message_id, text=text,
-        reply_markup=keyboard, parse_mode="Markdown",
+        reply_markup=keyboard, parse_mode="HTML",
     )
 
 
@@ -149,21 +168,21 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if action == "menu":
         await query.edit_message_text(
-            _main_menu_text(), reply_markup=_main_menu_keyboard(), parse_mode="Markdown"
+            _main_menu_text(), reply_markup=_main_menu_keyboard(), parse_mode="HTML"
         )
         return DEV_MENU
 
     if action == "func":
         prefix = parts[2]
         await query.edit_message_text(
-            _func_menu_text(prefix), reply_markup=_func_menu_keyboard(prefix), parse_mode="Markdown"
+            _func_menu_text(prefix), reply_markup=_func_menu_keyboard(prefix), parse_mode="HTML"
         )
         return DEV_MENU
 
     if action == "editprov":
         prefix = parts[2]
         await query.edit_message_text(
-            f"{config.AI_FUNCTION_LABELS[prefix]} — PROVIDER tanlang:",
+            f"{_esc(config.AI_FUNCTION_LABELS[prefix])} — PROVIDER tanlang:",
             reply_markup=_provider_choice_keyboard(f"dev:func:{prefix}", f"dev:setprov:{prefix}"),
         )
         return DEV_MENU
@@ -172,8 +191,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         prefix, provider = parts[2], parts[3]
         config.update_ai_field(prefix, "provider", provider)
         await query.edit_message_text(
-            f"✅ PROVIDER — *{provider}* qilib o'rnatildi.\n\n" + _func_menu_text(prefix),
-            reply_markup=_func_menu_keyboard(prefix), parse_mode="Markdown",
+            f"✅ PROVIDER — <b>{_esc(provider)}</b> qilib o'rnatildi.\n\n" + _func_menu_text(prefix),
+            reply_markup=_func_menu_keyboard(prefix), parse_mode="HTML",
         )
         return DEV_MENU
 
@@ -181,22 +200,22 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         prefix, field = parts[2], parts[3]
         context.user_data["dev_edit"] = (prefix, field)
         current = config.AI_FUNCTIONS[prefix].get(field, "")
-        shown = _mask_key(current) if field == "api_key" else (current or "(bo'sh)")
+        shown = _esc(_mask_key(current) if field == "api_key" else (current or "(bo'sh)"))
         await query.edit_message_text(
-            f"{config.AI_FUNCTION_LABELS[prefix]} — *{_FIELD_LABELS[field]}*\n"
-            f"Joriy qiymat: `{shown}`\n\n"
+            f"{_esc(config.AI_FUNCTION_LABELS[prefix])} — <b>{_FIELD_LABELS[field]}</b>\n"
+            f"Joriy qiymat: <code>{shown}</code>\n\n"
             "Yangi qiymatni xabar qilib yuboring.\n"
-            "Bo'sh qilish uchun `-` yuboring.",
-            parse_mode="Markdown",
+            "Bo'sh qilish uchun <code>-</code> yuboring.",
+            parse_mode="HTML",
         )
         return DEV_WAIT_TEXT
 
     if action == "bulk":
         await query.edit_message_text(
-            "➕ *Barcha modellar*\n\nAvval AI turini (provider) tanlang — shu "
+            "➕ <b>Barcha modellar</b>\n\nAvval AI turini (provider) tanlang — shu "
             "turdagi BARCHA funksiyalarning modeli birdaniga o'zgaradi:",
             reply_markup=_provider_choice_keyboard("dev:menu", "dev:bulkprov"),
-            parse_mode="Markdown",
+            parse_mode="HTML",
         )
         return DEV_MENU
 
@@ -206,12 +225,12 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         affected = [
             config.AI_FUNCTION_LABELS[p] for p, c in config.AI_FUNCTIONS.items() if c.get("provider") == provider
         ]
-        affected_txt = "\n".join(f"• {a}" for a in affected) or "(hozircha bu provider'da hech qaysi funksiya yo'q)"
+        affected_txt = "\n".join(f"• {_esc(a)}" for a in affected) or "(hozircha bu provider'da hech qaysi funksiya yo'q)"
         await query.edit_message_text(
-            f"➕ *Barcha modellar — {provider}*\n\n"
+            f"➕ <b>Barcha modellar — {_esc(provider)}</b>\n\n"
             f"Ta'sir qiladigan funksiyalar:\n{affected_txt}\n\n"
             "Yangi model nomini xabar qilib yuboring:",
-            parse_mode="Markdown",
+            parse_mode="HTML",
         )
         return DEV_WAIT_BULK_MODEL
 
@@ -262,10 +281,10 @@ async def on_bulk_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     updated = config.bulk_update_model_by_provider(provider, model)
     if updated:
-        names = "\n".join(f"• {config.AI_FUNCTION_LABELS[p]}" for p in updated)
-        text = f"✅ *{provider}* uchun model *{model}* ga o'zgartirildi:\n\n{names}"
+        names = "\n".join(f"• {_esc(config.AI_FUNCTION_LABELS[p])}" for p in updated)
+        text = f"✅ <b>{_esc(provider)}</b> uchun model <b>{_esc(model)}</b> ga o'zgartirildi:\n\n{names}"
     else:
-        text = f"⚠️ *{provider}* provider'ida hech qaysi funksiya topilmadi — hech narsa o'zgarmadi."
+        text = f"⚠️ <b>{_esc(provider)}</b> provider'ida hech qaysi funksiya topilmadi — hech narsa o'zgarmadi."
 
     await _edit_menu(context, text + "\n\n" + _main_menu_text(), _main_menu_keyboard())
     context.user_data.pop("dev_bulk_provider", None)
