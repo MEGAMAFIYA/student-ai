@@ -53,7 +53,9 @@ async def _get_gemini_model_safe(api_key: str, model_name: str):
 
 async def _call_gemini(cfg: dict, prompt: str, system: str, history: list | None) -> str | None:
     if not cfg.get("api_key"):
+        logger.warning(f"Gemini ({cfg.get('model')}): API kalit sozlanmagan — chaqiruv o'tkazib yuborildi.")
         return None
+    logger.info(f"Gemini ({cfg.get('model')}) ga so'rov yuborilmoqda (prompt: {len(prompt)} belgi)...")
     try:
         model = await _get_gemini_model_safe(cfg["api_key"], cfg["model"])
         full_prompt = f"{system}\n\n{prompt}" if system else prompt
@@ -72,19 +74,22 @@ async def _call_gemini(cfg: dict, prompt: str, system: str, history: list | None
                 asyncio.to_thread(model.generate_content, full_prompt), timeout=GEMINI_TIMEOUT_SEC
             )
 
+        logger.info(f"Gemini ({cfg.get('model')}): ✅ javob qabul qilindi ({len(resp.text or '')} belgi).")
         return resp.text
     except asyncio.TimeoutError:
         logger.error(f"Gemini timeout ({cfg.get('model')}): {GEMINI_TIMEOUT_SEC}s ichida javob kelmadi.")
         return None
     except Exception as e:
-        logger.error(f"Gemini xato ({cfg.get('model')}): {e}")
+        logger.error(f"Gemini xato ({cfg.get('model')}): {type(e).__name__}: {e}")
         return None
 
 
 async def _call_groq(cfg: dict, prompt: str, system: str, history: list | None) -> str | None:
     if not cfg.get("api_key"):
+        logger.warning(f"Groq ({cfg.get('model')}): API kalit sozlanmagan — chaqiruv o'tkazib yuborildi.")
         return None
     base_url = cfg.get("base_url") or "https://api.groq.com/openai/v1"
+    logger.info(f"Groq ({cfg.get('model')}) ga so'rov yuborilmoqda (prompt: {len(prompt)} belgi)...")
 
     messages = [{"role": "system", "content": system or "Siz foydali yordamchisiz. O'zbek tilida javob bering."}]
     if history:
@@ -101,22 +106,29 @@ async def _call_groq(cfg: dict, prompt: str, system: str, history: list | None) 
                 json={"model": cfg["model"], "messages": messages},
             )
             r.raise_for_status()
-            return r.json()["choices"][0]["message"]["content"]
+            content = r.json()["choices"][0]["message"]["content"]
+            logger.info(f"Groq ({cfg.get('model')}): ✅ javob qabul qilindi ({len(content or '')} belgi).")
+            return content
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Groq HTTP xato ({cfg.get('model')}): {e.response.status_code} — {e.response.text[:300]}")
+        return None
     except Exception as e:
-        logger.error(f"Groq xato ({cfg.get('model')}): {e}")
+        logger.error(f"Groq xato ({cfg.get('model')}): {type(e).__name__}: {e}")
         return None
 
 
 async def _call_pollinations(prompt: str, system: str) -> str | None:
     """Kalitsiz, to'liq bepul zaxira AI (pollinations.ai matn API'si). Oxirgi chora sifatida ishlatiladi."""
+    logger.info("Pollinations (bepul zaxira) ga so'rov yuborilmoqda...")
     try:
         full_prompt = f"{system}\n\n{prompt}" if system else prompt
         async with httpx.AsyncClient(timeout=90.0) as client:
             r = await client.get(f"https://text.pollinations.ai/{quote(full_prompt)}")
             r.raise_for_status()
+            logger.info(f"Pollinations: ✅ javob qabul qilindi ({len(r.text or '')} belgi).")
             return r.text
     except Exception as e:
-        logger.error(f"Pollinations text xato: {e}")
+        logger.error(f"Pollinations text xato: {type(e).__name__}: {e}")
         return None
 
 
@@ -145,7 +157,10 @@ async def ask_ai(
         return result
 
     if not allow_fallback:
+        logger.warning(f"Asosiy provider ({provider}) ishlamadi, fallback O'CHIRILGAN (allow_fallback=False) — None qaytariladi.")
         return None
+
+    logger.warning(f"Asosiy provider ({provider}, model={cfg.get('model')}) ishlamadi — zaxira provayderga o'tilmoqda...")
 
     if provider != "groq" and DEFAULT_GROQ_KEY:
         result = await _call_groq(
@@ -153,9 +168,16 @@ async def ask_ai(
             prompt, system, history,
         )
         if result:
+            logger.info("✅ Zaxira Groq muvaffaqiyatli javob berdi.")
             return result
+        logger.warning("Zaxira Groq ham ishlamadi — oxirgi chora Pollinations'ga o'tilmoqda...")
+    elif provider != "groq":
+        logger.warning("DEFAULT_GROQ_KEY sozlanmagan — Groq zaxirasi o'tkazib yuborildi, to'g'ridan-to'g'ri Pollinations'ga o'tilmoqda...")
 
-    return await _call_pollinations(prompt, system)
+    result = await _call_pollinations(prompt, system)
+    if not result:
+        logger.error(f"❌ Barcha AI provayderlar (asosiy={provider}, Groq zaxira, Pollinations) ishlamadi — None qaytarilmoqda.")
+    return result
 
 
 async def ask_gemini_vision(cfg: dict, image, caption: str) -> str | None:
