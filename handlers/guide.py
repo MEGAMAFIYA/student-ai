@@ -3,6 +3,7 @@
 AI har biriga javob yozib, kichik harflarda PDF qo'llanma qilib beradi.
 """
 
+import asyncio
 import logging
 
 from telegram import Update, InputFile, InlineKeyboardButton, InlineKeyboardMarkup
@@ -78,7 +79,7 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
     content = "\n\n".join(parts)
-    pdf_buf = make_pdf("Qo'llanma", content, lowercase=True)
+    pdf_buf = await asyncio.to_thread(make_pdf, "Qo'llanma", content, lowercase=True)
 
     await context.bot.send_document(
         update.effective_chat.id,
