@@ -3,6 +3,7 @@
 tarjima asl format (matn/PDF) da qaytariladi.
 """
 
+import asyncio
 import logging
 from io import BytesIO
 
@@ -53,7 +54,7 @@ async def receive_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
         bio = BytesIO()
         await file.download_to_memory(out=bio)
         bio.seek(0)
-        text = extract_pdf_text(bio.read())
+        text = await asyncio.to_thread(extract_pdf_text, bio.read())
         if not text:
             await msg.reply_text("❌ PDF dan matn o'qib bo'lmadi (skanerlangan bo'lishi mumkin).")
             return TR_WAIT_CONTENT
@@ -114,7 +115,7 @@ async def _do_translate(update, context, target_lang: str, edit_query=None, stat
 
     if source_type == "pdf":
         filename = context.user_data.get("tr_filename", "tarjima")
-        pdf_buf = make_pdf(f"{filename} ({target_lang})", translated)
+        pdf_buf = await asyncio.to_thread(make_pdf, f"{filename} ({target_lang})", translated)
         await context.bot.send_document(
             chat_id,
             document=InputFile(pdf_buf, filename=f"{filename}_{target_lang}.pdf"),
