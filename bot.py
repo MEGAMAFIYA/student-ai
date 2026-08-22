@@ -6,8 +6,10 @@ Groq / bepul zaxira) bilan ishlaydi. Render Free Web Service uchun HTTP
 health-check server ham ishga tushiriladi.
 """
 
+import asyncio
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
 
@@ -217,9 +219,32 @@ def main():
 
     Thread(target=start_health_server, daemon=True).start()
 
+    # ============================================================
+    # CONCURRENCY: bir nechta foydalanuvchi bir vaqtda ishlashi uchun
+    # ============================================================
+    # PTB'ning STANDART sozlamasi concurrent_updates=False — bu degani,
+    # bot kiruvchi update'larni BIR-BIRIDAN KEYIN, TO'LIQ KUTIB ishlaydi
+    # (hatto ular sof tarmoq so'rovi/AI javobi kutish bo'lsa ham). Aynan
+    # shu sozlama "1-foydalanuvchi tugamaguncha 2-chi kuta beradi" degan
+    # muammoning bevosita sababi edi.
+    #
+    # concurrent_updates(N) — PTB ICHIDA asyncio.Semaphore(N) orqali
+    # ishlaydi: bir vaqtning o'zida ko'pi bilan N ta update parallel
+    # qayta ishlanadi, N+1-chisi esa BOSHQA FOYDALANUVCHILARNI emas,
+    # faqat navbatdagi update'ni bir oz kutadi. Bu — "cheksiz parallel
+    # task" emas, balki aynan talab qilingan semaphore/worker-limit
+    # yondashuvi (global navbat emas).
+    #
+    # N=32 qiymati: Python'ning standart ThreadPoolExecutor hajmi bilan
+    # (pastga qarang) muvofiqlashtirilgan — 10-20 ta faol foydalanuvchi
+    # bemalol sig'adi, shu bilan birga bitta jarayonni cheksiz sonli
+    # oqim (thread)/vazifa bilan ortiqcha yuklab yubormaydi.
+    CONCURRENT_UPDATES = 32
+
     app = (
         ApplicationBuilder()
         .token(TELEGRAM_TOKEN)
+        .concurrent_updates(CONCURRENT_UPDATES)
         .connect_timeout(60)
         .read_timeout(60)
         .write_timeout(60)
@@ -227,6 +252,16 @@ def main():
         .post_init(_post_init)
         .build()
     )
+
+    # PDF yaratish/o'qish kabi CPU-bog'liq vazifalar (pdf_tools.py) endi
+    # asyncio.to_thread() orqali shu executor'da bajariladi (handlerlarga
+    # qarang). Standart executor hajmi ba'zi hosting muhitlarida (masalan,
+    # 1 vCPU'li Render Free) faqat 5 ga teng bo'lishi mumkin
+    # (min(32, os.cpu_count()+4)) — bu bir nechta foydalanuvchi bir vaqtda
+    # PDF generatsiya qilganda navbatga sabab bo'lishi mumkin, shuning
+    # uchun uni CONCURRENT_UPDATES bilan mos hajmga kengaytiramiz.
+    loop = asyncio.get_event_loop()
+    loop.set_default_executor(ThreadPoolExecutor(max_workers=CONCURRENT_UPDATES))
 
     app.add_handler(CommandHandler("start", menu.start_cmd))
     app.add_handler(CommandHandler("cancel", menu.cancel_cmd))
