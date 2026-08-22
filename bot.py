@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
 
-from telegram import BotCommand, BotCommandScopeDefault, BotCommandScopeAllGroupChats
+from telegram import BotCommand, BotCommandScopeDefault, BotCommandScopeAllGroupChats, BotCommandScopeChat
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -25,8 +25,9 @@ from telegram.ext import (
     filters,
 )
 
+import config
 from config import TELEGRAM_TOKEN
-from handlers import menu, universal_chat, course_work, translate as translate_handler, images_to_pdf, edit_pdf, guide, inline_query
+from handlers import menu, universal_chat, course_work, translate as translate_handler, images_to_pdf, edit_pdf, guide, inline_query, developer
 from pdf_tools import make_pdf
 
 logging.basicConfig(
@@ -53,9 +54,22 @@ BOT_COMMANDS = [
 
 async def _post_init(application):
     """Telegram '/' tugmasi bosilganda ko'rinadigan buyruqlar ro'yxatini o'rnatadi
-    (shaxsiy chatlar va guruhlar uchun alohida-alohida)."""
+    (shaxsiy chatlar va guruhlar uchun alohida-alohida). /developer buyrug'i
+    BUNGA QO'SHILMAYDI — u faqat config.ADMIN_IDS ichidagi foydalanuvchilarning
+    shaxsiy '/' menyusida (BotCommandScopeChat orqali) alohida ko'rsatiladi,
+    boshqa hech kimga (oddiy foydalanuvchi yoki guruhlarga) ko'rinmaydi."""
     await application.bot.set_my_commands(BOT_COMMANDS, scope=BotCommandScopeDefault())
     await application.bot.set_my_commands(BOT_COMMANDS, scope=BotCommandScopeAllGroupChats())
+
+    if config.ADMIN_IDS:
+        admin_commands = BOT_COMMANDS + [BotCommand("developer", "🔧 AI sozlamalari (faqat admin)")]
+        for admin_id in config.ADMIN_IDS:
+            try:
+                await application.bot.set_my_commands(
+                    admin_commands, scope=BotCommandScopeChat(chat_id=admin_id)
+                )
+            except Exception as e:
+                logger.warning(f"/developer buyrug'ini admin ({admin_id}) uchun o'rnatishda xato: {e}")
 
 
 async def _error_handler(update, context):
@@ -214,6 +228,31 @@ def build_guide_conv():
     )
 
 
+def build_developer_conv():
+    """👨‍💻 /developer — faqat adminlar uchun AI sozlamalari menyusi.
+    Ruxsat tekshiruvi handlers/developer.py ichida (_is_admin) amalga oshadi —
+    admin bo'lmagan foydalanuvchi buyruqni chaqirsa, darhol rad javobi olib
+    conversation tugaydi."""
+    return ConversationHandler(
+        entry_points=[CommandHandler("developer", developer.entry)],
+        states={
+            developer.DEV_MENU: [
+                CallbackQueryHandler(developer.on_callback, pattern="^dev:"),
+            ],
+            developer.DEV_WAIT_TEXT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, developer.on_text),
+                CallbackQueryHandler(developer.on_callback, pattern="^dev:"),
+            ],
+            developer.DEV_WAIT_BULK_MODEL: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, developer.on_bulk_text),
+                CallbackQueryHandler(developer.on_callback, pattern="^dev:"),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", developer.cancel)],
+        name="developer_conv",
+    )
+
+
 # ============================================================
 # ISHGA TUSHIRISH
 # ============================================================
@@ -282,6 +321,7 @@ def main():
     app.add_handler(build_images_pdf_conv())
     app.add_handler(build_edit_pdf_conv())
     app.add_handler(build_guide_conv())
+    app.add_handler(build_developer_conv())
 
     app.add_handler(CallbackQueryHandler(menu.universal_selected, pattern="^menu:universal$"))
     app.add_handler(CallbackQueryHandler(menu.back_to_menu, pattern="^menu:back$"))
