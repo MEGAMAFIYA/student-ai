@@ -4,6 +4,7 @@ PDF va rasm bilan bog'liq umumiy funksiyalar.
 
 import os
 import re
+import threading
 from io import BytesIO
 
 from PIL import Image
@@ -55,6 +56,14 @@ _FONT_SOURCES = {
 }
 
 _fonts_ready = False
+# Endi PDF funksiyalari asyncio.to_thread() orqali chaqirilgani sababli, bir
+# nechta HAQIQIY OS-oqim (thread) birinchi PDF so'ralganda BIR VAQTDA shu
+# yerga kelishi mumkin. Lock'siz holda ikkalasi ham bir xil fayllarni bir
+# vaqtda yozib, buzilgan (yarim yuklangan) shrift faylini qoldirib ketishi
+# mumkin edi. Double-checked locking: lock faqat BIRINCHI marta (kamdan-kam)
+# ishlatiladi, keyin _fonts_ready=True bo'lgach hech qanday qo'shimcha
+# xarajatsiz darhol qaytadi — bu boshqa foydalanuvchilarni bloklamaydi.
+_fonts_lock = threading.Lock()
 
 
 def _download_missing_fonts():
@@ -85,11 +94,14 @@ def _ensure_fonts():
     global _fonts_ready
     if _fonts_ready:
         return
-    _download_missing_fonts()
-    pdfmetrics.registerFont(TTFont(FONT_REGULAR, os.path.join(_FONTS_DIR, "DejaVuSerif.ttf")))
-    pdfmetrics.registerFont(TTFont(FONT_BOLD, os.path.join(_FONTS_DIR, "DejaVuSerif-Bold.ttf")))
-    pdfmetrics.registerFont(TTFont(FONT_ITALIC, os.path.join(_FONTS_DIR, "DejaVuSerif-Italic.ttf")))
-    _fonts_ready = True
+    with _fonts_lock:
+        if _fonts_ready:  # boshqa oqim shu orada allaqachon tayyorlab bo'lgan bo'lishi mumkin
+            return
+        _download_missing_fonts()
+        pdfmetrics.registerFont(TTFont(FONT_REGULAR, os.path.join(_FONTS_DIR, "DejaVuSerif.ttf")))
+        pdfmetrics.registerFont(TTFont(FONT_BOLD, os.path.join(_FONTS_DIR, "DejaVuSerif-Bold.ttf")))
+        pdfmetrics.registerFont(TTFont(FONT_ITALIC, os.path.join(_FONTS_DIR, "DejaVuSerif-Italic.ttf")))
+        _fonts_ready = True
 
 
 # ============================================================
