@@ -3,6 +3,7 @@
 AI matnni ko'rsatmaga muvofiq tuzatib, qayta PDF qilib qaytaradi.
 """
 
+import asyncio
 import logging
 from io import BytesIO
 
@@ -46,7 +47,7 @@ async def receive_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await file.download_to_memory(out=bio)
     bio.seek(0)
 
-    text = extract_pdf_text(bio.read())
+    text = await asyncio.to_thread(extract_pdf_text, bio.read())
     if not text:
         await update.message.reply_text("❌ PDF dan matn o'qib bo'lmadi (skanerlangan bo'lishi mumkin).")
         return EP_WAIT_PDF
@@ -90,7 +91,7 @@ async def receive_instruction(update: Update, context: ContextTypes.DEFAULT_TYPE
         context.user_data.clear()
         return ConversationHandler.END
 
-    pdf_buf = make_pdf(filename.title(), edited)
+    pdf_buf = await asyncio.to_thread(make_pdf, filename.title(), edited)
     await update.message.reply_document(
         document=InputFile(pdf_buf, filename=f"{filename}_tahrirlangan.pdf"),
         caption="✅ Hujjat tahrirlandi.",
