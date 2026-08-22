@@ -18,11 +18,13 @@ from telegram.ext import (
     MessageHandler,
     CallbackQueryHandler,
     ConversationHandler,
+    InlineQueryHandler,
+    ChosenInlineResultHandler,
     filters,
 )
 
 from config import TELEGRAM_TOKEN
-from handlers import menu, universal_chat, course_work, translate as translate_handler, images_to_pdf, edit_pdf, guide
+from handlers import menu, universal_chat, course_work, translate as translate_handler, images_to_pdf, edit_pdf, guide, inline_query
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -206,6 +208,13 @@ def main():
 
     # UNIVERSAL CHAT — hech qanday conversation faol bo'lmaganda ishlaydi
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, universal_chat.handle_message))
+
+    # INLINE REJIM — "@Student_ai_uz_bot savol" deb istalgan chatda yozilganda
+    # (bot o'sha chatga a'zo bo'lmasa ham) ishlaydi. BotFather'da /setinline va
+    # /setinlinefeedback (Enabled) sozlangan bo'lishi SHART — inline_query.py
+    # faylidagi izohga qarang.
+    app.add_handler(InlineQueryHandler(inline_query.on_inline_query))
+    app.add_handler(ChosenInlineResultHandler(inline_query.on_chosen_inline_result))
 
     app.add_error_handler(_error_handler)
 
