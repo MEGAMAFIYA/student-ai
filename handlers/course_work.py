@@ -54,6 +54,10 @@ MIN_SECTION_WORDS = 40           # kirish/xulosa "bo'sh emas" deb hisoblanishi u
 MIN_SUBSECTION_WORDS = 40        # har bir kichik bo'lim uchun minimal so'z
 MIN_REFERENCES_CHARS = 50        # adabiyotlar ro'yxati "bo'sh emas" deb hisoblanishi uchun
 MAX_COMPLETENESS_ROUNDS = 3      # to'liqlikni tekshirish-tuzatish tsikli necha marta takrorlanadi
+
+# ===== YAKUNIY MUHARRIRLIK (ziddiyat/til/raqamlash tuzatish) sozlamalari =====
+MAX_HARMONIZE_WORDS = 4000       # shundan uzun bo'lim muharrirlik bosqichida o'tkazib yuboriladi
+
 RETRY_ATTEMPTS = 3               # bitta AI so'rovi necha marta qayta urinilishi
 RETRY_DELAY_SEC = 3              # urinishlar orasidagi kutish (soniya)
 OVERALL_TIMEOUT_SEC = 25 * 60    # butun kurs ishi generatsiyasi uchun yakuniy xavfsizlik chegarasi
@@ -99,17 +103,49 @@ def clean_topic(raw: str) -> str:
 
 _COURSE_SYSTEM = (
     "Siz tajribali oʻqituvchi va ilmiy muharrirsiz. Faqat '{topic}' mavzusi doirasida, "
-    "undan chetga chiqmasdan yozing. Oʻzbek tilida, ilmiy-akademik uslubda (uchinchi "
-    "shaxsda, shaxs olmoshlarisiz) yozing. Faqat soʻralgan boʻlim matnini yozing, "
-    "boshqa izoh, sarlavha yoki tushuntirish qoʻshmang — sarlavhani alohida qo'shmang, "
-    "chunki u allaqachon hujjatda mavjud. MUHIM: bir xil fikr yoki jumlani turli "
-    "soʻzlar bilan qayta-qayta takrorlamang — har bir abzas albatta yangi, aniq "
-    "maʼlumot, misol yoki dalil olib kelsin. Umumiy va mavhum gaplar oʻrniga aniq "
-    "faktlar, raqamlar, holatlar keltiring. FORMATLASH: hech qanday Markdown belgisi "
+    "undan chetga chiqmasdan yozing. FAQAT va FAQAT toza, adabiy oʻzbek tilida yozing — "
+    "boshqa hech qanday tildan (rus, ozarbayjon, turk, qoraqalpoq va h.k.) hatto bitta "
+    "soʻz yoki soʻz shakli ham aralashtirmang; agar biror atama oʻzbek tilida notanish "
+    "boʻlsa, uni oʻzbekchalashtirib yoki tushuntirib yozing, xorijiy shaklda qoldirmang. "
+    "Ilmiy-akademik uslubda (uchinchi shaxsda, shaxs olmoshlarisiz) yozing. Faqat "
+    "soʻralgan boʻlim matnini yozing, boshqa izoh, sarlavha yoki tushuntirish qoʻshmang "
+    "— sarlavhani alohida qo'shmang, chunki u allaqachon hujjatda mavjud. MATN ICHIDA "
+    "BOʻLIMLARNI OʻZINGIZ SOʻZ BILAN TARTIB RAQAMLAMANG (masalan 'Birinchi vazifa', "
+    "'Ikkinchi bosqich', 'Sakkizinchi bo'lim' kabi iboralarni ishlatmang) — raqamlash "
+    "allaqachon sarlavhalarda mavjud, matn ichida bunga hojat yo'q. MUHIM: bir xil fikr "
+    "yoki jumlani turli soʻzlar bilan qayta-qayta takrorlamang — har bir abzas albatta "
+    "yangi, aniq maʼlumot, misol yoki dalil olib kelsin. Umumiy va mavhum gaplar oʻrniga "
+    "aniq faktlar, raqamlar, holatlar keltirish tavsiya etiladi, LEKIN: har bir abzasda "
+    "majburiy ravishda raqam ixtiro qilishga urinmang — agar aniq son bilmasangiz, "
+    "umumiy tavsif bilan cheklaning, notoʻgʻri yoki oʻylab topilgan haddan tashqari "
+    "\"aniq\" statistikani (masalan soxta foiz yoki oʻlchov) keltirmang. Agar bir xil "
+    "texnik koʻrsatkich (masalan stol balandligi, yoritish darajasi, monitor masofasi) "
+    "haqida bir necha marta yozsangiz, HAR SAFAR BIR XIL QIYMATNI ishlating — turli "
+    "joyda turlicha raqam bermang. FORMATLASH: hech qanday Markdown belgisi "
     "(**, ##, `, -) yoki LaTeX/matematik formula yozuvi (backslash, jingalak qavslar, "
     "^, _) ishlatmang — "
     "formulalarni oddiy matn ko'rinishida yozing (masalan 'EI = 0.35 x Pfiz + 0.25 x "
     "Pbio'). Faqat oddiy, sodda matn abzaslari yozing."
+)
+
+_HARMONIZE_SYSTEM = (
+    "Siz ilmiy muharrirsiz. Sizga tayyor matn beriladi. Vazifangiz matnni qayta yozish "
+    "EMAS, balki quyidagi aniq muammolarni tuzatishdan iborat: "
+    "(1) xuddi shu texnik ko'rsatkich yoki statistik ma'lumot (masalan, stol balandligi, "
+    "yoritish darajasi, monitor masofasi, foiz ko'rsatkichlari) matn ichida turli joyda "
+    "bir-biriga zid raqamlar bilan berilgan bo'lsa — barchasini bitta izchil, mantiqan "
+    "to'g'ri qiymatga moslashtiring (fizik jihatdan mumkin bo'lmagan qiymatlarni ham "
+    "(masalan, stol balandligi bir necha santimetr yoki millimetr sifatida ko'rsatilgan "
+    "bo'lsa) mantiqiy qiymatga tuzating); "
+    "(2) o'zbek tiliga xos bo'lmagan tasodifiy so'z yoki harflar ketma-ketligini to'g'ri "
+    "o'zbekcha so'zga almashtiring; "
+    "(3) matnda so'z bilan o'z-o'zidan tartib raqamlash (masalan 'Birinchi vazifa', "
+    "'Sakkizinchi bo'lim' kabi) noto'g'ri takrorlangan yoki xato ketma-ketlikda bo'lsa, "
+    "to'g'rilang yoki bunday iboralarni butunlay olib tashlang; "
+    "(4) qolган Markdown yoki LaTeX belgilarini olib tashlang. "
+    "Boshqa hech narsani o'zgartirmang — matn mazmuni, misollar, uzunligi va sarlavhalar "
+    "deyarli bir xil qolishi shart, faqat yuqoridagi aniq xatolarni tuzating. Faqat "
+    "tuzatilgan to'liq matnni qaytaring, hech qanday izoh yoki tushuntirish yozmang."
 )
 
 # Bo'limni kengaytirishda har safar boshqa jihatga urg'u berish uchun —
@@ -141,6 +177,45 @@ _LATEX_TIMES_RE = re.compile(r"\\times")
 _LATEX_SUBSUP_RE = re.compile(r"[_^]\{([^}]*)\}")
 _LATEX_BRACKETS_RE = re.compile(r"\\[\[\]()]")
 _LATEX_CMD_RE = re.compile(r"\\[a-zA-Z]+")
+
+
+# ===== FAKT REESTRI: bo'limlar bir-birining raqamlariga zid bo'lmasligi uchun =====
+# Har bir generatsiya qilingan bo'limdan raqam/o'lchov ichida bo'lgan gaplar ajratib
+# olinib, keyingi bo'lim so'rovlariga "avval aytilgan" kontekst sifatida qo'shiladi.
+_FACT_SENTENCE_RE = re.compile(r"[^.\n]*\d[^.\n]*\.")
+MAX_FACTS_IN_REGISTRY = 60
+MAX_FACTS_IN_PROMPT = 25
+
+
+def _extract_facts(text: str, limit: int = 5) -> list[str]:
+    if not text:
+        return []
+    out = []
+    for s in _FACT_SENTENCE_RE.findall(text):
+        s = " ".join(s.split()).strip()
+        if 20 <= len(s) <= 220:
+            out.append(s)
+    return out[:limit]
+
+
+def _register_facts(registry: list[str], text: str) -> None:
+    for f in _extract_facts(text):
+        if f not in registry:
+            registry.append(f)
+    del registry[:-MAX_FACTS_IN_REGISTRY]  # eng eski faktlarni siqib chiqarish
+
+
+def _facts_block(registry: list[str]) -> str:
+    if not registry:
+        return ""
+    items = registry[-MAX_FACTS_IN_PROMPT:]
+    bullet_list = "\n".join(f"- {f}" for f in items)
+    return (
+        "\n\nMUHIM — HUJJATDA AVVAL YOZILGAN ASOSIY RAQAM VA KOʻRSATKICHLAR "
+        "(bular bilan ZID kelmang; agar shu turdagi parametrni qayta tilga olsangiz, "
+        "aynan shu qiymatlardan foydalaning, yangi/boshqa raqam o'ylab topmang):\n"
+        f"{bullet_list}"
+    )
 
 
 def _is_refusal(text: str) -> bool:
@@ -334,8 +409,15 @@ async def generate_course_work(topic: str, pages: int, status_msg=None):
         "yechimlarning foydasi, ishning amaliy ahamiyati."
     )
 
+    # Butun hujjat davomida to'ldiriladigan umumiy "fakt reestri" — har bir
+    # yangi bo'lim avvalgi bo'limlarda qanday raqam/o'lchov aytilganini bilib,
+    # ularga zid bo'lmasdan yozadi.
+    facts_registry: list[str] = []
+
     await _status(f"⏳ *{topic}* — kirish yozilmoqda...")
-    kirish = await _generate_section(topic, "KIRISH", kirish_instruction, int(target_words * SHARE_KIRISH)) or ""
+    kirish = await _generate_section(
+        topic, "KIRISH", kirish_instruction, int(target_words * SHARE_KIRISH), facts_registry
+    ) or ""
 
     bobs = []
     for i in (1, 2, 3):
@@ -343,13 +425,15 @@ async def generate_course_work(topic: str, pages: int, status_msg=None):
         bolimlari = plan.get(f"bob{i}_bolimlari") or DEFAULT_PLAN[f"bob{i}_bolimlari"]
         bob_target_words = int(target_words * SHARE_BOB)
 
-        subsections = await _generate_bob(topic, i, bolimlari, bob_target_words, _status)
+        subsections = await _generate_bob(topic, i, bolimlari, bob_target_words, _status, facts_registry)
         bob = {"title": f"{_ROMAN[i]}-BOB. {bob_nomi.upper()}", "subsections": subsections}
         bob["content"] = _bob_content(bob)
         bobs.append(bob)
 
     await _status(f"⏳ *{topic}* — xulosa yozilmoqda...")
-    xulosa = await _generate_section(topic, "XULOSA", xulosa_instruction, int(target_words * SHARE_XULOSA)) or ""
+    xulosa = await _generate_section(
+        topic, "XULOSA", xulosa_instruction, int(target_words * SHARE_XULOSA), facts_registry
+    ) or ""
 
     await _status(f"⏳ *{topic}* — adabiyotlar ro'yxati tuzilmoqda...")
     adabiyotlar = await _generate_references(topic) or ""
@@ -358,7 +442,7 @@ async def generate_course_work(topic: str, pages: int, status_msg=None):
 
     # ===== NAZORATCHI: to'liqlikni tekshirish va bo'sh qolgan qismlarni tuzatish =====
     complete = await _ensure_complete(
-        topic, sections, target_words, kirish_instruction, xulosa_instruction, _status
+        topic, sections, target_words, kirish_instruction, xulosa_instruction, _status, facts_registry
     )
 
     if _total_words(sections) < MIN_ACCEPTABLE_WORDS:
@@ -374,6 +458,15 @@ async def generate_course_work(topic: str, pages: int, status_msg=None):
             f"keyin ham to'ldirilmadi ('{topic}')."
         )
         return None
+
+    # ===== YAKUNIY MUHARRIRLIK: ziddiyatli raqamlar, begona so'zlar, xato =====
+    # ===== o'z-o'zidan tartib raqamlash (masalan "Sakkizinchi bo'lim" ikki  =====
+    # ===== marta) shu bosqichda tuzatiladi — mazmun deyarli o'zgarmaydi.   =====
+    await _status(f"⏳ *{topic}* — matn ziddiyatlari va xatolari tekshirilmoqda...")
+    sections["kirish"] = await _harmonize_text(topic, sections["kirish"])
+    for bob in sections["bobs"]:
+        bob["content"] = await _harmonize_text(topic, bob["content"])
+    sections["xulosa"] = await _harmonize_text(topic, sections["xulosa"])
 
     # ===== HAQIQIY PDF SAHIFA SONIGA QARAB KENGAYTIRISH =====
     pdf_buf = build_course_work_pdf(topic, sections)
@@ -394,12 +487,14 @@ async def generate_course_work(topic: str, pages: int, status_msg=None):
                 f"yangi qo'shimcha kichik qism yozing. FAQAT quyidagi yangi jihatga e'tibor "
                 f"bering: {angle}. Avvalgi matnda aytilgan fikrlarni HECH QANDAY shaklda "
                 "takrorlamang — faqat yangi, qo'shimcha ma'lumot yozing (kamida 400 so'z)."
-            ),
+            )
+            + _facts_block(facts_registry),
             _COURSE_SYSTEM.format(topic=topic),
             attempts=2,
         )
         if not addition:
             break
+        _register_facts(facts_registry, addition)
         shortest["content"] = shortest["content"].rstrip() + "\n\n" + addition.strip()
 
         pdf_buf = build_course_work_pdf(topic, sections)
@@ -412,10 +507,14 @@ def _bob_content(bob: dict) -> str:
     return "\n\n".join(f"{s['heading']}\n{s['content']}".strip() for s in bob["subsections"])
 
 
-async def _generate_one_subsection(topic: str, heading: str, sub_title: str, target_words: int) -> str:
+async def _generate_one_subsection(
+    topic: str, heading: str, sub_title: str, target_words: int, facts: list | None = None
+) -> str:
+    facts = facts if facts is not None else []
     content = await _ask_retry(
         f"[{heading}]\nKurs ishining \"{sub_title}\" nomli kichik bo'limini yoz.\n\n"
-        f"Taxminan {max(target_words, 150)} so'zdan iborat bo'lsin.",
+        f"Taxminan {max(target_words, 150)} so'zdan iborat bo'lsin."
+        + _facts_block(facts),
         _COURSE_SYSTEM.format(topic=topic),
     ) or ""
     content = _strip_duplicate_heading(content, sub_title)
@@ -430,7 +529,8 @@ async def _generate_one_subsection(topic: str, heading: str, sub_title: str, tar
                 f"qo'shing. Bu safar FAQAT quyidagi yangi jihatga e'tibor bering: {angle}. "
                 "Avvalgi matnda aytilgan fikrlarni HECH QANDAY shaklda takrorlamang — "
                 "faqat yangi, qo'shimcha ma'lumot yozing. Bo'lim sarlavhasini qaytarmang."
-            ),
+            )
+            + _facts_block(facts),
             _COURSE_SYSTEM.format(topic=topic),
             attempts=2,
         )
@@ -438,13 +538,18 @@ async def _generate_one_subsection(topic: str, heading: str, sub_title: str, tar
             break
         addition = _strip_duplicate_heading(addition, sub_title)
         content = content.rstrip() + "\n\n" + addition.strip()
+        _register_facts(facts, addition)
 
+    _register_facts(facts, content)
     return content
 
 
-async def _generate_bob(topic: str, bob_num: int, bolimlari: list, bob_target_words: int, status_cb) -> list:
+async def _generate_bob(
+    topic: str, bob_num: int, bolimlari: list, bob_target_words: int, status_cb, facts: list | None = None
+) -> list:
     """Bobning har bir kichik bo'limini ALOHIDA generatsiya qiladi va har birini
     o'ziga ajratilgan hajmga (taxminan 2.5-3 bet) yetguncha to'ldiradi."""
+    facts = facts if facts is not None else []
     n = max(len(bolimlari), 1)
     per_sub_words = max(int(bob_target_words / n), 850)  # ~2.2+ bet minimal
 
@@ -452,17 +557,21 @@ async def _generate_bob(topic: str, bob_num: int, bolimlari: list, bob_target_wo
     for j, sub_title in enumerate(bolimlari, start=1):
         heading = f"{bob_num}.{j}. {sub_title}"
         await status_cb(f"⏳ *{topic}* — {heading} yozilmoqda...")
-        content = await _generate_one_subsection(topic, heading, sub_title, per_sub_words)
+        content = await _generate_one_subsection(topic, heading, sub_title, per_sub_words, facts)
         subsections.append({"heading": heading, "content": content})
 
     return subsections
 
 
-async def _ensure_complete(topic, sections, target_words, kirish_instruction, xulosa_instruction, status_cb) -> bool:
+async def _ensure_complete(
+    topic, sections, target_words, kirish_instruction, xulosa_instruction, status_cb,
+    facts: list | None = None,
+) -> bool:
     """NAZORATCHI: har bir bo'limni alohida tekshiradi (kirish, har bir kichik
     bo'lim, xulosa, adabiyotlar). Bo'sh yoki juda qisqa qolgan qismlarni FAQAT
     o'zini qayta yozdiradi (butun hujjatni emas). MAX_COMPLETENESS_ROUNDS marta
     takrorlanadi. Qaytaradi: hammasi to'liqmi (True/False)."""
+    facts = facts if facts is not None else []
     for attempt in range(1, MAX_COMPLETENESS_ROUNDS + 1):
         problems = _find_incomplete(sections)
         if not problems:
@@ -476,12 +585,16 @@ async def _ensure_complete(topic, sections, target_words, kirish_instruction, xu
 
         for p in problems:
             if p["type"] == "kirish":
-                new_val = await _generate_section(topic, "KIRISH", kirish_instruction, int(target_words * SHARE_KIRISH))
+                new_val = await _generate_section(
+                    topic, "KIRISH", kirish_instruction, int(target_words * SHARE_KIRISH), facts
+                )
                 if new_val and len(new_val.split()) >= MIN_SECTION_WORDS:
                     sections["kirish"] = new_val
 
             elif p["type"] == "xulosa":
-                new_val = await _generate_section(topic, "XULOSA", xulosa_instruction, int(target_words * SHARE_XULOSA))
+                new_val = await _generate_section(
+                    topic, "XULOSA", xulosa_instruction, int(target_words * SHARE_XULOSA), facts
+                )
                 if new_val and len(new_val.split()) >= MIN_SECTION_WORDS:
                     sections["xulosa"] = new_val
 
@@ -495,7 +608,7 @@ async def _ensure_complete(topic, sections, target_words, kirish_instruction, xu
                 sub = bob["subsections"][p["sub_index"]]
                 sub_title = re.sub(r"^\d+\.\d+\.\s*", "", sub["heading"])
                 new_content = await _generate_one_subsection(
-                    topic, sub["heading"], sub_title, MIN_SUBSECTION_WORDS + 500
+                    topic, sub["heading"], sub_title, MIN_SUBSECTION_WORDS + 500, facts
                 )
                 if new_content and len(new_content.split()) >= MIN_SUBSECTION_WORDS:
                     sub["content"] = new_content
@@ -545,14 +658,49 @@ async def _generate_plan(topic: str) -> dict:
         return DEFAULT_PLAN
 
 
-async def _generate_section(topic: str, section_label: str, instruction: str, target_words: int) -> str | None:
-    prompt = f"[{section_label}]\n{instruction}\n\nTaxminan {max(target_words, 150)} so'zdan iborat bo'lsin."
+async def _generate_section(
+    topic: str, section_label: str, instruction: str, target_words: int, facts: list | None = None
+) -> str | None:
+    facts = facts if facts is not None else []
+    prompt = (
+        f"[{section_label}]\n{instruction}\n\nTaxminan {max(target_words, 150)} so'zdan iborat bo'lsin."
+        + _facts_block(facts)
+    )
     result = await _ask_retry(prompt, _COURSE_SYSTEM.format(topic=topic))
-    return _strip_duplicate_heading(result, section_label) if result else result
+    result = _strip_duplicate_heading(result, section_label) if result else result
+    if result:
+        _register_facts(facts, result)
+    return result
+
+
+async def _harmonize_text(topic: str, text: str) -> str:
+    """Yakuniy 'muharrirlik' bosqichi: matnni deyarli o'zgarishsiz qoldirib,
+    faqat ziddiyatli raqamlarni, begona so'zlarni va o'z-o'zidan noto'g'ri
+    tartib raqamlashni tuzatadi. Juda katta matnlarda (token limitidan
+    qochish uchun) o'tkazib yuboriladi."""
+    if not text or len(text.split()) > MAX_HARMONIZE_WORDS:
+        return text
+    result = await _ask_retry(
+        f"MAVZU: '{topic}'\n\nQUYIDAGI MATNNI TUZATING:\n\n{text}",
+        _HARMONIZE_SYSTEM,
+        attempts=2,
+    )
+    # Agar muharrirlik natijasi shubhali darajada qisqarib ketsa (masalan AI
+    # xato qilib qisqartirib yuborgan bo'lsa), asl matnni saqlab qolamiz.
+    if result and len(result.split()) >= len(text.split()) * 0.7:
+        return result
+    return text
 
 
 async def _generate_references(topic: str) -> str:
-    system = "Siz ilmiy adabiyotlar ro'yxati tuzuvchi yordamchisiz. Faqat ro'yxatni qaytaring, boshqa izoh yozmang."
+    system = (
+        "Siz ilmiy adabiyotlar ro'yxati tuzuvchi yordamchisiz. Faqat ro'yxatni "
+        "qaytaring, boshqa izoh yozmang. Siz ANIQ qaysi kitob/maqola/sayt "
+        "haqiqatda mavjudligini bilmaysiz — shuning uchun ANIQ, tekshirib "
+        "bo'lmaydigan URL manzil yoki 'kirilgan sana' o'ylab topib yozish "
+        "TAQIQLANADI, chunki bu keyinchalik plagiat/soxtalik tekshiruvida "
+        "muammo tug'diradi."
+    )
     prompt = (
         f"'{topic}' mavzusidagi kurs ishi uchun FOYDALANILGAN ADABIYOTLAR RO'YXATI tuz. "
         "Kamida 20 ta yozuv bo'lsin, quyidagi 4 toifaga bo'lib, har biri ichida alifbo "
@@ -560,9 +708,12 @@ async def _generate_references(topic: str) -> str:
         "I. Qonunlar va me'yoriy-huquqiy hujjatlar (standartlar, sanitariya qoidalari va h.k.)\n"
         "II. Darsliklar, o'quv qo'llanmalar va monografiyalar\n"
         "III. Ilmiy maqolalar va davriy nashrlar\n"
-        "IV. Internet manbalari\n\n"
+        "IV. Tegishli soha bo'yicha umumiy manbalar\n\n"
         "Har bir yozuvni to'liq bibliografik formatda yoz (muallif, nom, shahar, nashriyot, "
-        "yil). Faqat ro'yxatni yoz, boshqa izoh berma."
+        "yil). IV toifada ANIQ URL manzil (https://...) VA 'kirilgan sana'/'accessed' "
+        "yozuvini QO'SHMANG — buning o'rniga faqat tashkilot yoki rasmiy sayt nomini "
+        "(masalan: 'ISO tashkilotining rasmiy sayti', 'Xalqaro ergonomika assotsiatsiyasi "
+        "portali') va nashr yilini ko'rsating. Faqat ro'yxatni yoz, boshqa izoh berma."
     )
     result = await _ask_retry(prompt, system)
     return result or ""
