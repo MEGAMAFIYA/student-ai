@@ -18,6 +18,15 @@ DEFAULT_GROQ_KEY = os.getenv("GROQ_API_KEY", "")
 # zaxira model .env orqali sozlanadi, kodni o'zgartirish shart emas.
 GROQ_FALLBACK_MODEL = os.getenv("GROQ_FALLBACK_MODEL", "openai/gpt-oss-120b")
 
+# Botning ochiq (https://...) manzili — Render'da "Settings" sahifasida
+# ko'rsatilgan URL (masalan https://talaba-ai.onrender.com, OXIRIDA "/" YO'Q).
+# Bu FAQAT inline rejimda "og'ir" vazifalar (kurs ishi/PDF) uchun kerak —
+# Telegram vaqtinchalik PDF faylni shu manzildan yuklab oladi. Agar bo'sh
+# qoldirilsa, inline orqali PDF generatsiyasi ishlamaydi (foydalanuvchi
+# botning shaxsiy chatiga yo'naltiriladi), lekin qolgan hamma narsa
+# (oddiy savol-javob) baribir ishlayveradi.
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
+
 
 def _cfg(prefix: str, default_model: str, default_provider: str = "gemini") -> dict:
     """
