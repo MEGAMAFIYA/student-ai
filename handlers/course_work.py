@@ -357,18 +357,38 @@ async def _generate_and_send(update, context, topic: str, pages: int, status):
         pass
 
 
-async def _ask_retry(prompt: str, system: str, attempts: int = RETRY_ATTEMPTS, delay: int = RETRY_DELAY_SEC, raw: bool = False) -> str | None:
+async def _ask_retry(prompt: str, system: str, attempts: int = RETRY_ATTEMPTS, delay: int = RETRY_DELAY_SEC, raw: bool = False, tag: str = "") -> str | None:
     """ask_ai ni bir necha marta qayta urinib chaqiradi — vaqtinchalik limit/tarmoq
     xatolarida bitta muvaffaqiyatsiz urinish butun bo'limni bo'sh qoldirmasligi uchun.
     AI rad javobi (masalan "I'm sorry, I can't fulfill...") aniqlansa ham qayta
     uriniladi — bunday javob hech qachon hujjatga kiritilmaydi. raw=True bo'lsa
-    (masalan JSON javoblarda) Markdown/LaTeX tozalash qo'llanilmaydi."""
-    for i in range(attempts):
-        result = await ask_ai(COURSE_WORK_AI, prompt, system)
+    (masalan JSON javoblarda) Markdown/LaTeX tozalash qo'llanilmaydi.
+
+    `tag` — logda ko'rinadigan yorliq (masalan "1.2-bo'lim", "KIRISH"), shu
+    orqali log faylida AYNAN qaysi bo'lim so'rovi ketayotgani ko'rinadi."""
+    label = tag or "so'rov"
+    for i in range(1, attempts + 1):
+        logger.info(f"[{label}] AI ga so'rov yuborilmoqda ({i}/{attempts}-urinish, provider={COURSE_WORK_AI.get('provider')}, model={COURSE_WORK_AI.get('model')})...")
+        try:
+            result = await ask_ai(COURSE_WORK_AI, prompt, system)
+        except Exception as e:
+            logger.error(f"[{label}] ask_ai chaqiruvida kutilmagan xato ({i}/{attempts}): {e}", exc_info=True)
+            result = None
+
         if result and result.strip() and not _is_refusal(result):
+            logger.info(f"[{label}] ✅ Javob qabul qilindi ({i}/{attempts}-urinish, {len(result.split())} so'z).")
             return result if raw else _clean_ai_text(result)
-        if i < attempts - 1:
+
+        if not result or not result.strip():
+            logger.warning(f"[{label}] ⚠️ Bo'sh javob qaytdi ({i}/{attempts}-urinish).")
+        else:
+            logger.warning(f"[{label}] ⚠️ AI rad javobi aniqlandi ({i}/{attempts}-urinish): {result[:150]!r}")
+
+        if i < attempts:
+            logger.info(f"[{label}] {delay}s kutib, qayta uriniladi...")
             await asyncio.sleep(delay)
+
+    logger.error(f"[{label}] ❌ {attempts} marta urinishdan keyin ham javob olinmadi — bo'lim bo'sh qoladi.")
     return None
 
 
@@ -382,6 +402,7 @@ async def generate_course_work(topic: str, pages: int, status_msg=None):
     Boshqa modullar (masalan universal_chat) ham shu funksiyadan foydalanadi.
     """
     target_words = int(pages * WORDS_PER_PAGE * SAFETY_MARGIN)
+    logger.info(f"===== [KURS ISHI BOSHLANDI] mavzu='{topic}', bet={pages}, maqsad so'z={target_words} =====")
 
     async def _status(text):
         if status_msg:
@@ -425,10 +446,12 @@ async def generate_course_work(topic: str, pages: int, status_msg=None):
         bolimlari = plan.get(f"bob{i}_bolimlari") or DEFAULT_PLAN[f"bob{i}_bolimlari"]
         bob_target_words = int(target_words * SHARE_BOB)
 
+        logger.info(f"[{_ROMAN[i]}-BOB] '{bob_nomi}' — {len(bolimlari)} ta kichik bo'lim generatsiyasi boshlandi.")
         subsections = await _generate_bob(topic, i, bolimlari, bob_target_words, _status, facts_registry)
         bob = {"title": f"{_ROMAN[i]}-BOB. {bob_nomi.upper()}", "subsections": subsections}
         bob["content"] = _bob_content(bob)
         bobs.append(bob)
+        logger.info(f"[{_ROMAN[i]}-BOB] Yakunlandi: {len(bob['content'].split())} so'z.")
 
     await _status(f"⏳ *{topic}* — xulosa yozilmoqda...")
     xulosa = await _generate_section(
@@ -439,6 +462,7 @@ async def generate_course_work(topic: str, pages: int, status_msg=None):
     adabiyotlar = await _generate_references(topic) or ""
 
     sections = {"kirish": kirish, "bobs": bobs, "xulosa": xulosa, "adabiyotlar": adabiyotlar}
+    logger.info(f"[NAZORATCHI] Boshlang'ich generatsiya tugadi, jami {_total_words(sections)} so'z. To'liqlik tekshiruvi boshlanmoqda...")
 
     # ===== NAZORATCHI: to'liqlikni tekshirish va bo'sh qolgan qismlarni tuzatish =====
     complete = await _ensure_complete(
@@ -447,17 +471,23 @@ async def generate_course_work(topic: str, pages: int, status_msg=None):
 
     if _total_words(sections) < MIN_ACCEPTABLE_WORDS:
         logger.error(
-            f"Kurs ishi generatsiyasi deyarli bo'sh natija berdi ('{topic}') — "
-            "AI provayderlar ishlamagan bo'lishi mumkin."
+            f"[YAKUNIY XATO] Kurs ishi generatsiyasi deyarli bo'sh natija berdi ('{topic}', "
+            f"jami {_total_words(sections)} so'z, minimal {MIN_ACCEPTABLE_WORDS}) — "
+            "AI provayderlar (Gemini/Groq/Pollinations) ishlamagan bo'lishi mumkin. "
+            "Yuqoridagi [KIRISH]/[1.1...]/[XULOSA] loglaridan aynan qaysi bo'lim va "
+            "qaysi provider xato bergani ko'rinadi."
         )
         return None
 
     if not complete:
+        remaining = _find_incomplete(sections)
         logger.error(
-            f"Kurs ishining ba'zi bo'limlari {MAX_COMPLETENESS_ROUNDS} marta urinishdan "
-            f"keyin ham to'ldirilmadi ('{topic}')."
+            f"[YAKUNIY XATO] Kurs ishining {len(remaining)} ta bo'limi {MAX_COMPLETENESS_ROUNDS} "
+            f"marta urinishdan keyin ham to'ldirilmadi ('{topic}'): {remaining}"
         )
         return None
+
+    logger.info(f"[NAZORATCHI] ✅ Barcha bo'limlar to'liq. Muharrirlik bosqichiga o'tilmoqda.")
 
     # ===== YAKUNIY MUHARRIRLIK: ziddiyatli raqamlar, begona so'zlar, xato =====
     # ===== o'z-o'zidan tartib raqamlash (masalan "Sakkizinchi bo'lim" ikki  =====
@@ -473,8 +503,10 @@ async def generate_course_work(topic: str, pages: int, status_msg=None):
     # va sekin (ayniqsa 100+ betlik hujjatlarda) — asyncio.to_thread() orqali
     # alohida oqimda bajariladi, shu orqali BOSHQA FOYDALANUVCHILARNING
     # so'rovlari shu vaqtda bloklanib qolmaydi.
+    logger.info("[PDF] Birinchi versiya qurilmoqda...")
     pdf_buf = await asyncio.to_thread(build_course_work_pdf, topic, sections)
     actual_pages = await asyncio.to_thread(count_pdf_pages, pdf_buf)
+    logger.info(f"[PDF] Birinchi versiya: {actual_pages} bet (so'ralgan: {pages}).")
 
     rounds = 0
     while actual_pages < pages and rounds < MAX_PDF_EXPAND_ROUNDS:
@@ -485,6 +517,7 @@ async def generate_course_work(topic: str, pages: int, status_msg=None):
             f"{rounds}-urinish)..."
         )
         shortest = min(sections["bobs"], key=lambda b: len(b["content"].split()))
+        logger.info(f"[PDF-KENGAYTIRISH {rounds}] Eng qisqa bob: '{shortest['title']}' — yo'nalish: {angle}.")
         addition = await _ask_retry(
             (
                 f"'{topic}' mavzusidagi kurs ishining \"{shortest['title']}\" bobiga "
@@ -495,15 +528,19 @@ async def generate_course_work(topic: str, pages: int, status_msg=None):
             + _facts_block(facts_registry),
             _COURSE_SYSTEM.format(topic=topic),
             attempts=2,
+            tag=f"PDF-KENGAYTIRISH {rounds}",
         )
         if not addition:
+            logger.warning(f"[PDF-KENGAYTIRISH {rounds}] Javob olinmadi — kengaytirish {actual_pages} betda to'xtatildi.")
             break
         _register_facts(facts_registry, addition)
         shortest["content"] = shortest["content"].rstrip() + "\n\n" + addition.strip()
 
         pdf_buf = await asyncio.to_thread(build_course_work_pdf, topic, sections)
         actual_pages = await asyncio.to_thread(count_pdf_pages, pdf_buf)
+        logger.info(f"[PDF-KENGAYTIRISH {rounds}] Yangi hajm: {actual_pages}/{pages} bet.")
 
+    logger.info(f"===== [KURS ISHI TUGADI] mavzu='{topic}', yakuniy hajm={actual_pages} bet =====")
     return sections, pdf_buf, actual_pages
 
 
@@ -515,18 +552,27 @@ async def _generate_one_subsection(
     topic: str, heading: str, sub_title: str, target_words: int, facts: list | None = None
 ) -> str:
     facts = facts if facts is not None else []
+    logger.info(f"[{heading}] Generatsiya boshlandi (maqsad: ~{max(target_words, 150)} so'z).")
     content = await _ask_retry(
         f"[{heading}]\nKurs ishining \"{sub_title}\" nomli kichik bo'limini yoz.\n\n"
         f"Taxminan {max(target_words, 150)} so'zdan iborat bo'lsin."
         + _facts_block(facts),
         _COURSE_SYSTEM.format(topic=topic),
+        tag=heading,
     ) or ""
     content = _strip_duplicate_heading(content, sub_title)
+
+    if not content:
+        logger.error(f"[{heading}] ❌ Boshlang'ich generatsiya muvaffaqiyatsiz — bo'lim bo'sh boshlanadi.")
 
     fill_rounds = 0
     while len(content.split()) < target_words and fill_rounds < MAX_SUBSECTION_FILL_ROUNDS:
         angle = _EXPAND_ANGLES[fill_rounds % len(_EXPAND_ANGLES)]
         fill_rounds += 1
+        logger.info(
+            f"[{heading}] Hajm yetarli emas ({len(content.split())}/{target_words} so'z) — "
+            f"to'ldirish {fill_rounds}/{MAX_SUBSECTION_FILL_ROUNDS}-urinish (yo'nalish: {angle})..."
+        )
         addition = await _ask_retry(
             (
                 f"'{topic}' mavzusidagi \"{sub_title}\" nomli bo'limga yangi abzas(lar) "
@@ -537,13 +583,16 @@ async def _generate_one_subsection(
             + _facts_block(facts),
             _COURSE_SYSTEM.format(topic=topic),
             attempts=2,
+            tag=f"{heading} (to'ldirish {fill_rounds})",
         )
         if not addition:
+            logger.warning(f"[{heading}] To'ldirish {fill_rounds}-urinishda javob olinmadi — to'ldirish to'xtatiladi.")
             break
         addition = _strip_duplicate_heading(addition, sub_title)
         content = content.rstrip() + "\n\n" + addition.strip()
         _register_facts(facts, addition)
 
+    logger.info(f"[{heading}] Yakuniy hajm: {len(content.split())} so'z (maqsad: {target_words}).")
     _register_facts(facts, content)
     return content
 
@@ -648,17 +697,20 @@ async def _generate_plan(topic: str) -> dict:
         '"bob2_nomi": "...", "bob2_bolimlari": ["...", "...", "..."], '
         '"bob3_nomi": "...", "bob3_bolimlari": ["...", "...", "..."]}'
     )
-    raw = await _ask_retry(prompt, system, attempts=2, raw=True)
+    logger.info(f"[REJA] '{topic}' mavzusi uchun reja so'ralmoqda...")
+    raw = await _ask_retry(prompt, system, attempts=2, raw=True, tag="REJA")
     if not raw:
+        logger.warning(f"[REJA] AI javob bermadi — DEFAULT_PLAN (standart reja) ishlatiladi.")
         return DEFAULT_PLAN
     try:
         cleaned = re.sub(r"^```json\s*|^```\s*|```\s*$", "", raw.strip(), flags=re.MULTILINE).strip()
         data = json.loads(cleaned)
         for key, val in DEFAULT_PLAN.items():
             data.setdefault(key, val)
+        logger.info(f"[REJA] ✅ Reja muvaffaqiyatli tuzildi: {list(data.keys())}")
         return data
     except Exception as e:
-        logger.warning(f"Kurs ishi rejasi JSON parse xato: {e}")
+        logger.warning(f"[REJA] JSON parse xato: {e} — xom javob: {raw[:300]!r} — DEFAULT_PLAN ishlatiladi.")
         return DEFAULT_PLAN
 
 
@@ -670,10 +722,14 @@ async def _generate_section(
         f"[{section_label}]\n{instruction}\n\nTaxminan {max(target_words, 150)} so'zdan iborat bo'lsin."
         + _facts_block(facts)
     )
-    result = await _ask_retry(prompt, _COURSE_SYSTEM.format(topic=topic))
+    logger.info(f"[{section_label}] Generatsiya boshlandi (maqsad: ~{max(target_words, 150)} so'z).")
+    result = await _ask_retry(prompt, _COURSE_SYSTEM.format(topic=topic), tag=section_label)
     result = _strip_duplicate_heading(result, section_label) if result else result
     if result:
         _register_facts(facts, result)
+        logger.info(f"[{section_label}] Yakunlandi: {len(result.split())} so'z.")
+    else:
+        logger.error(f"[{section_label}] Generatsiya muvaffaqiyatsiz — bo'lim bo'sh qoladi.")
     return result
 
 
@@ -683,16 +739,24 @@ async def _harmonize_text(topic: str, text: str) -> str:
     tartib raqamlashni tuzatadi. Juda katta matnlarda (token limitidan
     qochish uchun) o'tkazib yuboriladi."""
     if not text or len(text.split()) > MAX_HARMONIZE_WORDS:
+        logger.info(f"[MUHARRIRLIK] O'tkazib yuborildi (bo'sh yoki {MAX_HARMONIZE_WORDS} so'zdan uzun).")
         return text
+    logger.info(f"[MUHARRIRLIK] Boshlandi ({len(text.split())} so'zlik matn)...")
     result = await _ask_retry(
         f"MAVZU: '{topic}'\n\nQUYIDAGI MATNNI TUZATING:\n\n{text}",
         _HARMONIZE_SYSTEM,
         attempts=2,
+        tag="MUHARRIRLIK",
     )
     # Agar muharrirlik natijasi shubhali darajada qisqarib ketsa (masalan AI
     # xato qilib qisqartirib yuborgan bo'lsa), asl matnni saqlab qolamiz.
     if result and len(result.split()) >= len(text.split()) * 0.7:
+        logger.info(f"[MUHARRIRLIK] ✅ Tuzatilgan matn qabul qilindi ({len(result.split())} so'z).")
         return result
+    if result:
+        logger.warning(f"[MUHARRIRLIK] ⚠️ Natija juda qisqarib ketdi ({len(result.split())} so'z) — asl matn saqlanadi.")
+    else:
+        logger.warning("[MUHARRIRLIK] ⚠️ AI javob bermadi — asl matn o'zgarishsiz qoladi.")
     return text
 
 
@@ -719,7 +783,12 @@ async def _generate_references(topic: str) -> str:
         "(masalan: 'ISO tashkilotining rasmiy sayti', 'Xalqaro ergonomika assotsiatsiyasi "
         "portali') va nashr yilini ko'rsating. Faqat ro'yxatni yoz, boshqa izoh berma."
     )
-    result = await _ask_retry(prompt, system)
+    logger.info("[ADABIYOTLAR] Ro'yxat generatsiyasi boshlandi...")
+    result = await _ask_retry(prompt, system, tag="ADABIYOTLAR")
+    if result:
+        logger.info(f"[ADABIYOTLAR] ✅ Yakunlandi ({len(result)} belgi).")
+    else:
+        logger.error("[ADABIYOTLAR] ❌ Generatsiya muvaffaqiyatsiz — bo'sh qoladi.")
     return result or ""
 
 
