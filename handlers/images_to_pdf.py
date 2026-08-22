@@ -3,6 +3,7 @@
 tasdiqlagach barchasi ketma-ket PDF ga joylanadi.
 """
 
+import asyncio
 import logging
 from io import BytesIO
 
@@ -64,7 +65,7 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(f"⏳ {len(images)} ta rasmdan PDF tayyorlanmoqda...")
 
     try:
-        pdf_buf = images_to_pdf(images)
+        pdf_buf = await asyncio.to_thread(images_to_pdf, images)
         await context.bot.send_document(
             update.effective_chat.id,
             document=InputFile(pdf_buf, filename="suratlar.pdf"),
