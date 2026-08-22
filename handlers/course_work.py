@@ -469,8 +469,12 @@ async def generate_course_work(topic: str, pages: int, status_msg=None):
     sections["xulosa"] = await _harmonize_text(topic, sections["xulosa"])
 
     # ===== HAQIQIY PDF SAHIFA SONIGA QARAB KENGAYTIRISH =====
-    pdf_buf = build_course_work_pdf(topic, sections)
-    actual_pages = count_pdf_pages(pdf_buf)
+    # PDF qurish (reportlab, ko'p bosqichli TOC) va sahifa sanash CPU-bog'liq
+    # va sekin (ayniqsa 100+ betlik hujjatlarda) — asyncio.to_thread() orqali
+    # alohida oqimda bajariladi, shu orqali BOSHQA FOYDALANUVCHILARNING
+    # so'rovlari shu vaqtda bloklanib qolmaydi.
+    pdf_buf = await asyncio.to_thread(build_course_work_pdf, topic, sections)
+    actual_pages = await asyncio.to_thread(count_pdf_pages, pdf_buf)
 
     rounds = 0
     while actual_pages < pages and rounds < MAX_PDF_EXPAND_ROUNDS:
@@ -497,8 +501,8 @@ async def generate_course_work(topic: str, pages: int, status_msg=None):
         _register_facts(facts_registry, addition)
         shortest["content"] = shortest["content"].rstrip() + "\n\n" + addition.strip()
 
-        pdf_buf = build_course_work_pdf(topic, sections)
-        actual_pages = count_pdf_pages(pdf_buf)
+        pdf_buf = await asyncio.to_thread(build_course_work_pdf, topic, sections)
+        actual_pages = await asyncio.to_thread(count_pdf_pages, pdf_buf)
 
     return sections, pdf_buf, actual_pages
 
