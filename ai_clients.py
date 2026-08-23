@@ -1,18 +1,29 @@
 """
 Barcha funksiyalar shu modul orqali AI ga murojat qiladi.
-Har bir chaqiruv o'ziga tegishli konfiguratsiya (provider/model/key) bilan ishlaydi,
-asosiy provider ishlamay qolsa, bepul zaxira provayderlarga avtomatik o'tadi.
-Ixtiyoriy 'history' parametri orqali ko'p bosqichli (kontekstli) suhbat ham qo'llab-quvvatlanadi.
+
+Har bir chaqiruv o'ziga tegishli konfiguratsiya (provider/model/key) bilan ishlaydi.
+Agar provider uchun config.KEY_POOLS da bir nechta kalit qo'shilgan bo'lsa
+(/developer > 🔑 AI kalitlari orqali), ular BIRIN-KETIN sinaladi — biri
+kunlik/daqiqalik limitga yoki "pullik" holatga o'tib qolsa, avtomatik
+ravishda navbatdagi kalitga o'tiladi. Pool bo'sh bo'lsa, funksiyaning o'zining
+bitta api_key/model sozlamasi ishlatiladi (eski, oddiy rejim).
+
+Provider to'plamining BARCHA kalitlari ham ishlamasa, bepul zaxira
+provayderlarga (Groq -> Pollinations) avtomatik o'tiladi.
+
+Ixtiyoriy 'history' parametri orqali ko'p bosqichli (kontekstli) suhbat ham
+qo'llab-quvvatlanadi.
 """
 
 import asyncio
 import logging
+import re
 from urllib.parse import quote
 
 import httpx
 import google.generativeai as genai
 
-from config import DEFAULT_GROQ_KEY, GROQ_FALLBACK_MODEL
+import config
 
 logger = logging.getLogger(__name__)
 
@@ -21,19 +32,25 @@ GEMINI_TIMEOUT_SEC = 90  # Gemini javob bermasa, cheksiz kutmaslik uchun
 _gemini_model_cache: dict[tuple[str, str], object] = {}
 # google-generativeai kutubxonasining genai.configure() chaqiruvi JARAYON
 # DARAJASIDA GLOBAL holatni o'zgartiradi (bitta API kalitni "joriy" qilib
-# qo'yadi). Loyihada har bir funksiya (kurs ishi, tarjima va h.k.) uchun
-# ALOHIDA Gemini kalit sozlash imkoniyati borligi sababli (.env'dagi
-# *_API_KEY), agar ikki foydalanuvchi BIR VAQTDA turli kalitga ega
-# funksiyalarni birinchi marta chaqirsa, configure()+model yaratish
-# oralig'ida ular bir-biriga aralashib ketishi (noto'g'ri kalit bilan
-# so'rov ketishi) nazariy jihatdan mumkin edi. Bu qulf FAQAT shu juda
-# qisqa (millisoniyalik) konfiguratsiya bosqichini qulflaydi — asosiy,
-# UZOQ davom etadigan tarmoq so'rovi (generate_content/send_message)
-# qulfdan TASHQARIDA, to'liq parallel ishlaydi, shuning uchun bu
-# boshqa foydalanuvchilarni BLOKLAMAYDI.
+# qo'yadi). Loyihada bir nechta turli Gemini kalit bir vaqtda ishlatilishi
+# mumkinligi sababli (funksiyalarning o'z kaliti + kalitlar to'plami), agar
+# ikki foydalanuvchi BIR VAQTDA turli kalitga ega chaqiruvlarni birinchi
+# marta amalga oshirsa, configure()+model yaratish oralig'ida ular bir-biriga
+# aralashib ketishi (noto'g'ri kalit bilan so'rov ketishi) nazariy jihatdan
+# mumkin edi. Bu qulf FAQAT shu juda qisqa (millisoniyalik) konfiguratsiya
+# bosqichini qulflaydi — asosiy, UZOQ davom etadigan tarmoq so'rovi
+# (generate_content/send_message) qulfdan TASHQARIDA, to'liq parallel
+# ishlaydi, shuning uchun bu boshqa foydalanuvchilarni BLOKLAMAYDI.
 _gemini_config_lock = asyncio.Lock()
 
 # history formati: [{"role": "user"|"assistant", "content": "..."}, ...]
+
+# ask_ai/test_key qaytaradigan status kodlari:
+#   "ok"      — muvaffaqiyatli javob keldi
+#   "quota"   — bepul kunlik/daqiqalik limit tugagan (vaqtinchalik, o'zi tiklanadi)
+#   "paid"    — bu model/xizmat endi (yoki umuman) pullik, bepul tarifda mavjud emas
+#   "invalid" — kalit yaroqsiz/bekor qilingan yoki model nomi noto'g'ri
+#   "error"   — boshqa kutilmagan xato (tarmoq, timeout va h.k.)
 
 
 async def _get_gemini_model_safe(api_key: str, model_name: str):
@@ -51,13 +68,46 @@ async def _get_gemini_model_safe(api_key: str, model_name: str):
         return model
 
 
-async def _call_gemini(cfg: dict, prompt: str, system: str, history: list | None) -> str | None:
-    if not cfg.get("api_key"):
-        logger.warning(f"Gemini ({cfg.get('model')}): API kalit sozlanmagan — chaqiruv o'tkazib yuborildi.")
-        return None
-    logger.info(f"Gemini ({cfg.get('model')}) ga so'rov yuborilmoqda (prompt: {len(prompt)} belgi)...")
+def _classify_gemini_error(e: Exception) -> tuple[str, str]:
+    """Gemini xatosini (status, tafsilot) shakliga keltiradi."""
+    msg = str(e)
+    type_name = type(e).__name__
+    if "ResourceExhausted" in type_name or "RESOURCE_EXHAUSTED" in msg or "429" in msg or "quota" in msg.lower():
+        m = re.search(r"quota_value:\s*(\d+)", msg)
+        if m and m.group(1) == "0":
+            return "paid", "Bu model bepul tarifda mavjud emas — billing (to'lov usuli) talab qilinadi."
+        return "quota", "Bepul kunlik/daqiqalik limit tugagan — birozdan keyin yoki ertaga tiklanadi."
+    if (
+        "API_KEY_INVALID" in msg or "API key not valid" in msg
+        or "PermissionDenied" in type_name or "Unauthenticated" in type_name
+        or "401" in msg or "403" in msg
+    ):
+        return "invalid", "Kalit yaroqsiz, bekor qilingan yoki model nomi noto'g'ri."
+    return "error", msg[:200]
+
+
+def _classify_groq_error(status_code: int, body_text: str) -> tuple[str, str]:
+    """Groq (OpenAI-mos) HTTP xatosini (status, tafsilot) shakliga keltiradi."""
+    if status_code == 429:
+        return "quota", "Bepul kunlik/daqiqalik limit tugagan — birozdan keyin yoki ertaga tiklanadi."
+    if status_code == 402:
+        return "paid", "Bu xizmat endi pullik (to'lov talab qilinadi)."
+    if status_code in (401, 403):
+        return "invalid", "Kalit yaroqsiz yoki bekor qilingan."
+    if status_code == 404:
+        return "invalid", "Model topilmadi — model nomi noto'g'ri yoki eskirgan bo'lishi mumkin."
+    return "error", body_text[:200]
+
+
+async def _call_gemini(
+    api_key: str, model: str, prompt: str, system: str, history: list | None, label: str = "Gemini"
+) -> tuple[str | None, str, str]:
+    """Qaytaradi: (natija yoki None, status, tafsilot)."""
+    if not api_key or not model:
+        return None, "invalid", "Kalit yoki model sozlanmagan."
+    logger.info(f"{label} ({model}) ga so'rov yuborilmoqda (prompt: {len(prompt)} belgi)...")
     try:
-        model = await _get_gemini_model_safe(cfg["api_key"], cfg["model"])
+        gmodel = await _get_gemini_model_safe(api_key, model)
         full_prompt = f"{system}\n\n{prompt}" if system else prompt
 
         if history:
@@ -65,31 +115,34 @@ async def _call_gemini(cfg: dict, prompt: str, system: str, history: list | None
                 {"role": "user" if turn["role"] == "user" else "model", "parts": [turn["content"]]}
                 for turn in history
             ]
-            chat = model.start_chat(history=gemini_history)
+            chat = gmodel.start_chat(history=gemini_history)
             resp = await asyncio.wait_for(
                 asyncio.to_thread(chat.send_message, full_prompt), timeout=GEMINI_TIMEOUT_SEC
             )
         else:
             resp = await asyncio.wait_for(
-                asyncio.to_thread(model.generate_content, full_prompt), timeout=GEMINI_TIMEOUT_SEC
+                asyncio.to_thread(gmodel.generate_content, full_prompt), timeout=GEMINI_TIMEOUT_SEC
             )
 
-        logger.info(f"Gemini ({cfg.get('model')}): ✅ javob qabul qilindi ({len(resp.text or '')} belgi).")
-        return resp.text
+        logger.info(f"{label} ({model}): ✅ javob qabul qilindi ({len(resp.text or '')} belgi).")
+        return resp.text, "ok", ""
     except asyncio.TimeoutError:
-        logger.error(f"Gemini timeout ({cfg.get('model')}): {GEMINI_TIMEOUT_SEC}s ichida javob kelmadi.")
-        return None
+        logger.error(f"{label} timeout ({model}): {GEMINI_TIMEOUT_SEC}s ichida javob kelmadi.")
+        return None, "error", "Vaqt tugadi (timeout)."
     except Exception as e:
-        logger.error(f"Gemini xato ({cfg.get('model')}): {type(e).__name__}: {e}")
-        return None
+        status, detail = _classify_gemini_error(e)
+        logger.error(f"{label} xato ({model}) [{status}]: {type(e).__name__}: {e}")
+        return None, status, detail
 
 
-async def _call_groq(cfg: dict, prompt: str, system: str, history: list | None) -> str | None:
-    if not cfg.get("api_key"):
-        logger.warning(f"Groq ({cfg.get('model')}): API kalit sozlanmagan — chaqiruv o'tkazib yuborildi.")
-        return None
-    base_url = cfg.get("base_url") or "https://api.groq.com/openai/v1"
-    logger.info(f"Groq ({cfg.get('model')}) ga so'rov yuborilmoqda (prompt: {len(prompt)} belgi)...")
+async def _call_groq(
+    api_key: str, model: str, base_url: str, prompt: str, system: str, history: list | None, label: str = "Groq"
+) -> tuple[str | None, str, str]:
+    """Qaytaradi: (natija yoki None, status, tafsilot)."""
+    if not api_key or not model:
+        return None, "invalid", "Kalit yoki model sozlanmagan."
+    base_url = base_url or "https://api.groq.com/openai/v1"
+    logger.info(f"{label} ({model}) ga so'rov yuborilmoqda (prompt: {len(prompt)} belgi)...")
 
     messages = [{"role": "system", "content": system or "Siz foydali yordamchisiz. O'zbek tilida javob bering."}]
     if history:
@@ -102,19 +155,20 @@ async def _call_groq(cfg: dict, prompt: str, system: str, history: list | None) 
         async with httpx.AsyncClient(timeout=90.0) as client:
             r = await client.post(
                 f"{base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {cfg['api_key']}"},
-                json={"model": cfg["model"], "messages": messages},
+                headers={"Authorization": f"Bearer {api_key}"},
+                json={"model": model, "messages": messages},
             )
             r.raise_for_status()
             content = r.json()["choices"][0]["message"]["content"]
-            logger.info(f"Groq ({cfg.get('model')}): ✅ javob qabul qilindi ({len(content or '')} belgi).")
-            return content
+            logger.info(f"{label} ({model}): ✅ javob qabul qilindi ({len(content or '')} belgi).")
+            return content, "ok", ""
     except httpx.HTTPStatusError as e:
-        logger.error(f"Groq HTTP xato ({cfg.get('model')}): {e.response.status_code} — {e.response.text[:300]}")
-        return None
+        status, detail = _classify_groq_error(e.response.status_code, e.response.text)
+        logger.error(f"{label} HTTP xato ({model}) [{status}]: {e.response.status_code} — {e.response.text[:300]}")
+        return None, status, detail
     except Exception as e:
-        logger.error(f"Groq xato ({cfg.get('model')}): {type(e).__name__}: {e}")
-        return None
+        logger.error(f"{label} xato ({model}): {type(e).__name__}: {e}")
+        return None, "error", str(e)[:200]
 
 
 async def _call_pollinations(prompt: str, system: str) -> str | None:
@@ -132,6 +186,14 @@ async def _call_pollinations(prompt: str, system: str) -> str | None:
         return None
 
 
+_STATUS_LABELS = {
+    "quota": "limit tugagan",
+    "paid": "pullik",
+    "invalid": "kalit yaroqsiz",
+    "error": "xato",
+}
+
+
 async def ask_ai(
     cfg: dict,
     prompt: str,
@@ -143,29 +205,52 @@ async def ask_ai(
     cfg: config.py dagi *_AI lug'atlaridan biri (provider/model/api_key/base_url).
     history: [{"role": "user"|"assistant", "content": "..."}] — ixtiyoriy, kontekstli
              suhbat uchun (masalan universal chat).
-    Asosiy provider ishlamasa (va allow_fallback=True bo'lsa), Groq -> Pollinations
-    tartibida bepul zaxiralarga o'tadi (bu holda tarix hisobga olinmasligi mumkin).
+
+    Ishlash tartibi:
+    1. Agar cfg["provider"] uchun config.KEY_POOLS da kalitlar bo'lsa — ular
+       RO'YXAT TARTIBIDA birin-ketin sinaladi (har birining o'z modeli bilan).
+       Biri "quota"/"paid"/"invalid"/"error" bersa, keyingisiga o'tiladi.
+    2. Pool bo'sh bo'lsa — cfg["api_key"]/cfg["model"] bilan ESKI (bitta kalit)
+       rejimda so'rov yuboriladi (orqaga moslik uchun).
+    3. Yuqoridagilarning BARCHASI ishlamasa (va allow_fallback=True bo'lsa),
+       Groq (standart kalit) -> Pollinations tartibida bepul zaxiralarga o'tadi.
     """
     provider = cfg.get("provider", "gemini")
+    pool = config.KEY_POOLS.get(provider, [])
+    result = None
 
-    if provider == "groq":
-        result = await _call_groq(cfg, prompt, system, history)
+    if pool:
+        for idx, entry in enumerate(pool, start=1):
+            key, model = entry.get("key", ""), entry.get("model", "")
+            if not key or not model:
+                continue
+            label = f"{provider.capitalize()} kalit #{idx}"
+            if provider == "groq":
+                result, status, detail = await _call_groq(key, model, "", prompt, system, history, label)
+            else:
+                result, status, detail = await _call_gemini(key, model, prompt, system, history, label)
+            if result:
+                return result
+            logger.warning(f"{label} ishlamadi ({_STATUS_LABELS.get(status, status)}) — navbatdagi kalitga o'tilmoqda...")
+        logger.warning(f"{provider.capitalize()} kalitlar to'plamidagi barcha {len(pool)} ta kalit ishlamadi.")
     else:
-        result = await _call_gemini(cfg, prompt, system, history)
-
-    if result:
-        return result
+        key, model = cfg.get("api_key", ""), cfg.get("model", "")
+        if provider == "groq":
+            result, status, detail = await _call_groq(key, model, cfg.get("base_url", ""), prompt, system, history, "Groq")
+        else:
+            result, status, detail = await _call_gemini(key, model, prompt, system, history, "Gemini")
+        if result:
+            return result
 
     if not allow_fallback:
         logger.warning(f"Asosiy provider ({provider}) ishlamadi, fallback O'CHIRILGAN (allow_fallback=False) — None qaytariladi.")
         return None
 
-    logger.warning(f"Asosiy provider ({provider}, model={cfg.get('model')}) ishlamadi — zaxira provayderga o'tilmoqda...")
+    logger.warning(f"Asosiy provider ({provider}) ishlamadi — zaxira provayderga o'tilmoqda...")
 
-    if provider != "groq" and DEFAULT_GROQ_KEY:
-        result = await _call_groq(
-            {"api_key": DEFAULT_GROQ_KEY, "model": GROQ_FALLBACK_MODEL, "base_url": ""},
-            prompt, system, history,
+    if provider != "groq" and config.DEFAULT_GROQ_KEY:
+        result, status, detail = await _call_groq(
+            config.DEFAULT_GROQ_KEY, config.GROQ_FALLBACK_MODEL, "", prompt, system, history, "Zaxira Groq"
         )
         if result:
             logger.info("✅ Zaxira Groq muvaffaqiyatli javob berdi.")
@@ -178,6 +263,21 @@ async def ask_ai(
     if not result:
         logger.error(f"❌ Barcha AI provayderlar (asosiy={provider}, Groq zaxira, Pollinations) ishlamadi — None qaytarilmoqda.")
     return result
+
+
+async def test_key(provider: str, api_key: str, model: str) -> tuple[str, str]:
+    """/developer > 🔑 AI kalitlari > 🩺 Kalitlarni tekshirish uchun — bitta
+    kalit/model juftligini juda qisqa so'rov bilan sinaydi (narxni minimal
+    qilish uchun). Qaytaradi: (status, tafsilot) — status "ok" bo'lsa
+    tafsilot bo'sh string."""
+    test_prompt = "Salom"
+    if provider == "groq":
+        result, status, detail = await _call_groq(api_key, model, "", test_prompt, "", None, "Tekshiruv")
+    else:
+        result, status, detail = await _call_gemini(api_key, model, test_prompt, "", None, "Tekshiruv")
+    if result:
+        return "ok", ""
+    return status, detail
 
 
 async def ask_gemini_vision(cfg: dict, image, caption: str) -> str | None:
