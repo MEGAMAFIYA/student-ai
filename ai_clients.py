@@ -1,7 +1,14 @@
 """
 Barcha funksiyalar shu modul orqali AI ga murojat qiladi.
 
-Har bir chaqiruv o'ziga tegishli konfiguratsiya (provider/model/key) bilan ishlaydi.
+Qo'llab-quvvatlanadigan provayderlar (config.SUPPORTED_PROVIDERS):
+  - "gemini"      — Google generativeai SDK orqali.
+  - "cloudflare"  — Cloudflare Workers AI (account_id + api_key kerak).
+  - qolganlari (groq, mistral, openrouter, cerebras, sambanova, cohere,
+    huggingface, nvidia, vercel) — barchasi OpenAI-mos (/chat/completions)
+    API'ga ega, shuning uchun BITTA umumiy funksiya (_call_openai_compatible)
+    orqali ishlaydi, faqat BASE_URL farq qiladi (config.PROVIDER_BASE_URLS).
+
 Agar provider uchun config.KEY_POOLS da bir nechta kalit qo'shilgan bo'lsa
 (/developer > 🔑 AI kalitlari orqali), ular BIRIN-KETIN sinaladi — biri
 kunlik/daqiqalik limitga yoki "pullik" holatga o'tib qolsa, avtomatik
@@ -86,8 +93,9 @@ def _classify_gemini_error(e: Exception) -> tuple[str, str]:
     return "error", msg[:200]
 
 
-def _classify_groq_error(status_code: int, body_text: str) -> tuple[str, str]:
-    """Groq (OpenAI-mos) HTTP xatosini (status, tafsilot) shakliga keltiradi."""
+def _classify_openai_compatible_error(status_code: int, body_text: str) -> tuple[str, str]:
+    """Groq/Mistral/OpenRouter/... (OpenAI-mos) HTTP xatosini
+    (status, tafsilot) shakliga keltiradi."""
     if status_code == 429:
         return "quota", "Bepul kunlik/daqiqalik limit tugagan — birozdan keyin yoki ertaga tiklanadi."
     if status_code == 402:
@@ -135,13 +143,15 @@ async def _call_gemini(
         return None, status, detail
 
 
-async def _call_groq(
-    api_key: str, model: str, base_url: str, prompt: str, system: str, history: list | None, label: str = "Groq"
+async def _call_openai_compatible(
+    api_key: str, model: str, base_url: str, prompt: str, system: str, history: list | None, label: str = "AI"
 ) -> tuple[str | None, str, str]:
-    """Qaytaradi: (natija yoki None, status, tafsilot)."""
-    if not api_key or not model:
-        return None, "invalid", "Kalit yoki model sozlanmagan."
-    base_url = base_url or "https://api.groq.com/openai/v1"
+    """Groq, Mistral, OpenRouter, Cerebras, SambaNova, Cohere, Hugging Face,
+    NVIDIA NIM, Vercel AI Gateway va Cloudflare kabi barcha OpenAI-mos
+    (/chat/completions) API'lar uchun UMUMIY chaqiruvchi. Qaytaradi:
+    (natija yoki None, status, tafsilot)."""
+    if not api_key or not model or not base_url:
+        return None, "invalid", "Kalit, model yoki bazaviy URL sozlanmagan."
     logger.info(f"{label} ({model}) ga so'rov yuborilmoqda (prompt: {len(prompt)} belgi)...")
 
     messages = [{"role": "system", "content": system or "Siz foydali yordamchisiz. O'zbek tilida javob bering."}]
@@ -154,7 +164,7 @@ async def _call_groq(
     try:
         async with httpx.AsyncClient(timeout=90.0) as client:
             r = await client.post(
-                f"{base_url}/chat/completions",
+                f"{base_url.rstrip('/')}/chat/completions",
                 headers={"Authorization": f"Bearer {api_key}"},
                 json={"model": model, "messages": messages},
             )
@@ -163,12 +173,43 @@ async def _call_groq(
             logger.info(f"{label} ({model}): ✅ javob qabul qilindi ({len(content or '')} belgi).")
             return content, "ok", ""
     except httpx.HTTPStatusError as e:
-        status, detail = _classify_groq_error(e.response.status_code, e.response.text)
+        status, detail = _classify_openai_compatible_error(e.response.status_code, e.response.text)
         logger.error(f"{label} HTTP xato ({model}) [{status}]: {e.response.status_code} — {e.response.text[:300]}")
         return None, status, detail
     except Exception as e:
         logger.error(f"{label} xato ({model}): {type(e).__name__}: {e}")
         return None, "error", str(e)[:200]
+
+
+def _resolve_cloudflare(raw_key: str) -> tuple[str, str]:
+    """Cloudflare Workers AI uchun bitta API kalit yetarli emas — hisob
+    (account) ID ham kerak. Shuning uchun kalit maydonida ikkalasi
+    'account_id:api_key' shaklida birga saqlanadi. Qaytaradi:
+    (haqiqiy api_key, shu account uchun to'liq bazaviy URL) — format
+    noto'g'ri bo'lsa ("", "")."""
+    if ":" not in raw_key:
+        return "", ""
+    account_id, api_key = raw_key.split(":", 1)
+    account_id, api_key = account_id.strip(), api_key.strip()
+    if not account_id or not api_key:
+        return "", ""
+    return api_key, f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1"
+
+
+async def _dispatch(
+    provider: str, key: str, model: str, base_url_override: str,
+    prompt: str, system: str, history: list | None, label: str,
+) -> tuple[str | None, str, str]:
+    """Provider nomiga qarab to'g'ri chaqiruvchiga yo'naltiradi."""
+    if provider == "gemini":
+        return await _call_gemini(key, model, prompt, system, history, label)
+    if provider == "cloudflare":
+        real_key, cf_base_url = _resolve_cloudflare(key)
+        if not real_key or not cf_base_url:
+            return None, "invalid", "Format noto'g'ri — 'account_id:api_key' shaklida bo'lishi kerak."
+        return await _call_openai_compatible(real_key, model, cf_base_url, prompt, system, history, label)
+    base_url = base_url_override or config.PROVIDER_BASE_URLS.get(provider, "")
+    return await _call_openai_compatible(key, model, base_url, prompt, system, history, label)
 
 
 async def _call_pollinations(prompt: str, system: str) -> str | None:
@@ -224,21 +265,16 @@ async def ask_ai(
             key, model = entry.get("key", ""), entry.get("model", "")
             if not key or not model:
                 continue
-            label = f"{provider.capitalize()} kalit #{idx}"
-            if provider == "groq":
-                result, status, detail = await _call_groq(key, model, "", prompt, system, history, label)
-            else:
-                result, status, detail = await _call_gemini(key, model, prompt, system, history, label)
+            label = f"{config.PROVIDER_LABELS.get(provider, provider.capitalize())} kalit #{idx}"
+            result, status, detail = await _dispatch(provider, key, model, "", prompt, system, history, label)
             if result:
                 return result
             logger.warning(f"{label} ishlamadi ({_STATUS_LABELS.get(status, status)}) — navbatdagi kalitga o'tilmoqda...")
         logger.warning(f"{provider.capitalize()} kalitlar to'plamidagi barcha {len(pool)} ta kalit ishlamadi.")
     else:
         key, model = cfg.get("api_key", ""), cfg.get("model", "")
-        if provider == "groq":
-            result, status, detail = await _call_groq(key, model, cfg.get("base_url", ""), prompt, system, history, "Groq")
-        else:
-            result, status, detail = await _call_gemini(key, model, prompt, system, history, "Gemini")
+        label = config.PROVIDER_LABELS.get(provider, provider.capitalize())
+        result, status, detail = await _dispatch(provider, key, model, cfg.get("base_url", ""), prompt, system, history, label)
         if result:
             return result
 
@@ -249,8 +285,9 @@ async def ask_ai(
     logger.warning(f"Asosiy provider ({provider}) ishlamadi — zaxira provayderga o'tilmoqda...")
 
     if provider != "groq" and config.DEFAULT_GROQ_KEY:
-        result, status, detail = await _call_groq(
-            config.DEFAULT_GROQ_KEY, config.GROQ_FALLBACK_MODEL, "", prompt, system, history, "Zaxira Groq"
+        result, status, detail = await _call_openai_compatible(
+            config.DEFAULT_GROQ_KEY, config.GROQ_FALLBACK_MODEL,
+            config.PROVIDER_BASE_URLS["groq"], prompt, system, history, "Zaxira Groq",
         )
         if result:
             logger.info("✅ Zaxira Groq muvaffaqiyatli javob berdi.")
@@ -270,11 +307,8 @@ async def test_key(provider: str, api_key: str, model: str) -> tuple[str, str]:
     kalit/model juftligini juda qisqa so'rov bilan sinaydi (narxni minimal
     qilish uchun). Qaytaradi: (status, tafsilot) — status "ok" bo'lsa
     tafsilot bo'sh string."""
-    test_prompt = "Salom"
-    if provider == "groq":
-        result, status, detail = await _call_groq(api_key, model, "", test_prompt, "", None, "Tekshiruv")
-    else:
-        result, status, detail = await _call_gemini(api_key, model, test_prompt, "", None, "Tekshiruv")
+    label = config.PROVIDER_LABELS.get(provider, provider.capitalize())
+    result, status, detail = await _dispatch(provider, api_key, model, "", "Salom", "", None, f"Tekshiruv ({label})")
     if result:
         return "ok", ""
     return status, detail
