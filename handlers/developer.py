@@ -76,6 +76,12 @@ def _is_admin(update: Update) -> bool:
     return bool(user and user.id in config.ADMIN_IDS)
 
 
+def _provider_label(provider: str) -> str:
+    """Provider uchun /developer da ko'rsatiladigan to'liq, chiroyli nom
+    (masalan 'huggingface' -> 'Hugging Face', 'nvidia' -> 'NVIDIA NIM')."""
+    return config.PROVIDER_LABELS.get(provider, provider.capitalize())
+
+
 def _mask_key(value: str) -> str:
     if not value:
         return "❌ o'rnatilmagan"
@@ -186,10 +192,11 @@ def _func_menu_keyboard(prefix: str) -> InlineKeyboardMarkup:
 
 
 def _provider_choice_keyboard(back_callback: str, choose_prefix: str) -> InlineKeyboardMarkup:
-    rows = [
-        [InlineKeyboardButton(p.capitalize(), callback_data=f"{choose_prefix}:{p}")]
+    buttons = [
+        InlineKeyboardButton(_provider_label(p), callback_data=f"{choose_prefix}:{p}")
         for p in config.SUPPORTED_PROVIDERS
     ]
+    rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
     rows.append([InlineKeyboardButton("⬅️ Orqaga", callback_data=back_callback)])
     return InlineKeyboardMarkup(rows)
 
@@ -202,7 +209,7 @@ def _keys_menu_text() -> str:
     lines = ["🔑 <b>AI kalitlari</b>\n"]
     for provider in config.SUPPORTED_PROVIDERS:
         pool = config.KEY_POOLS.get(provider, [])
-        lines.append(f"<b>{_esc(provider.capitalize())} kalitlar:</b>")
+        lines.append(f"<b>{_esc(_provider_label(provider))} kalitlar:</b>")
         if not pool:
             lines.append("  <i>(hali kalit qo'shilmagan)</i>")
         else:
@@ -220,7 +227,7 @@ def _keys_menu_keyboard() -> InlineKeyboardMarkup:
     for provider in config.SUPPORTED_PROVIDERS:
         pool = config.KEY_POOLS.get(provider, [])
         btns = [
-            InlineKeyboardButton(f"{provider.capitalize()} {i}", callback_data=f"dev:keyview:{provider}:{i}")
+            InlineKeyboardButton(f"{_provider_label(provider)} {i}", callback_data=f"dev:keyview:{provider}:{i}")
             for i in range(1, len(pool) + 1)
         ]
         for j in range(0, len(btns), 3):
@@ -238,7 +245,7 @@ def _key_view_text(provider: str, index: int) -> str:
         return "⚠️ Bu kalit topilmadi (o'chirilgan bo'lishi mumkin)."
     entry = pool[index - 1]
     return (
-        f"🔑 <b>{_esc(provider.capitalize())} — Kalit #{index}</b>\n\n"
+        f"🔑 <b>{_esc(_provider_label(provider))} — Kalit #{index}</b>\n\n"
         f"Kalit: <code>{_esc(_mask_key(entry.get('key', '')))}</code>\n"
         f"Model: <code>{_esc(entry.get('model') or '—')}</code>"
     )
@@ -255,7 +262,7 @@ def _key_view_keyboard(provider: str, index: int) -> InlineKeyboardMarkup:
 
 def _keyadd_text() -> str:
     links = "\n".join(
-        f"🔹 {_esc(p.capitalize())}: {_esc(config.PROVIDER_KEY_LINKS.get(p, ''))}"
+        f"🔹 {_esc(_provider_label(p))}: {_esc(config.PROVIDER_KEY_LINKS.get(p, ''))}"
         for p in config.SUPPORTED_PROVIDERS
     )
     return (
@@ -267,13 +274,15 @@ def _keyadd_text() -> str:
 
 
 def _keyadd_keyboard() -> InlineKeyboardMarkup:
-    rows = [[InlineKeyboardButton(p.capitalize(), callback_data=f"dev:keyaddprov:{p}")] for p in config.SUPPORTED_PROVIDERS]
+    buttons = [InlineKeyboardButton(_provider_label(p), callback_data=f"dev:keyaddprov:{p}") for p in config.SUPPORTED_PROVIDERS]
+    rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
     rows.append([InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:keys")])
     return InlineKeyboardMarkup(rows)
 
 
 def _keybulk_keyboard() -> InlineKeyboardMarkup:
-    rows = [[InlineKeyboardButton(p.capitalize(), callback_data=f"dev:keybulkprov:{p}")] for p in config.SUPPORTED_PROVIDERS]
+    buttons = [InlineKeyboardButton(_provider_label(p), callback_data=f"dev:keybulkprov:{p}") for p in config.SUPPORTED_PROVIDERS]
+    rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
     rows.append([InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:keys")])
     return InlineKeyboardMarkup(rows)
 
@@ -315,7 +324,7 @@ async def _run_key_check() -> str:
     any_key = False
     for provider in config.SUPPORTED_PROVIDERS:
         items = by_provider[provider]
-        lines.append(f"<b>{_esc(provider.capitalize())}:</b>")
+        lines.append(f"<b>{_esc(_provider_label(provider))}:</b>")
         if not items:
             lines.append("  <i>(kalit yo'q)</i>")
         else:
@@ -451,11 +460,19 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "keyaddprov":
         provider = parts[2]
         context.user_data["dev_action"] = {"type": "add_key", "provider": provider}
-        await _safe_edit_query(
-            query,
-            f"➕ <b>{_esc(provider.capitalize())}</b> — yangi API kalitni xabar qilib yuboring:",
-            parse_mode="HTML",
-        )
+        if provider == "cloudflare":
+            prompt_text = (
+                f"➕ <b>{_esc(_provider_label(provider))}</b>\n\n"
+                "Cloudflare uchun oddiy API kalit YETARLI EMAS — Account ID "
+                "ham kerak. Ikkalasini quyidagi formatda, ORASIGA IKKI NUQTA "
+                "qo'yib, BITTA xabar qilib yuboring:\n"
+                "<code>account_id:api_key</code>\n\n"
+                "(Account ID va API tokenni dash.cloudflare.com sahifasining "
+                "o'ng tomonidagi \"Account ID\" va Workers AI bo'limidan olasiz.)"
+            )
+        else:
+            prompt_text = f"➕ <b>{_esc(_provider_label(provider))}</b> — yangi API kalitni xabar qilib yuboring:"
+        await _safe_edit_query(query, prompt_text, parse_mode="HTML")
         return DEV_WAIT_TEXT
 
     if action == "keyrepl":
@@ -463,7 +480,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["dev_action"] = {"type": "key_field", "provider": provider, "index": idx, "field": "key"}
         await _safe_edit_query(
             query,
-            f"🔁 {_esc(provider.capitalize())} — Kalit #{idx}\nYangi API kalitni xabar qilib yuboring:",
+            f"🔁 {_esc(_provider_label(provider))} — Kalit #{idx}\nYangi API kalitni xabar qilib yuboring:",
         )
         return DEV_WAIT_TEXT
 
@@ -472,7 +489,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["dev_action"] = {"type": "key_field", "provider": provider, "index": idx, "field": "model"}
         await _safe_edit_query(
             query,
-            f"✏️ {_esc(provider.capitalize())} — Kalit #{idx}\nYangi model nomini xabar qilib yuboring:",
+            f"✏️ {_esc(_provider_label(provider))} — Kalit #{idx}\nYangi model nomini xabar qilib yuboring:",
         )
         return DEV_WAIT_TEXT
 
@@ -496,7 +513,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         provider = parts[2]
         await _safe_edit_query(
             query,
-            f"🔀 <b>{_esc(provider.capitalize())}</b> — qaysi kalitlar o'zgartirilsin?",
+            f"🔀 <b>{_esc(_provider_label(provider))}</b> — qaysi kalitlar o'zgartirilsin?",
             reply_markup=_keybulk_scope_keyboard(provider), parse_mode="HTML",
         )
         return DEV_MENU
@@ -506,7 +523,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["dev_action"] = {"type": "bulk_pool_model", "provider": provider, "scope": scope}
         await _safe_edit_query(
             query,
-            f"🔀 {_esc(provider.capitalize())} — {_SCOPE_LABELS.get(scope, scope)} kalitlar uchun "
+            f"🔀 {_esc(_provider_label(provider))} — {_SCOPE_LABELS.get(scope, scope)} kalitlar uchun "
             "yangi model nomini xabar qilib yuboring:",
         )
         return DEV_WAIT_BULK_MODEL
@@ -571,7 +588,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         idx = config.add_key(provider, raw_value, default_model)
         await _edit_menu(
             context,
-            f"✅ {_esc(provider.capitalize())} kalit #{idx} qo'shildi "
+            f"✅ {_esc(_provider_label(provider))} kalit #{idx} qo'shildi "
             f"(standart model: <code>{_esc(default_model)}</code>).\n"
             "Boshqa model qo'yish uchun kalitni ochib \"✏️ Modelni o'zgartirish\"ni bosing.\n\n"
             + _keys_menu_text(),
@@ -615,11 +632,11 @@ async def on_bulk_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if updated:
             idxs = ", ".join(f"#{i}" for i in updated)
             text = (
-                f"✅ {_esc(provider.capitalize())} — {scope_label} kalitlar ({idxs}) modeli "
+                f"✅ {_esc(_provider_label(provider))} — {scope_label} kalitlar ({idxs}) modeli "
                 f"<b>{_esc(model)}</b> ga o'zgartirildi."
             )
         else:
-            text = f"⚠️ {_esc(provider.capitalize())} da mos keladigan kalit topilmadi."
+            text = f"⚠️ {_esc(_provider_label(provider))} da mos keladigan kalit topilmadi."
         await _edit_menu(context, text + "\n\n" + _keys_menu_text(), _keys_menu_keyboard())
 
     context.user_data.pop("dev_action", None)
