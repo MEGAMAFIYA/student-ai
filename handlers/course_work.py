@@ -45,7 +45,7 @@ SHARE_KIRISH = 0.07
 SHARE_BOB = 0.24        # har bir bob uchun (3 ta bob => taxminan 72%)
 SHARE_XULOSA = 0.10
 
-MAX_SUBSECTION_FILL_ROUNDS = 6   # bitta kichik bo'limni to'ldirish uchun maksimal urinish
+MAX_SUBSECTION_FILL_ROUNDS = 4   # bitta kichik bo'limni to'ldirish uchun maksimal urinish
 MAX_PDF_EXPAND_ROUNDS = 30       # yakuniy PDF sahifa sonini yetkazish uchun maksimal urinish
 MIN_ACCEPTABLE_WORDS = 60        # shundan kam so'z yozilsa — AI umuman ishlamagan deb hisoblanadi
 
@@ -58,7 +58,14 @@ MAX_COMPLETENESS_ROUNDS = 3      # to'liqlikni tekshirish-tuzatish tsikli necha 
 # ===== YAKUNIY MUHARRIRLIK (ziddiyat/til/raqamlash tuzatish) sozlamalari =====
 MAX_HARMONIZE_WORDS = 4000       # shundan uzun bo'lim muharrirlik bosqichida o'tkazib yuboriladi
 
-RETRY_ATTEMPTS = 3               # bitta AI so'rovi necha marta qayta urinilishi
+# RETRY_ATTEMPTS pasaytirildi (3 -> 2): endi /developer > 🔑 AI kalitlari
+# orqali qo'shilgan har bir provider (gemini/groq) BIR NECHTA kalitdan
+# iborat bo'lishi mumkin — ai_clients.ask_ai() BITTA _ask_retry urinishining
+# o'zida shu kalitlarning HAMMASINI birin-ketin sinab chiqadi. Ya'ni asosiy
+# "qayta urinish" ishi endi kalitlar darajasida bajariladi, shuning uchun
+# tashqi RETRY_ATTEMPTS'ni yuqori tutish keraksiz so'rovlar sonini
+# ko'paytirib, bepul limitni tezroq tugatib qo'yardi.
+RETRY_ATTEMPTS = 2               # bitta AI so'rovi necha marta qayta urinilishi
 RETRY_DELAY_SEC = 3              # urinishlar orasidagi kutish (soniya)
 OVERALL_TIMEOUT_SEC = 25 * 60    # butun kurs ishi generatsiyasi uchun yakuniy xavfsizlik chegarasi
 
