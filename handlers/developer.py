@@ -28,6 +28,7 @@ import html
 import logging
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes, ConversationHandler
 
 import config
@@ -127,6 +128,31 @@ def _provider_choice_keyboard(back_callback: str, choose_prefix: str) -> InlineK
     return InlineKeyboardMarkup(rows)
 
 
+async def _safe_edit_query(query, text: str, reply_markup=None, parse_mode=None):
+    """query.edit_message_text ni chaqiradi, lekin Telegram 'Message is not
+    modified' xatosini (xuddi shu matn/tugmalar allaqachon ko'rsatilgan
+    bo'lsa chiqadi — zararsiz holat) sekin e'tiborsiz qoldiradi. Boshqa har
+    qanday xato odatdagidek yuqoriga uzatiladi."""
+    try:
+        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+    except BadRequest as e:
+        if "message is not modified" not in str(e).lower():
+            raise
+
+
+async def _safe_edit_bot(bot, chat_id, message_id, text: str, reply_markup=None, parse_mode=None):
+    """_edit_menu() uchun xuddi shu maqsadda — context.bot.edit_message_text
+    orqali ishlaganda ham 'not modified' xatosi bosilib qoldirilishi kerak."""
+    try:
+        await bot.edit_message_text(
+            chat_id=chat_id, message_id=message_id, text=text,
+            reply_markup=reply_markup, parse_mode=parse_mode,
+        )
+    except BadRequest as e:
+        if "message is not modified" not in str(e).lower():
+            raise
+
+
 async def entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_admin(update):
         await update.message.reply_text("🚫 Bu buyruq faqat administratorlar uchun.")
@@ -143,10 +169,7 @@ async def entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def _edit_menu(context: ContextTypes.DEFAULT_TYPE, text: str, keyboard: InlineKeyboardMarkup):
     """Menyu xabarini (query orqali yoki saqlangan chat/message_id orqali) yangilaydi."""
     chat_id, message_id = context.user_data["dev_msg"]
-    await context.bot.edit_message_text(
-        chat_id=chat_id, message_id=message_id, text=text,
-        reply_markup=keyboard, parse_mode="HTML",
-    )
+    await _safe_edit_bot(context.bot, chat_id, message_id, text, reply_markup=keyboard, parse_mode="HTML")
 
 
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -154,7 +177,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     if not _is_admin(update):
-        await query.edit_message_text("🚫 Ruxsat yo'q.")
+        await _safe_edit_query(query, "🚫 Ruxsat yo'q.")
         return ConversationHandler.END
 
     data = query.data
@@ -162,26 +185,25 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     action = parts[1] if len(parts) > 1 else ""
 
     if action == "close":
-        await query.edit_message_text("✅ Yopildi.")
+        await _safe_edit_query(query, "✅ Yopildi.")
         context.user_data.clear()
         return ConversationHandler.END
 
     if action == "menu":
-        await query.edit_message_text(
-            _main_menu_text(), reply_markup=_main_menu_keyboard(), parse_mode="HTML"
-        )
+        await _safe_edit_query(query, _main_menu_text(), reply_markup=_main_menu_keyboard(), parse_mode="HTML")
         return DEV_MENU
 
     if action == "func":
         prefix = parts[2]
-        await query.edit_message_text(
-            _func_menu_text(prefix), reply_markup=_func_menu_keyboard(prefix), parse_mode="HTML"
+        await _safe_edit_query(
+            query, _func_menu_text(prefix), reply_markup=_func_menu_keyboard(prefix), parse_mode="HTML"
         )
         return DEV_MENU
 
     if action == "editprov":
         prefix = parts[2]
-        await query.edit_message_text(
+        await _safe_edit_query(
+            query,
             f"{_esc(config.AI_FUNCTION_LABELS[prefix])} — PROVIDER tanlang:",
             reply_markup=_provider_choice_keyboard(f"dev:func:{prefix}", f"dev:setprov:{prefix}"),
         )
@@ -190,7 +212,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "setprov":
         prefix, provider = parts[2], parts[3]
         config.update_ai_field(prefix, "provider", provider)
-        await query.edit_message_text(
+        await _safe_edit_query(
+            query,
             f"✅ PROVIDER — <b>{_esc(provider)}</b> qilib o'rnatildi.\n\n" + _func_menu_text(prefix),
             reply_markup=_func_menu_keyboard(prefix), parse_mode="HTML",
         )
@@ -201,7 +224,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["dev_edit"] = (prefix, field)
         current = config.AI_FUNCTIONS[prefix].get(field, "")
         shown = _esc(_mask_key(current) if field == "api_key" else (current or "(bo'sh)"))
-        await query.edit_message_text(
+        await _safe_edit_query(
+            query,
             f"{_esc(config.AI_FUNCTION_LABELS[prefix])} — <b>{_FIELD_LABELS[field]}</b>\n"
             f"Joriy qiymat: <code>{shown}</code>\n\n"
             "Yangi qiymatni xabar qilib yuboring.\n"
@@ -211,7 +235,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return DEV_WAIT_TEXT
 
     if action == "bulk":
-        await query.edit_message_text(
+        await _safe_edit_query(
+            query,
             "➕ <b>Barcha modellar</b>\n\nAvval AI turini (provider) tanlang — shu "
             "turdagi BARCHA funksiyalarning modeli birdaniga o'zgaradi:",
             reply_markup=_provider_choice_keyboard("dev:menu", "dev:bulkprov"),
@@ -226,7 +251,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             config.AI_FUNCTION_LABELS[p] for p, c in config.AI_FUNCTIONS.items() if c.get("provider") == provider
         ]
         affected_txt = "\n".join(f"• {_esc(a)}" for a in affected) or "(hozircha bu provider'da hech qaysi funksiya yo'q)"
-        await query.edit_message_text(
+        await _safe_edit_query(
+            query,
             f"➕ <b>Barcha modellar — {_esc(provider)}</b>\n\n"
             f"Ta'sir qiladigan funksiyalar:\n{affected_txt}\n\n"
             "Yangi model nomini xabar qilib yuboring:",
