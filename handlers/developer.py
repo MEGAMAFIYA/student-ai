@@ -1,29 +1,32 @@
 """
 👨‍💻 /developer — FAQAT adminlarga (config.ADMIN_IDS) ko'rinadigan buyruq.
 
-Shu orqali barcha funksiyalar (Universal chat, Kurs ishi, Tarjima,
-PDF tahrirlash, Qo'llanma, Vision) uchun AI PROVIDER / MODEL / API_KEY /
-BASE_URL — .env faylni tahrirlamasdan, to'g'ridan-to'g'ri Telegram ichidan
-o'zgartiriladi. O'zgarishlar config.py orqali runtime_ai_config.json fayliga
-yoziladi, shuning uchun bot qayta ishga tushganda ham saqlanib qoladi.
+Ikki asosiy bo'lim:
+1. Har bir funksiya (Universal chat, Kurs ishi, Tarjima, PDF tahrirlash,
+   Qo'llanma, Vision) uchun AI PROVIDER / MODEL / API_KEY / BASE_URL —
+   bitta-kalit rejimi (agar shu provider uchun kalitlar to'plami bo'sh bo'lsa
+   ishlatiladi).
+2. 🔑 AI kalitlari — har bir provider (gemini, groq) uchun BIR NECHTA kalitdan
+   iborat to'plam. Biri kunlik/daqiqalik limitga yoki "pullik" holatga
+   o'tib qolsa, ai_clients.py avtomatik ravishda navbatdagi kalitga o'tadi.
+   Har bir kalitning o'z modeli bor — shu orqali bitta provider ichida 2 xil
+   model (masalan toq kalitlarga bittasi, juft kalitlarga boshqasi) qo'yish
+   mumkin, model biri pullik bo'lib qolsa ikkinchisi ishlab turadi.
+   Shu yerda kalitlarni sinab ko'rish (health-check) funksiyasi ham bor.
 
-Qo'shimcha "➕ Barcha modellar" bo'limi: bitta provider (masalan gemini)
-tanlanadi, so'ng bitta model nomi kiritiladi — shu PROVIDER'ga ega BARCHA
-funksiyalarning MODEL qiymati bir vaqtda shu nomga o'zgaradi.
-
-Kelajakda yangi funksiya (masalan rasm generatsiyasi) qo'shilsa, uni ham
-shu menyuga qo'shish uchun config.AI_FUNCTIONS / AI_FUNCTION_LABELS ga bitta
-qator qo'shish kifoya — bu fayl o'zgarishsiz ishlayveradi.
+O'zgarishlar config.py orqali runtime_ai_config.json fayliga yoziladi,
+shuning uchun bot qayta ishga tushganda ham saqlanib qoladi — .env faylni
+tahrirlash shart emas.
 
 MUHIM: bu yerda parse_mode="HTML" ishlatiladi, Markdown EMAS. Sabab — API
 kalit, model nomi kabi qiymatlar foydalanuvchi tomonidan kiritiladi va ular
 "*", "_", "`" kabi Markdown maxsus belgilarini o'z ichiga olishi mumkin
 (masalan API kalitni "****" bilan bekitganda). Markdown rejimida bunday
 juftlashmagan belgilar "can't find end of the entity" xatosiga olib keladi.
-HTML rejimida esa faqat &, <, > belgilarini escape qilish kifoya (_esc()),
-qolgan barcha belgilar (shu jumladan * va _) muammosiz ko'rsatiladi.
+HTML rejimida esa faqat &, <, > belgilarini escape qilish kifoya (_esc()).
 """
 
+import asyncio
 import html
 import logging
 
@@ -31,6 +34,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes, ConversationHandler
 
+import ai_clients
 import config
 
 logger = logging.getLogger(__name__)
@@ -44,8 +48,23 @@ _FIELD_LABELS = {
     "base_url": "BASE_URL",
 }
 
+_SCOPE_LABELS = {"all": "barcha", "odd": "toq sondagi", "even": "juft sondagi"}
 
-def _esc(value: str) -> str:
+_STATUS_ICONS = {"ok": "✅", "quota": "⏳", "paid": "🚫", "invalid": "❌", "error": "⚠️"}
+_STATUS_TEXT = {
+    "ok": "ishlayapti",
+    "quota": "limit tugagan",
+    "paid": "model pullik",
+    "invalid": "kalit yaroqsiz",
+    "error": "xato",
+}
+
+
+# ============================================================
+# Yordamchi funksiyalar
+# ============================================================
+
+def _esc(value) -> str:
     """HTML rejimida xavfsiz ko'rsatish uchun &, <, > belgilarini escape qiladi.
     Foydalanuvchi kiritgan HAR QANDAY qiymat (API kalit, model nomi, URL)
     ekranga chiqarilishidan oldin albatta shu orqali o'tishi kerak."""
@@ -65,6 +84,40 @@ def _mask_key(value: str) -> str:
     return f"{value[:4]}{'*' * (len(value) - 8)}{value[-4:]}"
 
 
+async def _safe_edit_query(query, text: str, reply_markup=None, parse_mode=None):
+    """query.edit_message_text ni chaqiradi, lekin Telegram 'Message is not
+    modified' xatosini (xuddi shu matn/tugmalar allaqachon ko'rsatilgan
+    bo'lsa chiqadi — zararsiz holat) sekin e'tiborsiz qoldiradi."""
+    try:
+        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+    except BadRequest as e:
+        if "message is not modified" not in str(e).lower():
+            raise
+
+
+async def _safe_edit_bot(bot, chat_id, message_id, text: str, reply_markup=None, parse_mode=None):
+    """_edit_menu() uchun xuddi shu maqsadda."""
+    try:
+        await bot.edit_message_text(
+            chat_id=chat_id, message_id=message_id, text=text,
+            reply_markup=reply_markup, parse_mode=parse_mode,
+        )
+    except BadRequest as e:
+        if "message is not modified" not in str(e).lower():
+            raise
+
+
+async def _edit_menu(context: ContextTypes.DEFAULT_TYPE, text: str, keyboard: InlineKeyboardMarkup):
+    """Menyu xabarini saqlangan chat/message_id orqali yangilaydi (matnli
+    javobdan keyin, query bo'lmaganda ishlatiladi)."""
+    chat_id, message_id = context.user_data["dev_msg"]
+    await _safe_edit_bot(context.bot, chat_id, message_id, text, reply_markup=keyboard, parse_mode="HTML")
+
+
+# ============================================================
+# Asosiy menyu
+# ============================================================
+
 def _main_menu_text() -> str:
     return (
         "🔧 <b>Developer — AI sozlamalari</b>\n\n"
@@ -83,10 +136,15 @@ def _main_menu_keyboard() -> InlineKeyboardMarkup:
             for prefix, label in prefixes[i:i + 2]
         ]
         rows.append(row)
+    rows.append([InlineKeyboardButton("🔑 AI kalitlari", callback_data="dev:keys")])
     rows.append([InlineKeyboardButton("➕ Barcha modellar", callback_data="dev:bulk")])
     rows.append([InlineKeyboardButton("❌ Yopish", callback_data="dev:close")])
     return InlineKeyboardMarkup(rows)
 
+
+# ============================================================
+# Funksiya sozlamalari (bitta-kalit rejimi)
+# ============================================================
 
 def _func_menu_text(prefix: str) -> str:
     cfg = config.AI_FUNCTIONS[prefix]
@@ -95,12 +153,20 @@ def _func_menu_text(prefix: str) -> str:
     provider = _esc(cfg.get("provider") or "—")
     model = _esc(cfg.get("model") or "—")
     api_key = _esc(_mask_key(cfg.get("api_key", "")))
+    pool_note = ""
+    if config.KEY_POOLS.get(cfg.get("provider", ""), []):
+        pool_note = (
+            f"\n\n⚠️ <i>{provider} uchun kalitlar to'plami mavjud — bu funksiya "
+            "shu to'plamdagi kalitlarni ustuvor ishlatadi, quyidagi API_KEY "
+            "e'tiborga olinmaydi (🔑 AI kalitlari bo'limiga qarang).</i>"
+        )
     return (
         f"{label} — AI sozlamalari\n\n"
         f"PROVIDER: <code>{provider}</code>\n"
         f"MODEL: <code>{model}</code>\n"
         f"API_KEY: <code>{api_key}</code>\n"
-        f"BASE_URL: <code>{base_url}</code>\n\n"
+        f"BASE_URL: <code>{base_url}</code>"
+        f"{pool_note}\n\n"
         "O'zgartirish uchun maydonni tanlang:"
     )
 
@@ -128,30 +194,145 @@ def _provider_choice_keyboard(back_callback: str, choose_prefix: str) -> InlineK
     return InlineKeyboardMarkup(rows)
 
 
-async def _safe_edit_query(query, text: str, reply_markup=None, parse_mode=None):
-    """query.edit_message_text ni chaqiradi, lekin Telegram 'Message is not
-    modified' xatosini (xuddi shu matn/tugmalar allaqachon ko'rsatilgan
-    bo'lsa chiqadi — zararsiz holat) sekin e'tiborsiz qoldiradi. Boshqa har
-    qanday xato odatdagidek yuqoriga uzatiladi."""
-    try:
-        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
-    except BadRequest as e:
-        if "message is not modified" not in str(e).lower():
-            raise
+# ============================================================
+# 🔑 AI kalitlari (kalitlar to'plami)
+# ============================================================
+
+def _keys_menu_text() -> str:
+    lines = ["🔑 <b>AI kalitlari</b>\n"]
+    for provider in config.SUPPORTED_PROVIDERS:
+        pool = config.KEY_POOLS.get(provider, [])
+        lines.append(f"<b>{_esc(provider.capitalize())} kalitlar:</b>")
+        if not pool:
+            lines.append("  <i>(hali kalit qo'shilmagan)</i>")
+        else:
+            for i, entry in enumerate(pool, start=1):
+                model = _esc(entry.get("model") or "—")
+                key_shown = _esc(_mask_key(entry.get("key", "")))
+                lines.append(f"  {i}. <code>{key_shown}</code> — <code>{model}</code>")
+        lines.append("")
+    lines.append("Tahrirlash uchun pastdagi tugmalardan kalitni tanlang:")
+    return "\n".join(lines)
 
 
-async def _safe_edit_bot(bot, chat_id, message_id, text: str, reply_markup=None, parse_mode=None):
-    """_edit_menu() uchun xuddi shu maqsadda — context.bot.edit_message_text
-    orqali ishlaganda ham 'not modified' xatosi bosilib qoldirilishi kerak."""
-    try:
-        await bot.edit_message_text(
-            chat_id=chat_id, message_id=message_id, text=text,
-            reply_markup=reply_markup, parse_mode=parse_mode,
-        )
-    except BadRequest as e:
-        if "message is not modified" not in str(e).lower():
-            raise
+def _keys_menu_keyboard() -> InlineKeyboardMarkup:
+    rows = []
+    for provider in config.SUPPORTED_PROVIDERS:
+        pool = config.KEY_POOLS.get(provider, [])
+        btns = [
+            InlineKeyboardButton(f"{provider.capitalize()} {i}", callback_data=f"dev:keyview:{provider}:{i}")
+            for i in range(1, len(pool) + 1)
+        ]
+        for j in range(0, len(btns), 3):
+            rows.append(btns[j:j + 3])
+    rows.append([InlineKeyboardButton("➕ Yangi kalit qo'shish", callback_data="dev:keyadd")])
+    rows.append([InlineKeyboardButton("🔀 Modellarni o'zgartirish", callback_data="dev:keybulk")])
+    rows.append([InlineKeyboardButton("🩺 Kalitlarni tekshirish", callback_data="dev:keycheck")])
+    rows.append([InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:menu")])
+    return InlineKeyboardMarkup(rows)
 
+
+def _key_view_text(provider: str, index: int) -> str:
+    pool = config.KEY_POOLS.get(provider, [])
+    if not (1 <= index <= len(pool)):
+        return "⚠️ Bu kalit topilmadi (o'chirilgan bo'lishi mumkin)."
+    entry = pool[index - 1]
+    return (
+        f"🔑 <b>{_esc(provider.capitalize())} — Kalit #{index}</b>\n\n"
+        f"Kalit: <code>{_esc(_mask_key(entry.get('key', '')))}</code>\n"
+        f"Model: <code>{_esc(entry.get('model') or '—')}</code>"
+    )
+
+
+def _key_view_keyboard(provider: str, index: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔁 Kalitni almashtirish", callback_data=f"dev:keyrepl:{provider}:{index}")],
+        [InlineKeyboardButton("✏️ Modelni o'zgartirish", callback_data=f"dev:keymodel:{provider}:{index}")],
+        [InlineKeyboardButton("🗑 O'chirish", callback_data=f"dev:keydel:{provider}:{index}")],
+        [InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:keys")],
+    ])
+
+
+def _keyadd_text() -> str:
+    links = "\n".join(
+        f"🔹 {_esc(p.capitalize())}: {_esc(config.PROVIDER_KEY_LINKS.get(p, ''))}"
+        for p in config.SUPPORTED_PROVIDERS
+    )
+    return (
+        "➕ <b>Yangi kalit qo'shish</b>\n\n"
+        "Bepul API kalit olish uchun havolalar:\n"
+        f"{links}\n\n"
+        "Qaysi AI turi uchun kalit qo'shmoqchisiz?"
+    )
+
+
+def _keyadd_keyboard() -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(p.capitalize(), callback_data=f"dev:keyaddprov:{p}")] for p in config.SUPPORTED_PROVIDERS]
+    rows.append([InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:keys")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _keybulk_keyboard() -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(p.capitalize(), callback_data=f"dev:keybulkprov:{p}")] for p in config.SUPPORTED_PROVIDERS]
+    rows.append([InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:keys")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _keybulk_scope_keyboard(provider: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Barchasi", callback_data=f"dev:keybulkscope:{provider}:all")],
+        [InlineKeyboardButton("Toq (1, 3, 5...)", callback_data=f"dev:keybulkscope:{provider}:odd")],
+        [InlineKeyboardButton("Juft (2, 4, 6...)", callback_data=f"dev:keybulkscope:{provider}:even")],
+        [InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:keybulk")],
+    ])
+
+
+async def _run_key_check() -> str:
+    """Barcha provider'lardagi BARCHA kalitlarni parallel sinaydi va
+    natijalarni HTML matn shaklida qaytaradi."""
+    tasks, meta = [], []
+    for provider in config.SUPPORTED_PROVIDERS:
+        for i, entry in enumerate(config.KEY_POOLS.get(provider, []), start=1):
+            key, model = entry.get("key", ""), entry.get("model", "")
+            if key and model:
+                tasks.append(ai_clients.test_key(provider, key, model))
+                meta.append((provider, i, model, True))
+            else:
+                meta.append((provider, i, model, False))
+
+    results = await asyncio.gather(*tasks) if tasks else []
+    result_iter = iter(results)
+
+    by_provider: dict[str, list] = {p: [] for p in config.SUPPORTED_PROVIDERS}
+    for provider, i, model, has_data in meta:
+        if has_data:
+            status, _detail = next(result_iter)
+        else:
+            status = "invalid"
+        by_provider[provider].append((i, status, model))
+
+    lines = ["🩺 <b>Kalitlar holati</b>\n"]
+    any_key = False
+    for provider in config.SUPPORTED_PROVIDERS:
+        items = by_provider[provider]
+        lines.append(f"<b>{_esc(provider.capitalize())}:</b>")
+        if not items:
+            lines.append("  <i>(kalit yo'q)</i>")
+        else:
+            any_key = True
+            for i, status, model in items:
+                icon = _STATUS_ICONS.get(status, "⚠️")
+                text = _STATUS_TEXT.get(status, status)
+                lines.append(f"  {i}. {icon} {text} (<code>{_esc(model)}</code>)")
+        lines.append("")
+    if not any_key:
+        lines.append("Hali birorta ham kalit qo'shilmagan.")
+    return "\n".join(lines)
+
+
+# ============================================================
+# Kirish nuqtasi va callback dispatcher
+# ============================================================
 
 async def entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_admin(update):
@@ -166,12 +347,6 @@ async def entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return DEV_MENU
 
 
-async def _edit_menu(context: ContextTypes.DEFAULT_TYPE, text: str, keyboard: InlineKeyboardMarkup):
-    """Menyu xabarini (query orqali yoki saqlangan chat/message_id orqali) yangilaydi."""
-    chat_id, message_id = context.user_data["dev_msg"]
-    await _safe_edit_bot(context.bot, chat_id, message_id, text, reply_markup=keyboard, parse_mode="HTML")
-
-
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -180,10 +355,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _safe_edit_query(query, "🚫 Ruxsat yo'q.")
         return ConversationHandler.END
 
-    data = query.data
-    parts = data.split(":")
+    parts = query.data.split(":")
     action = parts[1] if len(parts) > 1 else ""
 
+    # ---------- Asosiy menyu ----------
     if action == "close":
         await _safe_edit_query(query, "✅ Yopildi.")
         context.user_data.clear()
@@ -193,11 +368,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _safe_edit_query(query, _main_menu_text(), reply_markup=_main_menu_keyboard(), parse_mode="HTML")
         return DEV_MENU
 
+    # ---------- Funksiya sozlamalari ----------
     if action == "func":
         prefix = parts[2]
-        await _safe_edit_query(
-            query, _func_menu_text(prefix), reply_markup=_func_menu_keyboard(prefix), parse_mode="HTML"
-        )
+        await _safe_edit_query(query, _func_menu_text(prefix), reply_markup=_func_menu_keyboard(prefix), parse_mode="HTML")
         return DEV_MENU
 
     if action == "editprov":
@@ -221,7 +395,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if action == "edit":
         prefix, field = parts[2], parts[3]
-        context.user_data["dev_edit"] = (prefix, field)
+        context.user_data["dev_action"] = {"type": "func_field", "prefix": prefix, "field": field}
         current = config.AI_FUNCTIONS[prefix].get(field, "")
         shown = _esc(_mask_key(current) if field == "api_key" else (current or "(bo'sh)"))
         await _safe_edit_query(
@@ -246,7 +420,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if action == "bulkprov":
         provider = parts[2]
-        context.user_data["dev_bulk_provider"] = provider
+        context.user_data["dev_action"] = {"type": "bulk_func_model", "provider": provider}
         affected = [
             config.AI_FUNCTION_LABELS[p] for p, c in config.AI_FUNCTIONS.items() if c.get("provider") == provider
         ]
@@ -260,16 +434,103 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return DEV_WAIT_BULK_MODEL
 
+    # ---------- 🔑 AI kalitlari ----------
+    if action == "keys":
+        await _safe_edit_query(query, _keys_menu_text(), reply_markup=_keys_menu_keyboard(), parse_mode="HTML")
+        return DEV_MENU
+
+    if action == "keyview":
+        provider, idx = parts[2], int(parts[3])
+        await _safe_edit_query(query, _key_view_text(provider, idx), reply_markup=_key_view_keyboard(provider, idx), parse_mode="HTML")
+        return DEV_MENU
+
+    if action == "keyadd":
+        await _safe_edit_query(query, _keyadd_text(), reply_markup=_keyadd_keyboard(), parse_mode="HTML")
+        return DEV_MENU
+
+    if action == "keyaddprov":
+        provider = parts[2]
+        context.user_data["dev_action"] = {"type": "add_key", "provider": provider}
+        await _safe_edit_query(
+            query,
+            f"➕ <b>{_esc(provider.capitalize())}</b> — yangi API kalitni xabar qilib yuboring:",
+            parse_mode="HTML",
+        )
+        return DEV_WAIT_TEXT
+
+    if action == "keyrepl":
+        provider, idx = parts[2], int(parts[3])
+        context.user_data["dev_action"] = {"type": "key_field", "provider": provider, "index": idx, "field": "key"}
+        await _safe_edit_query(
+            query,
+            f"🔁 {_esc(provider.capitalize())} — Kalit #{idx}\nYangi API kalitni xabar qilib yuboring:",
+        )
+        return DEV_WAIT_TEXT
+
+    if action == "keymodel":
+        provider, idx = parts[2], int(parts[3])
+        context.user_data["dev_action"] = {"type": "key_field", "provider": provider, "index": idx, "field": "model"}
+        await _safe_edit_query(
+            query,
+            f"✏️ {_esc(provider.capitalize())} — Kalit #{idx}\nYangi model nomini xabar qilib yuboring:",
+        )
+        return DEV_WAIT_TEXT
+
+    if action == "keydel":
+        provider, idx = parts[2], int(parts[3])
+        config.delete_key(provider, idx)
+        await _safe_edit_query(
+            query, "🗑 O'chirildi.\n\n" + _keys_menu_text(), reply_markup=_keys_menu_keyboard(), parse_mode="HTML"
+        )
+        return DEV_MENU
+
+    if action == "keybulk":
+        await _safe_edit_query(
+            query,
+            "🔀 <b>Modellarni o'zgartirish</b>\n\nQaysi AI turi?",
+            reply_markup=_keybulk_keyboard(), parse_mode="HTML",
+        )
+        return DEV_MENU
+
+    if action == "keybulkprov":
+        provider = parts[2]
+        await _safe_edit_query(
+            query,
+            f"🔀 <b>{_esc(provider.capitalize())}</b> — qaysi kalitlar o'zgartirilsin?",
+            reply_markup=_keybulk_scope_keyboard(provider), parse_mode="HTML",
+        )
+        return DEV_MENU
+
+    if action == "keybulkscope":
+        provider, scope = parts[2], parts[3]
+        context.user_data["dev_action"] = {"type": "bulk_pool_model", "provider": provider, "scope": scope}
+        await _safe_edit_query(
+            query,
+            f"🔀 {_esc(provider.capitalize())} — {_SCOPE_LABELS.get(scope, scope)} kalitlar uchun "
+            "yangi model nomini xabar qilib yuboring:",
+        )
+        return DEV_WAIT_BULK_MODEL
+
+    if action == "keycheck":
+        await _safe_edit_query(query, "🩺 Tekshirilmoqda, biroz kuting...")
+        report = await _run_key_check()
+        await _edit_menu(context, report, _keys_menu_keyboard())
+        return DEV_MENU
+
     return DEV_MENU
 
+
+# ============================================================
+# Matnli javoblarni qabul qilish
+# ============================================================
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_admin(update):
         return ConversationHandler.END
 
-    prefix, field = context.user_data.get("dev_edit", (None, None))
+    action = context.user_data.get("dev_action") or {}
+    action_type = action.get("type")
     raw_value = update.message.text.strip()
-    value = "" if raw_value in ("-", "bosh", "bo'sh") else raw_value
 
     # Xavfsizlik uchun: API kalit kabi maxfiy qiymat chatda uzoq turmasin.
     try:
@@ -277,16 +538,47 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
 
-    if prefix is None or field is None:
+    if action_type is None:
         return DEV_MENU
 
-    config.update_ai_field(prefix, field, value)
-    await _edit_menu(
-        context,
-        f"✅ {_FIELD_LABELS[field]} yangilandi.\n\n" + _func_menu_text(prefix),
-        _func_menu_keyboard(prefix),
-    )
-    context.user_data.pop("dev_edit", None)
+    if action_type == "func_field":
+        prefix, field = action["prefix"], action["field"]
+        value = "" if raw_value in ("-", "bosh", "bo'sh") else raw_value
+        config.update_ai_field(prefix, field, value)
+        await _edit_menu(
+            context,
+            f"✅ {_FIELD_LABELS[field]} yangilandi.\n\n" + _func_menu_text(prefix),
+            _func_menu_keyboard(prefix),
+        )
+
+    elif action_type == "key_field":
+        provider, idx, field = action["provider"], action["index"], action["field"]
+        value = "" if raw_value in ("-", "bosh", "bo'sh") else raw_value
+        config.update_key_field(provider, idx, field, value)
+        field_label = "Kalit" if field == "key" else "Model"
+        await _edit_menu(
+            context,
+            f"✅ {field_label} yangilandi.\n\n" + _key_view_text(provider, idx),
+            _key_view_keyboard(provider, idx),
+        )
+
+    elif action_type == "add_key":
+        provider = action["provider"]
+        if not raw_value:
+            context.user_data.pop("dev_action", None)
+            return DEV_MENU
+        default_model = config.DEFAULT_MODEL_BY_PROVIDER.get(provider, "")
+        idx = config.add_key(provider, raw_value, default_model)
+        await _edit_menu(
+            context,
+            f"✅ {_esc(provider.capitalize())} kalit #{idx} qo'shildi "
+            f"(standart model: <code>{_esc(default_model)}</code>).\n"
+            "Boshqa model qo'yish uchun kalitni ochib \"✏️ Modelni o'zgartirish\"ni bosing.\n\n"
+            + _keys_menu_text(),
+            _keys_menu_keyboard(),
+        )
+
+    context.user_data.pop("dev_action", None)
     return DEV_MENU
 
 
@@ -294,7 +586,8 @@ async def on_bulk_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_admin(update):
         return ConversationHandler.END
 
-    provider = context.user_data.get("dev_bulk_provider")
+    action = context.user_data.get("dev_action") or {}
+    action_type = action.get("type")
     model = update.message.text.strip()
 
     try:
@@ -302,18 +595,34 @@ async def on_bulk_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
 
-    if not provider or not model:
+    if not model:
         return DEV_MENU
 
-    updated = config.bulk_update_model_by_provider(provider, model)
-    if updated:
-        names = "\n".join(f"• {_esc(config.AI_FUNCTION_LABELS[p])}" for p in updated)
-        text = f"✅ <b>{_esc(provider)}</b> uchun model <b>{_esc(model)}</b> ga o'zgartirildi:\n\n{names}"
-    else:
-        text = f"⚠️ <b>{_esc(provider)}</b> provider'ida hech qaysi funksiya topilmadi — hech narsa o'zgarmadi."
+    if action_type == "bulk_func_model":
+        provider = action["provider"]
+        updated = config.bulk_update_model_by_provider(provider, model)
+        if updated:
+            names = "\n".join(f"• {_esc(config.AI_FUNCTION_LABELS[p])}" for p in updated)
+            text = f"✅ <b>{_esc(provider)}</b> uchun model <b>{_esc(model)}</b> ga o'zgartirildi:\n\n{names}"
+        else:
+            text = f"⚠️ <b>{_esc(provider)}</b> provider'ida hech qaysi funksiya topilmadi — hech narsa o'zgarmadi."
+        await _edit_menu(context, text + "\n\n" + _main_menu_text(), _main_menu_keyboard())
 
-    await _edit_menu(context, text + "\n\n" + _main_menu_text(), _main_menu_keyboard())
-    context.user_data.pop("dev_bulk_provider", None)
+    elif action_type == "bulk_pool_model":
+        provider, scope = action["provider"], action["scope"]
+        updated = config.bulk_update_pool_models(provider, scope, model)
+        scope_label = _SCOPE_LABELS.get(scope, scope)
+        if updated:
+            idxs = ", ".join(f"#{i}" for i in updated)
+            text = (
+                f"✅ {_esc(provider.capitalize())} — {scope_label} kalitlar ({idxs}) modeli "
+                f"<b>{_esc(model)}</b> ga o'zgartirildi."
+            )
+        else:
+            text = f"⚠️ {_esc(provider.capitalize())} da mos keladigan kalit topilmadi."
+        await _edit_menu(context, text + "\n\n" + _keys_menu_text(), _keys_menu_keyboard())
+
+    context.user_data.pop("dev_action", None)
     return DEV_MENU
 
 
