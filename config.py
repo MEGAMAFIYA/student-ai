@@ -106,22 +106,79 @@ AI_FUNCTIONS = {
     "VISION": VISION_AI,
 }
 
-# Hozircha qo'llab-quvvatlanadigan AI provayderlar ("Barcha modellar"
-# bo'limidagi tanlov tugmalari shular asosida chiqadi).
-SUPPORTED_PROVIDERS = ["gemini", "groq"]
+# Qo'llab-quvvatlanadigan AI provayderlar. "gemini" — Google SDK orqali
+# (google.generativeai). "cloudflare" — maxsus (account_id + api_key
+# birgalikda kerak). Qolganlarning BARCHASI OpenAI-mos (compatible)
+# /chat/completions API'ga ega — bittа umumiy funksiya orqali ishlaydi
+# (ai_clients._call_openai_compatible), faqat BASE_URL farq qiladi.
+SUPPORTED_PROVIDERS = [
+    "gemini", "groq", "mistral", "openrouter", "cerebras",
+    "cloudflare", "sambanova", "cohere", "huggingface", "nvidia", "vercel",
+]
+
+# /developer menyusida tugma va matnlarda ko'rsatiladigan to'liq nom
+# (berilmagan provider uchun oddiy .capitalize() ishlatiladi).
+PROVIDER_LABELS = {
+    "gemini": "Gemini",
+    "groq": "Groq",
+    "mistral": "Mistral",
+    "openrouter": "OpenRouter",
+    "cerebras": "Cerebras",
+    "cloudflare": "Cloudflare",
+    "sambanova": "SambaNova",
+    "cohere": "Cohere",
+    "huggingface": "Hugging Face",
+    "nvidia": "NVIDIA NIM",
+    "vercel": "Vercel AI Gateway",
+}
 
 # Har bir provider uchun BEPUL API kalit olinadigan rasmiy sahifa —
 # /developer dagi "Yangi kalit qo'shish" ekranida ko'rsatiladi.
 PROVIDER_KEY_LINKS = {
     "gemini": "https://aistudio.google.com/apikey",
     "groq": "https://console.groq.com/keys",
+    "mistral": "https://console.mistral.ai/api-keys",
+    "openrouter": "https://openrouter.ai/keys",
+    "cerebras": "https://cloud.cerebras.ai",
+    "cloudflare": "https://dash.cloudflare.com (Account ID + Workers AI API Token)",
+    "sambanova": "https://cloud.sambanova.ai/apis",
+    "cohere": "https://dashboard.cohere.com/api-keys",
+    "huggingface": "https://huggingface.co/settings/tokens",
+    "nvidia": "https://build.nvidia.com",
+    "vercel": "https://vercel.com/docs/ai-gateway",
+}
+
+# OpenAI-mos provayderlarning standart /v1 bazaviy manzili. Gemini google SDK
+# orqali ishlagani uchun bu yerda yo'q; Cloudflare account_id'ga bog'liq
+# bo'lgani uchun dinamik tuziladi (ai_clients._resolve_cloudflare ga qarang).
+PROVIDER_BASE_URLS = {
+    "groq": "https://api.groq.com/openai/v1",
+    "mistral": "https://api.mistral.ai/v1",
+    "openrouter": "https://openrouter.ai/api/v1",
+    "cerebras": "https://api.cerebras.ai/v1",
+    "sambanova": "https://api.sambanova.ai/v1",
+    "cohere": "https://api.cohere.ai/compatibility/v1",
+    "huggingface": "https://router.huggingface.co/v1",
+    "nvidia": "https://integrate.api.nvidia.com/v1",
+    "vercel": "https://ai-gateway.vercel.sh/v1",
 }
 
 # Yangi kalit qo'shilganda, model alohida so'ralmaydi — shu standart model
-# tayinlanadi (keyin kalitni ochib "Modelni o'zgartirish" bilan o'zgartirish mumkin).
+# tayinlanadi (keyin kalitni ochib "Modelni o'zgartirish" bilan o'zgartirish
+# mumkin — bu yerdagi nomlar faqat boshlang'ich taklif, hech biri "abadiy
+# to'g'ri" degani emas, chunki bepul model nomlari tez-tez o'zgaradi).
 DEFAULT_MODEL_BY_PROVIDER = {
     "gemini": "gemini-3.6-flash",
     "groq": GROQ_FALLBACK_MODEL,
+    "mistral": "mistral-small-latest",
+    "openrouter": "meta-llama/llama-3.3-70b-instruct:free",
+    "cerebras": "llama3.1-8b",
+    "cloudflare": "@cf/meta/llama-3.1-8b-instruct",
+    "sambanova": "Meta-Llama-3.1-8B-Instruct",
+    "cohere": "command-r-plus",
+    "huggingface": "meta-llama/Llama-3.1-8B-Instruct",
+    "nvidia": "meta/llama-3.1-8b-instruct",
+    "vercel": "openai/gpt-4o-mini",
 }
 
 MAX_TELEGRAM_TEXT = 3800
