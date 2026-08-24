@@ -36,13 +36,19 @@ def _lang_keyboard() -> InlineKeyboardMarkup:
 
 async def entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
-    context.user_data.clear()
-    context.user_data["flow"] = "translate"
-    await query.edit_message_text(
-        "🌐 *Tarjima qilish*\n\nTarjima qilinishi kerak bo'lgan matn yoki PDF faylni yuboring.",
-        parse_mode=ParseMode.MARKDOWN,
-    )
+    user = update.effective_user
+    logger.info(f"🌐 'Tarjima qilish' tugmasi bosildi: user_id={user.id if user else '?'}.")
+    try:
+        await query.answer()
+        context.user_data.clear()
+        context.user_data["flow"] = "translate"
+        await query.edit_message_text(
+            "🌐 *Tarjima qilish*\n\nTarjima qilinishi kerak bo'lgan matn yoki PDF faylni yuboring.",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+    except Exception as e:
+        logger.error(f"🌐 Tarjima menyusini ochishda xato (user_id={user.id if user else '?'}): {type(e).__name__}: {e}", exc_info=True)
+        raise
     return TR_WAIT_CONTENT
 
 
@@ -76,15 +82,19 @@ async def receive_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def lang_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
-    code = query.data.split(":", 1)[1]
+    try:
+        await query.answer()
+        code = query.data.split(":", 1)[1]
 
-    if code == "other":
-        await query.edit_message_text("✍️ Tilni yozib yuboring (masalan: Turkcha, Fransuzcha):")
-        return TR_WAIT_CUSTOM_LANG
+        if code == "other":
+            await query.edit_message_text("✍️ Tilni yozib yuboring (masalan: Turkcha, Fransuzcha):")
+            return TR_WAIT_CUSTOM_LANG
 
-    await query.edit_message_text(f"⏳ {LANGUAGES[code]} tiliga tarjima qilinmoqda...")
-    await _do_translate(update, context, LANGUAGES[code], edit_query=query)
+        await query.edit_message_text(f"⏳ {LANGUAGES[code]} tiliga tarjima qilinmoqda...")
+        await _do_translate(update, context, LANGUAGES[code], edit_query=query)
+    except Exception as e:
+        logger.error(f"🌐 Til tanlashda xato: {type(e).__name__}: {e}", exc_info=True)
+        raise
     return ConversationHandler.END
 
 
@@ -106,12 +116,23 @@ async def _do_translate(update, context, target_lang: str, edit_query=None, stat
     )
     prompt = f"Quyidagi matnni {target_lang} tiliga tarjima qil:\n\n{source_text}"
 
+    logger.info(
+        f"🌐 Tarjima so'rovi: chat_id={chat_id}, manba={source_type}, "
+        f"til={target_lang}, uzunlik={len(source_text)} belgi."
+    )
     translated = await ask_ai(TRANSLATE_AI, prompt, system)
 
     if not translated:
+        logger.error(
+            f"🌐 Tarjima ISHLAMADI: chat_id={chat_id}, provider={TRANSLATE_AI.get('provider')} — "
+            "barcha AI provayderlar/kalitlar javob bermadi. Aniq sabab (limit/kalit yaroqsiz/xato) "
+            "yuqoridagi loglarda ai_clients moduli tomonidan yozilgan bo'lishi kerak."
+        )
         await context.bot.send_message(chat_id, "❌ Tarjima qilib bo'lmadi. Qayta urinib ko'ring.", reply_markup=main_menu_keyboard())
         context.user_data.clear()
         return
+
+    logger.info(f"🌐 Tarjima muvaffaqiyatli yakunlandi: chat_id={chat_id}, natija uzunligi={len(translated)} belgi.")
 
     if source_type == "pdf":
         filename = context.user_data.get("tr_filename", "tarjima")
