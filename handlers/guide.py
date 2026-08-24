@@ -25,16 +25,22 @@ def _finish_keyboard(count: int) -> InlineKeyboardMarkup:
 
 async def entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
-    context.user_data.clear()
-    context.user_data["flow"] = "guide"
-    context.user_data["gd_questions"] = []
-    await query.edit_message_text(
-        "📖 *Qo'llanma tayyorlash*\n\n"
-        "Savollaringizni yuboring (bitta xabarda bir nechta savol bo'lsa, "
-        "har birini alohida qatorga yozing). Tugagach, '✅ Tayyor' tugmasini bosing.",
-        parse_mode="Markdown",
-    )
+    user = update.effective_user
+    logger.info(f"📖 'Qo'llanma tayyorlash' tugmasi bosildi: user_id={user.id if user else '?'}.")
+    try:
+        await query.answer()
+        context.user_data.clear()
+        context.user_data["flow"] = "guide"
+        context.user_data["gd_questions"] = []
+        await query.edit_message_text(
+            "📖 *Qo'llanma tayyorlash*\n\n"
+            "Savollaringizni yuboring (bitta xabarda bir nechta savol bo'lsa, "
+            "har birini alohida qatorga yozing). Tugagach, '✅ Tayyor' tugmasini bosing.",
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        logger.error(f"📖 Qo'llanma menyusini ochishda xato (user_id={user.id if user else '?'}): {type(e).__name__}: {e}", exc_info=True)
+        raise
     return GD_COLLECTING
 
 
@@ -60,6 +66,8 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❗️ Hali birorta ham savol yuborilmagan. Savol yuboring.")
         return GD_COLLECTING
 
+    chat_id = update.effective_chat.id
+    logger.info(f"📖 Qo'llanma tayyorlash boshlandi: chat_id={chat_id}, {len(questions)} ta savol.")
     await query.edit_message_text(f"⏳ {len(questions)} ta savolga javob tayyorlanmoqda...")
 
     system = (
@@ -68,8 +76,12 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     parts = []
+    failed = 0
     for i, q in enumerate(questions, start=1):
         answer = await ask_ai(GUIDE_AI, q, system)
+        if not answer:
+            failed += 1
+            logger.warning(f"📖 Savolga javob olinmadi ({i}/{len(questions)}, chat_id={chat_id}): '{q[:80]}' — sababi yuqoridagi ai_clients loglarida.")
         answer = answer.strip() if answer else "Javob topilmadi."
         parts.append(f"# {q}\n{q} - {answer}")
 
@@ -77,6 +89,11 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(f"⏳ Javoblar tayyorlanmoqda... ({i}/{len(questions)})")
         except Exception:
             pass
+
+    if failed:
+        logger.warning(f"📖 Qo'llanma yakunlandi, lekin {failed}/{len(questions)} ta savolga javob olinmadi (chat_id={chat_id}).")
+    else:
+        logger.info(f"📖 Qo'llanma muvaffaqiyatli yakunlandi: chat_id={chat_id}, {len(questions)} ta savol.")
 
     content = "\n\n".join(parts)
     pdf_buf = await asyncio.to_thread(make_pdf, "Qo'llanma", content, lowercase=True)
