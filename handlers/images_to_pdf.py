@@ -24,16 +24,22 @@ def _confirm_keyboard(count: int) -> InlineKeyboardMarkup:
 
 async def entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
-    context.user_data.clear()
-    context.user_data["flow"] = "images_pdf"
-    context.user_data["img_list"] = []
-    await query.edit_message_text(
-        "🖼 *Suratlarni PDF qilish*\n\n"
-        "Suratlarni birma-bir yuboring. Barchasini yuborib bo'lgach, "
-        "'✅ Tasdiqlash' tugmasini bosing.",
-        parse_mode="Markdown",
-    )
+    user = update.effective_user
+    logger.info(f"🖼 'Suratlarni PDF qilish' tugmasi bosildi: user_id={user.id if user else '?'}.")
+    try:
+        await query.answer()
+        context.user_data.clear()
+        context.user_data["flow"] = "images_pdf"
+        context.user_data["img_list"] = []
+        await query.edit_message_text(
+            "🖼 *Suratlarni PDF qilish*\n\n"
+            "Suratlarni birma-bir yuboring. Barchasini yuborib bo'lgach, "
+            "'✅ Tasdiqlash' tugmasini bosing.",
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        logger.error(f"🖼 Suratlarni PDF menyusini ochishda xato (user_id={user.id if user else '?'}): {type(e).__name__}: {e}", exc_info=True)
+        raise
     return IMG_COLLECTING
 
 
@@ -62,6 +68,7 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❗️ Hali birorta ham rasm yuborilmagan. Rasm yuboring.")
         return IMG_COLLECTING
 
+    logger.info(f"🖼 PDF yig'ish tasdiqlandi: {len(images)} ta rasm, chat_id={update.effective_chat.id}.")
     await query.edit_message_text(f"⏳ {len(images)} ta rasmdan PDF tayyorlanmoqda...")
 
     try:
@@ -72,8 +79,9 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             caption=f"📄 {len(images)} ta rasmdan tayyorlangan PDF.",
             reply_markup=main_menu_keyboard(),
         )
+        logger.info(f"🖼 PDF muvaffaqiyatli yuborildi: chat_id={update.effective_chat.id}.")
     except Exception as e:
-        logger.error(f"Images->PDF xato: {e}")
+        logger.error(f"🖼 Images->PDF ISHLAMADI (chat_id={update.effective_chat.id}): {type(e).__name__}: {e}", exc_info=True)
         await context.bot.send_message(update.effective_chat.id, "❌ PDF yaratishda xatolik yuz berdi.", reply_markup=main_menu_keyboard())
 
     context.user_data.clear()
