@@ -281,15 +281,21 @@ DEFAULT_PLAN = {
 
 async def entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
-    context.user_data.clear()
-    context.user_data["flow"] = "course_work"
-    await query.edit_message_text(
-        "📘 *Kurs ishi / loyiha*\n\n"
-        "PDF necha betdan iborat bo'lishi kerak? (masalan: 10, 20, 30)\n"
-        "Belgilagan bet sonidan kam bo'lmaydi (ko'proq chiqishi mumkin).",
-        parse_mode=ParseMode.MARKDOWN,
-    )
+    user = update.effective_user
+    logger.info(f"📘 'Kurs ishi / loyiha' tugmasi bosildi: user_id={user.id if user else '?'}.")
+    try:
+        await query.answer()
+        context.user_data.clear()
+        context.user_data["flow"] = "course_work"
+        await query.edit_message_text(
+            "📘 *Kurs ishi / loyiha*\n\n"
+            "PDF necha betdan iborat bo'lishi kerak? (masalan: 10, 20, 30)\n"
+            "Belgilagan bet sonidan kam bo'lmaydi (ko'proq chiqishi mumkin).",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+    except Exception as e:
+        logger.error(f"📘 Kurs ishi menyusini ochishda xato (user_id={user.id if user else '?'}): {type(e).__name__}: {e}", exc_info=True)
+        raise
     return CW_PAGES
 
 
@@ -318,6 +324,8 @@ async def receive_pages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def receive_topic_and_generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     topic = clean_topic(update.message.text.strip())
     pages = context.user_data.get("cw_pages", 10)
+    user = update.effective_user
+    logger.info(f"📘 Kurs ishi so'rovi: user_id={user.id if user else '?'}, mavzu='{topic}', bet={pages}.")
 
     await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
     status = await update.message.reply_text(
@@ -338,8 +346,12 @@ async def _generate_and_send(update, context, topic: str, pages: int, status):
     except asyncio.TimeoutError:
         logger.error(f"Kurs ishi generatsiyasi {OVERALL_TIMEOUT_SEC}s ichida tugamadi ('{topic}').")
         result = None
+    except Exception as e:
+        logger.error(f"Kurs ishi generatsiyasida kutilmagan xato ('{topic}'): {type(e).__name__}: {e}", exc_info=True)
+        result = None
 
     if not result:
+        logger.error(f"📘 Kurs ishi YAKUNLANMADI ('{topic}') — sababi yuqoridagi [REJA]/[BOB]/[NAZORATCHI] loglarida.")
         await status.edit_text(
             "❌ Kurs ishini yaratib bo'lmadi — AI xizmatlari hozir javob bermayapti "
             "yoki ba'zi bo'limlarni bir necha urinishdan keyin ham to'liq yoza olmadi. "
@@ -348,6 +360,7 @@ async def _generate_and_send(update, context, topic: str, pages: int, status):
         return
 
     sections, pdf_buf, actual_pages = result
+    logger.info(f"📘 Kurs ishi muvaffaqiyatli yakunlandi: '{topic}', {actual_pages} bet.")
 
     await update.message.reply_document(
         document=InputFile(pdf_buf, filename=f"{topic[:40]}.pdf"),
