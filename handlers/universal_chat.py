@@ -87,6 +87,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_text = stripped or user_text
 
     intent = detect_intent(user_text)
+    logger.info(f"💬 Universal chat xabari: chat_id={chat.id}, aniqlangan intent='{intent}'.")
 
     await context.bot.send_chat_action(chat.id, ChatAction.TYPING)
 
@@ -120,6 +121,7 @@ async def _chat_with_history(update: Update, context: ContextTypes.DEFAULT_TYPE,
     )
 
     if not response:
+        logger.error(f"💬 Universal chat javob QAYTARMADI: chat_id={chat.id} — sababi yuqoridagi ai_clients loglarida.")
         await update.message.reply_text("❌ Hozircha javob berib bo'lmadi. Birozdan so'ng qayta urinib ko'ring.")
         return
 
@@ -164,8 +166,12 @@ async def _try_course_work(update: Update, context: ContextTypes.DEFAULT_TYPE, t
     except asyncio.TimeoutError:
         logger.error(f"Kurs ishi generatsiyasi vaqt chegarasidan oshdi ('{topic}').")
         result = None
+    except Exception as e:
+        logger.error(f"Kurs ishi generatsiyasida kutilmagan xato ('{topic}'): {type(e).__name__}: {e}", exc_info=True)
+        result = None
 
     if not result:
+        logger.error(f"💬 (universal chat) Kurs ishi YAKUNLANMADI ('{topic}') — sababi yuqoridagi loglarda.")
         await status.edit_text(
             "❌ Kurs ishini yaratib bo'lmadi — AI xizmatlari hozir javob bermayapti. "
             "Birozdan so'ng qayta urinib ko'ring."
@@ -218,6 +224,7 @@ async def _try_translate(update: Update, context: ContextTypes.DEFAULT_TYPE, tex
     translated = await ask_ai(TRANSLATE_AI, f"Quyidagi matnni {target} tiliga tarjima qil:\n\n{content}", system)
 
     if not translated:
+        logger.error(f"💬 (universal chat) Tarjima ISHLAMADI: chat_id={update.effective_chat.id} — sababi yuqoridagi ai_clients loglarida.")
         await status.edit_text("❌ Tarjima qilib bo'lmadi.")
         return True
 
