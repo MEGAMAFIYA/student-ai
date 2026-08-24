@@ -248,57 +248,82 @@ async def ask_ai(
              suhbat uchun (masalan universal chat).
 
     Ishlash tartibi:
-    1. Agar cfg["provider"] uchun config.KEY_POOLS da kalitlar bo'lsa — ular
-       RO'YXAT TARTIBIDA birin-ketin sinaladi (har birining o'z modeli bilan).
-       Biri "quota"/"paid"/"invalid"/"error" bersa, keyingisiga o'tiladi.
-    2. Pool bo'sh bo'lsa — cfg["api_key"]/cfg["model"] bilan ESKI (bitta kalit)
-       rejimda so'rov yuboriladi (orqaga moslik uchun).
-    3. Yuqoridagilarning BARCHASI ishlamasa (va allow_fallback=True bo'lsa),
-       Groq (standart kalit) -> Pollinations tartibida bepul zaxiralarga o'tadi.
+    1. ASOSIY provider (cfg["provider"]) sinaladi:
+       - Agar shu provider uchun config.KEY_POOLS da kalitlar bo'lsa — ular
+         RO'YXAT TARTIBIDA birin-ketin sinaladi (har birining o'z modeli bilan).
+       - Aks holda cfg["api_key"]/cfg["model"] bilan ESKI (bitta kalit)
+         rejimda so'rov yuboriladi (orqaga moslik uchun).
+    2. Agar (1) BUTUNLAY ishlamasa (barcha kalitlar limit/pullik/yaroqsiz
+       chiqsa) va allow_fallback=True bo'lsa — /developer > 🔑 AI kalitlari
+       orqali qo'shilgan BOSHQA BARCHA provayderlar (config.SUPPORTED_PROVIDERS
+       tartibida, asosiysi o'tkazib yuborilib) birma-bir sinaladi. Masalan
+       Gemini butunlay ishlamay qolsa-yu, lekin Mistral yoki Groq'ga kalit
+       qo'shilgan bo'lsa, so'rov avtomatik o'sha yerga ketadi.
+    3. Yuqoridagilarning BARCHASI (asosiy + qo'shilgan barcha zaxira
+       provayderlar) ishlamasa, oxirgi chora sifatida .env dagi standart Groq
+       kaliti, so'ng to'liq kalitsiz Pollinations sinaladi.
     """
     provider = cfg.get("provider", "gemini")
-    pool = config.KEY_POOLS.get(provider, [])
-    result = None
+    tried_providers: set[str] = set()
 
-    if pool:
-        for idx, entry in enumerate(pool, start=1):
-            key, model = entry.get("key", ""), entry.get("model", "")
-            if not key or not model:
-                continue
-            label = f"{config.PROVIDER_LABELS.get(provider, provider.capitalize())} kalit #{idx}"
-            result, status, detail = await _dispatch(provider, key, model, "", prompt, system, history, label)
-            if result:
-                return result
-            logger.warning(f"{label} ishlamadi ({_STATUS_LABELS.get(status, status)}) — navbatdagi kalitga o'tilmoqda...")
-        logger.warning(f"{provider.capitalize()} kalitlar to'plamidagi barcha {len(pool)} ta kalit ishlamadi.")
-    else:
-        key, model = cfg.get("api_key", ""), cfg.get("model", "")
-        label = config.PROVIDER_LABELS.get(provider, provider.capitalize())
-        result, status, detail = await _dispatch(provider, key, model, cfg.get("base_url", ""), prompt, system, history, label)
-        if result:
+    async def _try_provider(prov: str, use_single_key_fallback: bool) -> str | None:
+        tried_providers.add(prov)
+        pool = config.KEY_POOLS.get(prov, [])
+        if pool:
+            for idx, entry in enumerate(pool, start=1):
+                key, model = entry.get("key", ""), entry.get("model", "")
+                if not key or not model:
+                    continue
+                label = f"{config.PROVIDER_LABELS.get(prov, prov.capitalize())} kalit #{idx}"
+                result, status, detail = await _dispatch(prov, key, model, "", prompt, system, history, label)
+                if result:
+                    return result
+                logger.warning(f"{label} ishlamadi ({_STATUS_LABELS.get(status, status)}) — navbatdagi kalitga o'tilmoqda...")
+            logger.warning(f"{config.PROVIDER_LABELS.get(prov, prov.capitalize())} kalitlar to'plamidagi barcha {len(pool)} ta kalit ishlamadi.")
+            return None
+        if use_single_key_fallback:
+            key, model = cfg.get("api_key", ""), cfg.get("model", "")
+            label = config.PROVIDER_LABELS.get(prov, prov.capitalize())
+            result, status, detail = await _dispatch(prov, key, model, cfg.get("base_url", ""), prompt, system, history, label)
             return result
+        return None  # bu provider uchun na pool, na bitta-kalit sozlamasi bor — sinab bo'lmaydi
+
+    result = await _try_provider(provider, use_single_key_fallback=True)
+    if result:
+        return result
 
     if not allow_fallback:
         logger.warning(f"Asosiy provider ({provider}) ishlamadi, fallback O'CHIRILGAN (allow_fallback=False) — None qaytariladi.")
         return None
 
-    logger.warning(f"Asosiy provider ({provider}) ishlamadi — zaxira provayderga o'tilmoqda...")
+    logger.warning(f"Asosiy provider ({provider}) ishlamadi — boshqa qo'shilgan AI provayderlarga o'tilmoqda...")
 
-    if provider != "groq" and config.DEFAULT_GROQ_KEY:
+    for other in config.SUPPORTED_PROVIDERS:
+        if other in tried_providers or not config.KEY_POOLS.get(other):
+            continue
+        other_label = config.PROVIDER_LABELS.get(other, other.capitalize())
+        logger.info(f"Zaxira sifatida {other_label} sinalmoqda...")
+        result = await _try_provider(other, use_single_key_fallback=False)
+        if result:
+            logger.info(f"✅ Zaxira {other_label} muvaffaqiyatli javob berdi.")
+            return result
+
+    if "groq" not in tried_providers and config.DEFAULT_GROQ_KEY:
         result, status, detail = await _call_openai_compatible(
             config.DEFAULT_GROQ_KEY, config.GROQ_FALLBACK_MODEL,
-            config.PROVIDER_BASE_URLS["groq"], prompt, system, history, "Zaxira Groq",
+            config.PROVIDER_BASE_URLS["groq"], prompt, system, history, "Standart Groq (.env)",
         )
         if result:
-            logger.info("✅ Zaxira Groq muvaffaqiyatli javob berdi.")
+            logger.info("✅ Standart Groq kaliti (.env) muvaffaqiyatli javob berdi.")
             return result
-        logger.warning("Zaxira Groq ham ishlamadi — oxirgi chora Pollinations'ga o'tilmoqda...")
-    elif provider != "groq":
-        logger.warning("DEFAULT_GROQ_KEY sozlanmagan — Groq zaxirasi o'tkazib yuborildi, to'g'ridan-to'g'ri Pollinations'ga o'tilmoqda...")
+        logger.warning("Standart Groq (.env) ham ishlamadi — oxirgi chora Pollinations'ga o'tilmoqda...")
 
     result = await _call_pollinations(prompt, system)
     if not result:
-        logger.error(f"❌ Barcha AI provayderlar (asosiy={provider}, Groq zaxira, Pollinations) ishlamadi — None qaytarilmoqda.")
+        logger.error(
+            "❌ Barcha sozlangan AI provayderlar (asosiy + /developer orqali qo'shilgan "
+            "barcha zaxiralar + standart Groq + Pollinations) ishlamadi — None qaytarilmoqda."
+        )
     return result
 
 
