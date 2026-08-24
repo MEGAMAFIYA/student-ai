@@ -308,13 +308,17 @@ def _keybulk_scope_keyboard(provider: str) -> InlineKeyboardMarkup:
 
 async def _run_key_check() -> str:
     """Barcha provider'lardagi BARCHA kalitlarni parallel sinaydi va
-    natijalarni HTML matn shaklida qaytaradi."""
+    natijalarni HTML matn shaklida qaytaradi. Har bir kalitning natijasi
+    (va ishlamasa — sababi) render logiga ham yoziladi, shuning uchun
+    keyinchalik Render dashboard > Logs bo'limidan qaysi kalit nima uchun
+    ishlamayotganini ko'rish mumkin."""
+    logger.info("🩺 Kalitlarni tekshirish boshlandi (/developer > AI kalitlari > Tekshirish)...")
     tasks, meta = [], []
     for provider in config.SUPPORTED_PROVIDERS:
         for i, entry in enumerate(config.KEY_POOLS.get(provider, []), start=1):
             key, model = entry.get("key", ""), entry.get("model", "")
             if key and model:
-                tasks.append(ai_clients.test_key(provider, key, model))
+                tasks.append(ai_clients.test_key(provider, key, model, index=i))
                 meta.append((provider, i, model, True))
             else:
                 meta.append((provider, i, model, False))
@@ -323,12 +327,19 @@ async def _run_key_check() -> str:
     result_iter = iter(results)
 
     by_provider: dict[str, list] = {p: [] for p in config.SUPPORTED_PROVIDERS}
+    ok_count, fail_count = 0, 0
     for provider, i, model, has_data in meta:
         if has_data:
-            status, _detail = next(result_iter)
+            status, detail = next(result_iter)
         else:
-            status = "invalid"
-        by_provider[provider].append((i, status, model))
+            status, detail = "invalid", "Kalit yoki model kiritilmagan."
+        if status == "ok":
+            ok_count += 1
+        else:
+            fail_count += 1
+        by_provider[provider].append((i, status, model, detail))
+
+    logger.info(f"🩺 Kalitlarni tekshirish tugadi: {ok_count} ishlayapti, {fail_count} ishlamayapti.")
 
     lines = ["🩺 <b>Kalitlar holati</b>\n"]
     any_key = False
@@ -339,10 +350,13 @@ async def _run_key_check() -> str:
             lines.append("  <i>(kalit yo'q)</i>")
         else:
             any_key = True
-            for i, status, model in items:
+            for i, status, model, detail in items:
                 icon = _STATUS_ICONS.get(status, "⚠️")
                 text = _STATUS_TEXT.get(status, status)
-                lines.append(f"  {i}. {icon} {text} (<code>{_esc(model)}</code>)")
+                line = f"  {i}. {icon} {text} (<code>{_esc(model)}</code>)"
+                if status != "ok" and detail:
+                    line += f"\n     <i>{_esc(detail)}</i>"
+                lines.append(line)
         lines.append("")
     if not any_key:
         lines.append("Hali birorta ham kalit qo'shilmagan.")
