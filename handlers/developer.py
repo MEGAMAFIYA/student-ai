@@ -90,6 +90,16 @@ def _mask_key(value: str) -> str:
     return f"{value[:4]}{'*' * (len(value) - 8)}{value[-4:]}"
 
 
+def _back_keyboard(callback_data: str) -> InlineKeyboardMarkup:
+    """Matn yuborishni kutayotgan HAR BIR ekranga qo'shiladigan yagona
+    '⬅️ Orqaga' tugmasi. Bosilganda callback sifatida keladi va
+    ConversationHandler shu holatda ham CallbackQueryHandler'ni tekshiradi
+    (DEV_WAIT_TEXT/DEV_WAIT_BULK_MODEL holatlarida ham "^dev:" ro'yxatdan
+    o'tgan), shuning uchun foydalanuvchi matn yozish o'rniga istalgan
+    vaqtda bosib chiqib keta oladi — hech qachon "qotib qolmaydi"."""
+    return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Orqaga", callback_data=callback_data)]])
+
+
 async def _safe_edit_query(query, text: str, reply_markup=None, parse_mode=None):
     """query.edit_message_text ni chaqiradi, lekin Telegram 'Message is not
     modified' xatosini (xuddi shu matn/tugmalar allaqachon ko'rsatilgan
@@ -367,6 +377,13 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     parts = query.data.split(":")
     action = parts[1] if len(parts) > 1 else ""
 
+    # Har qanday navigatsiya (orqaga tugmasi ham shu yo'l bilan ishlaydi)
+    # oldingi "kutilayotgan matn kiritish" holatini tozalaydi — pastda
+    # tegishli branch (edit/keyaddprov/keyrepl/keymodel/bulkprov/keybulkscope)
+    # kerak bo'lsa uni qaytadan o'rnatadi.
+    if action not in ("edit", "bulkprov", "keyaddprov", "keyrepl", "keymodel", "keybulkscope"):
+        context.user_data.pop("dev_action", None)
+
     # ---------- Asosiy menyu ----------
     if action == "close":
         await _safe_edit_query(query, "✅ Yopildi.")
@@ -413,6 +430,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Joriy qiymat: <code>{shown}</code>\n\n"
             "Yangi qiymatni xabar qilib yuboring.\n"
             "Bo'sh qilish uchun <code>-</code> yuboring.",
+            reply_markup=_back_keyboard(f"dev:func:{prefix}"),
             parse_mode="HTML",
         )
         return DEV_WAIT_TEXT
@@ -439,6 +457,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"➕ <b>Barcha modellar — {_esc(provider)}</b>\n\n"
             f"Ta'sir qiladigan funksiyalar:\n{affected_txt}\n\n"
             "Yangi model nomini xabar qilib yuboring:",
+            reply_markup=_back_keyboard("dev:bulk"),
             parse_mode="HTML",
         )
         return DEV_WAIT_BULK_MODEL
@@ -472,7 +491,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             prompt_text = f"➕ <b>{_esc(_provider_label(provider))}</b> — yangi API kalitni xabar qilib yuboring:"
-        await _safe_edit_query(query, prompt_text, parse_mode="HTML")
+        await _safe_edit_query(query, prompt_text, reply_markup=_back_keyboard("dev:keyadd"), parse_mode="HTML")
         return DEV_WAIT_TEXT
 
     if action == "keyrepl":
@@ -481,6 +500,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _safe_edit_query(
             query,
             f"🔁 {_esc(_provider_label(provider))} — Kalit #{idx}\nYangi API kalitni xabar qilib yuboring:",
+            reply_markup=_back_keyboard(f"dev:keyview:{provider}:{idx}"),
         )
         return DEV_WAIT_TEXT
 
@@ -490,6 +510,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _safe_edit_query(
             query,
             f"✏️ {_esc(_provider_label(provider))} — Kalit #{idx}\nYangi model nomini xabar qilib yuboring:",
+            reply_markup=_back_keyboard(f"dev:keyview:{provider}:{idx}"),
         )
         return DEV_WAIT_TEXT
 
@@ -525,6 +546,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             query,
             f"🔀 {_esc(_provider_label(provider))} — {_SCOPE_LABELS.get(scope, scope)} kalitlar uchun "
             "yangi model nomini xabar qilib yuboring:",
+            reply_markup=_back_keyboard(f"dev:keybulkprov:{provider}"),
         )
         return DEV_WAIT_BULK_MODEL
 
