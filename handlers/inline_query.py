@@ -214,6 +214,7 @@ async def _handle_chat(context: ContextTypes.DEFAULT_TYPE, inline_message_id: st
     answer = await ask_ai(UNIVERSAL_CHAT_AI, query, system)
 
     if not answer:
+        logger.error(f"🔍 Inline javob QAYTMADI: query='{query[:80]}' — sababi yuqoridagi ai_clients loglarida.")
         await _safe_edit_text(
             context, inline_message_id,
             f"❌ Javob berib bo'lmadi. Botning shaxsiy chatida qayta urinib ko'ring: https://t.me/{BOT_USERNAME}",
