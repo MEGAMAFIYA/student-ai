@@ -327,15 +327,23 @@ async def ask_ai(
     return result
 
 
-async def test_key(provider: str, api_key: str, model: str) -> tuple[str, str]:
+async def test_key(provider: str, api_key: str, model: str, index: int | None = None) -> tuple[str, str]:
     """/developer > 🔑 AI kalitlari > 🩺 Kalitlarni tekshirish uchun — bitta
     kalit/model juftligini juda qisqa so'rov bilan sinaydi (narxni minimal
-    qilish uchun). Qaytaradi: (status, tafsilot) — status "ok" bo'lsa
-    tafsilot bo'sh string."""
+    qilish uchun). `index` berilsa, log yozuvlarida aynan qaysi kalit
+    (masalan "Gemini kalit #2") ekanligi ko'rinadi — bir nechta kalit bir
+    vaqtda tekshirilganda ularni farqlash uchun ZARUR (aks holda hammasi
+    bir xil "Tekshiruv (Gemini)" nomi bilan logga tushib, qaysi kalit
+    ishlamayotganini ajratib bo'lmaydi). Qaytaradi: (status, tafsilot) —
+    status "ok" bo'lsa tafsilot bo'sh string."""
     label = config.PROVIDER_LABELS.get(provider, provider.capitalize())
-    result, status, detail = await _dispatch(provider, api_key, model, "", "Salom", "", None, f"Tekshiruv ({label})")
+    key_label = f"{label} kalit #{index}" if index is not None else label
+    logger.info(f"🩺 Tekshiruv boshlandi: {key_label} (model: {model}).")
+    result, status, detail = await _dispatch(provider, api_key, model, "", "Salom", "", None, f"Tekshiruv ({key_label})")
     if result:
+        logger.info(f"🩺 {key_label}: ✅ ishlayapti.")
         return "ok", ""
+    logger.warning(f"🩺 {key_label}: ❌ ishlamadi — status={status}, sabab: {detail}")
     return status, detail
 
 
