@@ -250,6 +250,10 @@ def build_developer_conv():
         },
         fallbacks=[CommandHandler("cancel", developer.cancel)],
         name="developer_conv",
+        # allow_reentry=True: agar admin /developer buyrug'ini istalgan
+        # bosqichda (masalan "yangi kalit yuboring" kutib turganida) qayta
+        # yuborsa, conversation qotib qolmasdan DARHOL qayta boshdan ochiladi.
+        allow_reentry=True,
     )
 
 
