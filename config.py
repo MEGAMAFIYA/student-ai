@@ -15,6 +15,7 @@ ham saqlanib qoladi. Ya'ni AI kalit/model/provider'larni ENDI to'g'ridan-to'g'ri
 import json
 import logging
 import os
+import httpx
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -195,33 +196,104 @@ KEY_POOLS: dict[str, list[dict]] = {p: [] for p in SUPPORTED_PROVIDERS}
 # ============================================================
 # RUNTIME AI SOZLAMALARI (/developer orqali o'zgartiriladi, .env EMAS)
 # ============================================================
+# MUHIM: Render (va ko'pchilik "serverless"/bepul hosting)da disk vaqtinchalik
+# (ephemeral) — har safar YANGI DEPLOY qilinganda butun fayl tizimi git
+# repodan qaytadan tiklanadi, shuning uchun runtime paytida yozilgan har
+# qanday fayl (masalan runtime_ai_config.json) O'CHIB KETADI. /developer
+# orqali qo'shilgan kalitlar shu sababli deploydan keyin yo'qolib turardi.
+#
+# Buni tuzatish uchun tashqi, DOIMIY (persistent) saqlash — Upstash Redis
+# (bepul, cheksiz muddatli tarif) ishlatiladi. Agar quyidagi ikki .env
+# o'zgaruvchi sozlangan bo'lsa, hamma narsa Upstash'da saqlanadi (deploy
+# qilsangiz ham o'chmaydi):
+#
+#   UPSTASH_REDIS_REST_URL=https://xxxx.upstash.io
+#   UPSTASH_REDIS_REST_TOKEN=********
+#
+# Ularni https://console.upstash.com dan bepul Redis database yaratib,
+# "REST API" bo'limidan olasiz (ro'yxatdan o'tish GitHub/Google orqali,
+# karta shart emas). Agar bu ikkisi sozlanmagan bo'lsa, kod avtomatik
+# ravishda ESKI (mahalliy fayl) rejimga qaytadi — lokal/rivojlanish uchun
+# ishlaydi, lekin Render'da deploy qilinganda o'chib ketadi degani.
+UPSTASH_REDIS_REST_URL = os.getenv("UPSTASH_REDIS_REST_URL", "").rstrip("/")
+UPSTASH_REDIS_REST_TOKEN = os.getenv("UPSTASH_REDIS_REST_TOKEN", "")
+USE_UPSTASH = bool(UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN)
+_UPSTASH_KEY = "student_ai_runtime_config"
+
 _RUNTIME_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runtime_ai_config.json")
 
 _EDITABLE_FIELDS = ("provider", "model", "api_key", "base_url")
 _KEY_FIELDS = ("key", "model")
 
 
+def _upstash_request(command: list) -> dict | None:
+    """Upstash Redis REST API'ga bitta buyruq yuboradi (masalan
+    ["GET", key] yoki ["SET", key, value]). Xato bo'lsa None qaytaradi —
+    chaqiruvchi kod bunga qarab mahalliy faylga qaytishi mumkin."""
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            r = client.post(
+                UPSTASH_REDIS_REST_URL,
+                headers={"Authorization": f"Bearer {UPSTASH_REDIS_REST_TOKEN}"},
+                json=command,
+            )
+            r.raise_for_status()
+            return r.json()
+    except Exception as e:
+        logger.error(f"Upstash Redis so'rovida xato ({command[0] if command else '?'}): {e}")
+        return None
+
+
 def _load_runtime_overrides() -> None:
-    """Bot ishga tushganda chaqiriladi: agar runtime_ai_config.json mavjud
-    bo'lsa, undagi qiymatlar .env'dan o'qilgan BOSHLANG'ICH qiymatlar ustidan
-    qo'yiladi — shu orqali /developer orqali qilingan o'zgarishlar (funksiya
-    sozlamalari HAM, kalitlar to'plami HAM) bot qayta ishga tushganda ham
+    """Bot ishga tushganda chaqiriladi: agar Upstash sozlangan bo'lsa —
+    o'sha yerdan, aks holda mahalliy runtime_ai_config.json fayldan (agar
+    mavjud bo'lsa) o'qiladi. Topilgan qiymatlar .env'dan o'qilgan
+    BOSHLANG'ICH qiymatlar ustidan qo'yiladi — shu orqali /developer orqali
+    qilingan o'zgarishlar (funksiya sozlamalari HAM, kalitlar to'plami HAM)
+    bot qayta ishga tushganda (Upstash bilan — QAYTA DEPLOY qilinganda ham)
     yo'qolmaydi.
 
-    Fayl formati:
+    Format:
         {"functions": {PREFIX: {provider, model, api_key, base_url}, ...},
          "key_pools": {provider: [{"key":..., "model":...}, ...], ...}}
 
     Eski (bu funksiya qo'shilishidan oldingi) fayllar "functions" o'rniga
     to'g'ridan-to'g'ri {PREFIX: {...}} shaklida edi — shu format ham
     o'qib qo'llab-quvvatlanadi (key_pools bo'sh deb olinadi)."""
-    if not os.path.exists(_RUNTIME_CONFIG_PATH):
+    raw, source = None, ""
+
+    if USE_UPSTASH:
+        resp = _upstash_request(["GET", _UPSTASH_KEY])
+        if resp is not None and resp.get("result"):
+            raw, source = resp["result"], "Upstash Redis"
+        elif resp is None:
+            logger.error(
+                "Upstash Redis'ga ulanib bo'lmadi — .env qiymatlari bilan davom etiladi "
+                "(kalitlar VAQTINCHA yo'qolgan bo'lishi mumkin, lekin Upstash tuzalganda qayta saqlansa tiklanadi)."
+            )
+        else:
+            logger.info("Upstash Redis'da hali saqlangan konfiguratsiya yo'q (birinchi marta ishga tushirilyapti).")
+    else:
+        logger.warning(
+            "UPSTASH_REDIS_REST_URL/TOKEN sozlanmagan — runtime_ai_config.json MAHALLIY faylga "
+            "yoziladi. Render kabi vaqtinchalik-disk hostinglarda bu fayl HAR BIR DEPLOYDA "
+            "o'chib ketadi! Doimiy saqlash uchun Upstash Redis sozlashni tavsiya qilamiz."
+        )
+        if os.path.exists(_RUNTIME_CONFIG_PATH):
+            try:
+                with open(_RUNTIME_CONFIG_PATH, "r", encoding="utf-8") as f:
+                    raw = f.read()
+                source = "mahalliy fayl"
+            except Exception as e:
+                logger.error(f"runtime_ai_config.json o'qishda xato: {e}")
+
+    if not raw:
         return
+
     try:
-        with open(_RUNTIME_CONFIG_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        data = json.loads(raw)
     except Exception as e:
-        logger.error(f"runtime_ai_config.json o'qishda xato: {e} — .env qiymatlari ishlatiladi.")
+        logger.error(f"Runtime konfiguratsiyani JSON qilib o'qishda xato: {e} — .env qiymatlari ishlatiladi.")
         return
 
     if "functions" in data or "key_pools" in data:
@@ -249,13 +321,14 @@ def _load_runtime_overrides() -> None:
             total_keys += len(KEY_POOLS[provider])
 
     logger.info(
-        f"runtime_ai_config.json dan {len(functions_data)} ta funksiya sozlamasi "
+        f"{source} dan {len(functions_data)} ta funksiya sozlamasi "
         f"va {total_keys} ta AI kalit yuklandi."
     )
 
 
 def _save_runtime_overrides() -> None:
-    """Joriy AI_FUNCTIONS + KEY_POOLS holatini to'liq runtime_ai_config.json ga yozadi."""
+    """Joriy AI_FUNCTIONS + KEY_POOLS holatini Upstash Redis'ga (sozlangan
+    bo'lsa) yoki mahalliy runtime_ai_config.json fayliga yozadi."""
     data = {
         "functions": {prefix: {f: cfg.get(f, "") for f in _EDITABLE_FIELDS} for prefix, cfg in AI_FUNCTIONS.items()},
         "key_pools": {
@@ -263,9 +336,17 @@ def _save_runtime_overrides() -> None:
             for provider, entries in KEY_POOLS.items()
         },
     }
+    raw = json.dumps(data, ensure_ascii=False)
+
+    if USE_UPSTASH:
+        resp = _upstash_request(["SET", _UPSTASH_KEY, raw])
+        if resp is None or resp.get("result") != "OK":
+            logger.error("❌ Upstash Redis'ga yozib bo'lmadi — o'zgarish DOIMIY saqlanmadi (qayta deployda yo'qolishi mumkin)!")
+        return
+
     try:
         with open(_RUNTIME_CONFIG_PATH, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.write(raw)
     except Exception as e:
         logger.error(f"runtime_ai_config.json ga yozishda xato: {e}")
 
