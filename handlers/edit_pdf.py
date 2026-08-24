@@ -23,16 +23,22 @@ EP_WAIT_PDF, EP_WAIT_INSTRUCTION = range(2)
 
 async def entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
-    context.user_data.clear()
-    context.user_data["flow"] = "edit_pdf"
-    await query.edit_message_text(
-        "📝 *PDF ni tahrirlash*\n\n"
-        "Tahrirlanishi kerak bo'lgan PDF faylni yuboring.\n\n"
-        "⚠️ Eslatma: hujjat matn asosida qayta tuziladi, shuning uchun "
-        "original grafik dizayn saqlanmaydi, faqat matn mazmuni saqlanadi.",
-        parse_mode="Markdown",
-    )
+    user = update.effective_user
+    logger.info(f"📝 'PDF ni tahrirlash' tugmasi bosildi: user_id={user.id if user else '?'}.")
+    try:
+        await query.answer()
+        context.user_data.clear()
+        context.user_data["flow"] = "edit_pdf"
+        await query.edit_message_text(
+            "📝 *PDF ni tahrirlash*\n\n"
+            "Tahrirlanishi kerak bo'lgan PDF faylni yuboring.\n\n"
+            "⚠️ Eslatma: hujjat matn asosida qayta tuziladi, shuning uchun "
+            "original grafik dizayn saqlanmaydi, faqat matn mazmuni saqlanadi.",
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        logger.error(f"📝 PDF tahrirlash menyusini ochishda xato (user_id={user.id if user else '?'}): {type(e).__name__}: {e}", exc_info=True)
+        raise
     return EP_WAIT_PDF
 
 
@@ -49,6 +55,7 @@ async def receive_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = await asyncio.to_thread(extract_pdf_text, bio.read())
     if not text:
+        logger.warning(f"📝 PDF dan matn o'qib bo'lmadi: '{doc.file_name}', chat_id={update.effective_chat.id} (skanerlangan bo'lishi mumkin).")
         await update.message.reply_text("❌ PDF dan matn o'qib bo'lmadi (skanerlangan bo'lishi mumkin).")
         return EP_WAIT_PDF
 
@@ -67,6 +74,8 @@ async def receive_instruction(update: Update, context: ContextTypes.DEFAULT_TYPE
     instruction = update.message.text.strip()
     original_text = context.user_data.get("ep_text", "")
     filename = context.user_data.get("ep_filename", "hujjat")
+    chat_id = update.effective_chat.id
+    logger.info(f"📝 Tahrirlash so'rovi: chat_id={chat_id}, fayl='{filename}', ko'rsatma='{instruction[:100]}'.")
 
     await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
     status = await update.message.reply_text("⏳ Hujjat tahrirlanmoqda...")
@@ -87,10 +96,12 @@ async def receive_instruction(update: Update, context: ContextTypes.DEFAULT_TYPE
     edited = await ask_ai(EDIT_PDF_AI, prompt, system)
 
     if not edited:
+        logger.error(f"📝 Tahrirlash ISHLAMADI: chat_id={chat_id}, provider={EDIT_PDF_AI.get('provider')} — AI javob bermadi (sababi yuqoridagi ai_clients loglarida).")
         await status.edit_text("❌ Tahrirlab bo'lmadi. Qayta urinib ko'ring.")
         context.user_data.clear()
         return ConversationHandler.END
 
+    logger.info(f"📝 Tahrirlash muvaffaqiyatli yakunlandi: chat_id={chat_id}, fayl='{filename}'.")
     pdf_buf = await asyncio.to_thread(make_pdf, filename.title(), edited)
     await update.message.reply_document(
         document=InputFile(pdf_buf, filename=f"{filename}_tahrirlangan.pdf"),
