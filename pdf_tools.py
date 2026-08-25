@@ -318,6 +318,128 @@ def build_course_work_pdf(topic: str, sections: dict, meta: dict | None = None) 
 
 
 # ============================================================
+# REFERAT/INSHO PDF — kurs ishidan farqli, TITUL + MUNDARIJASIZ, oddiyroq
+# struktura: KIRISH, ASOSIY QISM (bir nechta kichik bo'lim bo'lishi mumkin),
+# XULOSA, ADABIYOTLAR. Kurs ishi bilan bir xil shrift/uslubdan foydalanadi.
+# ============================================================
+
+def build_essay_pdf(topic: str, sections: dict, work_type: str = "REFERAT", meta: dict | None = None) -> BytesIO:
+    """
+    sections: {"kirish": str, "asosiy_qism": [{"title": str, "content": str}, ...],
+               "xulosa": str, "adabiyotlar": str}
+    work_type: sarlavha sifatida ko'rsatiladi (masalan "REFERAT" yoki "INSHO").
+    """
+    meta = meta or {}
+    _ensure_fonts()
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4,
+        leftMargin=3 * cm, rightMargin=1.5 * cm,
+        topMargin=2 * cm, bottomMargin=2 * cm,
+    )
+
+    title_style = ParagraphStyle("ETitle", fontName=FONT_BOLD, fontSize=14, alignment=TA_CENTER, leading=18, spaceAfter=6)
+    title_small = ParagraphStyle("ETitleSmall", fontName=FONT_REGULAR, fontSize=13, alignment=TA_CENTER, leading=17, spaceAfter=6)
+    meta_style = ParagraphStyle("EMeta", fontName=FONT_REGULAR, fontSize=13, alignment=TA_LEFT, leading=20, spaceAfter=10)
+    body = ParagraphStyle("EBody", fontName=FONT_REGULAR, fontSize=12, leading=18, alignment=TA_JUSTIFY, firstLineIndent=10 * mm, spaceAfter=6)
+    ref_style = ParagraphStyle("ERef", fontName=FONT_REGULAR, fontSize=11, leading=15, alignment=TA_JUSTIFY, spaceAfter=6)
+    chapter = ParagraphStyle("EChapter", fontName=FONT_BOLD, fontSize=15, alignment=TA_CENTER, spaceBefore=0, spaceAfter=16)
+    subheading = ParagraphStyle("ESub", fontName=FONT_BOLD, fontSize=12, spaceBefore=12, spaceAfter=8)
+
+    story = []
+
+    # ===== TITUL =====
+    story.append(Spacer(1, 2 * cm))
+    story.append(Paragraph(_escape(meta.get("muassasa", "_" * 42 + " UNIVERSITETI")), title_style))
+    story.append(Paragraph(_escape(meta.get("kafedra", "_" * 38 + " kafedrasi")), title_style))
+    story.append(Spacer(1, 2.5 * cm))
+    story.append(Paragraph(work_type, title_style))
+    story.append(Paragraph(f"«{_escape(topic)}»", title_small))
+    story.append(Paragraph("mavzusida", title_small))
+    story.append(Spacer(1, 3 * cm))
+    story.append(Paragraph(f"Bajaruvchi: {meta.get('bajaruvchi', '_' * 32)}", meta_style))
+    story.append(Paragraph(f"Guruh: {meta.get('guruh', '_' * 18)}", meta_style))
+    story.append(Spacer(1, 4 * cm))
+    story.append(Paragraph(f"{meta.get('shahar', '_' * 12)}, 20{meta.get('yil', '__')} yil", title_small))
+    story.append(PageBreak())
+
+    # ===== KIRISH =====
+    story.append(Paragraph("KIRISH", chapter))
+    for para in _split_paragraphs(sections.get("kirish", "")):
+        story.append(Paragraph(_escape(para).replace("\n", "<br/>"), body))
+    story.append(Spacer(1, 0.6 * cm))
+
+    # ===== ASOSIY QISM =====
+    for part in sections.get("asosiy_qism", []):
+        if part.get("title"):
+            story.append(Paragraph(_escape(part["title"]), subheading))
+        for text, is_heading in _parse_section_blocks(part.get("content", "")):
+            story.append(Paragraph(text, subheading if is_heading else body))
+    story.append(Spacer(1, 0.6 * cm))
+
+    # ===== XULOSA =====
+    story.append(Paragraph("XULOSA", chapter))
+    for para in _split_paragraphs(sections.get("xulosa", "")):
+        story.append(Paragraph(_escape(para).replace("\n", "<br/>"), body))
+    story.append(Spacer(1, 0.6 * cm))
+
+    # ===== ADABIYOTLAR =====
+    story.append(Paragraph("FOYDALANILGAN ADABIYOTLAR RO'YXATI", chapter))
+    for line in (sections.get("adabiyotlar", "") or "").split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        story.append(Paragraph(_escape(line), ref_style))
+
+    doc.build(story, onFirstPage=_footer, onLaterPages=_footer)
+    buffer.seek(0)
+    return buffer
+
+
+# ============================================================
+# TEST/VIKTORINA NATIJASI PDF — savol, variantlar, foydalanuvchi javobi,
+# to'g'ri javob (rangda ajratilgan emas — reportlab oddiy matn, shuning
+# uchun ✅/❌ belgilar bilan ko'rsatiladi) va yakuniy ball.
+# ============================================================
+
+def build_quiz_result_pdf(topic: str, questions: list[dict], user_answers: list[int], score: int) -> BytesIO:
+    """
+    questions: [{"savol": str, "variantlar": [str,str,str,str], "togri": int}, ...]
+    user_answers: har bir savolga foydalanuvchi tanlagan variant indeksi (0-3),
+                  javob berilmagan bo'lsa -1.
+    """
+    _ensure_fonts()
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=2 * cm, rightMargin=2 * cm, topMargin=2 * cm, bottomMargin=2 * cm)
+
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle("QTitle", parent=styles["Title"], fontName=FONT_BOLD, fontSize=18, alignment=TA_CENTER, spaceAfter=6, textColor="#1a5490")
+    score_style = ParagraphStyle("QScore", fontName=FONT_BOLD, fontSize=14, alignment=TA_CENTER, spaceAfter=16, textColor="#2a6fb0")
+    q_style = ParagraphStyle("QQ", fontName=FONT_BOLD, fontSize=12, leading=17, spaceBefore=12, spaceAfter=4)
+    a_style = ParagraphStyle("QA", fontName=FONT_REGULAR, fontSize=11, leading=15, leftIndent=8 * mm)
+    a_correct = ParagraphStyle("QACorrect", parent=a_style, textColor="#1a8a3a")
+    a_wrong = ParagraphStyle("QAWrong", parent=a_style, textColor="#c0392b")
+
+    story = [
+        Paragraph(_escape(f"📋 Test: {topic}"), title_style),
+        Paragraph(f"Natija: {score} / {len(questions)}", score_style),
+    ]
+
+    for i, q in enumerate(questions):
+        story.append(Paragraph(_escape(f"{i + 1}. {q['savol']}"), q_style))
+        correct_idx = q.get("togri", -1)
+        user_idx = user_answers[i] if i < len(user_answers) else -1
+        for vi, variant in enumerate(q.get("variantlar", [])):
+            prefix = "✅" if vi == correct_idx else ("❌" if vi == user_idx else "•")
+            style = a_correct if vi == correct_idx else (a_wrong if vi == user_idx else a_style)
+            story.append(Paragraph(_escape(f"{prefix} {chr(65 + vi)}) {variant}"), style))
+
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
+
+
+# ============================================================
 # UMUMIY YORDAMCHI FUNKSIYALAR
 # ============================================================
 
