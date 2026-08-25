@@ -27,7 +27,11 @@ from telegram.ext import (
 
 import config
 from config import TELEGRAM_TOKEN
-from handlers import menu, universal_chat, course_work, translate as translate_handler, images_to_pdf, edit_pdf, guide, inline_query, developer
+from handlers import (
+    menu, universal_chat, course_work, translate as translate_handler, images_to_pdf,
+    edit_pdf, guide, inline_query, developer, pptx_gen, essay, quiz, solve, summarize,
+    grammar, citation, my_files, reminders, voice,
+)
 from pdf_tools import make_pdf
 
 logging.basicConfig(
@@ -70,6 +74,14 @@ async def _post_init(application):
                 )
             except Exception as e:
                 logger.warning(f"/developer buyrug'ini admin ({admin_id}) uchun o'rnatishda xato: {e}")
+
+    # ⏰ Bot ishga tushganda (har qayta deployda ham) storage'da saqlangan
+    # BARCHA eslatmalarni qayta rejalashtiramiz — shu orqali eslatmalar
+    # deploy/restart paytida yo'qolmaydi (handlers/reminders.py'dagi izohga qarang).
+    try:
+        reminders.reschedule_all(application)
+    except Exception as e:
+        logger.error(f"⏰ Eslatmalarni qayta rejalashtirishda xato: {type(e).__name__}: {e}", exc_info=True)
 
 
 async def _error_handler(update, context):
@@ -228,6 +240,118 @@ def build_guide_conv():
     )
 
 
+def build_pptx_conv():
+    return ConversationHandler(
+        entry_points=[CallbackQueryHandler(pptx_gen.entry, pattern="^menu:pptx$")],
+        states={
+            pptx_gen.PX_TOPIC: [MessageHandler(filters.TEXT & ~filters.COMMAND, pptx_gen.receive_topic)],
+            pptx_gen.PX_COUNT: [CallbackQueryHandler(pptx_gen.receive_count, pattern="^pptx:count:")],
+        },
+        fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
+        name="pptx_conv",
+    )
+
+
+def build_essay_conv():
+    return ConversationHandler(
+        entry_points=[CallbackQueryHandler(essay.entry, pattern="^menu:essay$")],
+        states={
+            essay.ES_TYPE: [CallbackQueryHandler(essay.receive_type, pattern="^essay:type:")],
+            essay.ES_PAGES: [MessageHandler(filters.TEXT & ~filters.COMMAND, essay.receive_pages)],
+            essay.ES_TOPIC: [MessageHandler(filters.TEXT & ~filters.COMMAND, essay.receive_topic_and_generate)],
+        },
+        fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
+        name="essay_conv",
+    )
+
+
+def build_quiz_conv():
+    return ConversationHandler(
+        entry_points=[CallbackQueryHandler(quiz.entry, pattern="^menu:quiz$")],
+        states={
+            quiz.QZ_TOPIC: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz.receive_topic)],
+            quiz.QZ_COUNT: [CallbackQueryHandler(quiz.receive_count, pattern="^quiz:count:")],
+            quiz.QZ_ACTIVE: [
+                CallbackQueryHandler(quiz.receive_answer, pattern="^quiz:ans:"),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
+        name="quiz_conv",
+    )
+
+
+def build_solve_conv():
+    return ConversationHandler(
+        entry_points=[CallbackQueryHandler(solve.entry, pattern="^menu:solve$")],
+        states={
+            solve.SV_WAIT: [
+                MessageHandler(filters.PHOTO, solve.receive_photo),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, solve.receive_text),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
+        name="solve_conv",
+    )
+
+
+def build_summarize_conv():
+    return ConversationHandler(
+        entry_points=[CallbackQueryHandler(summarize.entry, pattern="^menu:summarize$")],
+        states={
+            summarize.SM_WAIT: [
+                MessageHandler((filters.TEXT | filters.Document.PDF) & ~filters.COMMAND, summarize.receive_content),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
+        name="summarize_conv",
+    )
+
+
+def build_grammar_conv():
+    return ConversationHandler(
+        entry_points=[CallbackQueryHandler(grammar.entry, pattern="^menu:grammar$")],
+        states={
+            grammar.GR_WAIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, grammar.receive_text)],
+        },
+        fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
+        name="grammar_conv",
+    )
+
+
+def build_citation_conv():
+    return ConversationHandler(
+        entry_points=[CallbackQueryHandler(citation.entry, pattern="^menu:citation$")],
+        states={
+            citation.CT_FORMAT: [CallbackQueryHandler(citation.receive_format, pattern="^cite:fmt:")],
+            citation.CT_TYPE: [CallbackQueryHandler(citation.receive_type, pattern="^cite:type:")],
+            citation.CT_DETAILS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, citation.receive_details),
+                CallbackQueryHandler(citation.add_more, pattern="^cite:more$"),
+                CallbackQueryHandler(citation.finish, pattern="^cite:finish$"),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
+        name="citation_conv",
+    )
+
+
+def build_reminders_conv():
+    return ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(reminders.entry, pattern="^menu:remind$"),
+            CallbackQueryHandler(reminders.back_to_menu, pattern="^remind:menu$"),
+            CallbackQueryHandler(reminders.new_reminder, pattern="^remind:new$"),
+        ],
+        states={
+            reminders.RM_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, reminders.receive_text)],
+            reminders.RM_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, reminders.receive_time)],
+        },
+        fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
+        name="reminders_conv",
+        allow_reentry=True,
+    )
+
+
 def build_developer_conv():
     """👨‍💻 /developer — faqat adminlar uchun AI sozlamalari menyusi.
     Ruxsat tekshiruvi handlers/developer.py ichida (_is_admin) amalga oshadi —
@@ -321,14 +445,37 @@ def main():
 
     # Har bir funksiya uchun alohida conversation (bosqichma-bosqich so'rov-javob)
     app.add_handler(build_course_work_conv())
+    app.add_handler(build_essay_conv())
     app.add_handler(build_translate_conv())
+    app.add_handler(build_pptx_conv())
+    app.add_handler(build_quiz_conv())
+    app.add_handler(build_solve_conv())
+    app.add_handler(build_summarize_conv())
+    app.add_handler(build_grammar_conv())
+    app.add_handler(build_citation_conv())
     app.add_handler(build_images_pdf_conv())
     app.add_handler(build_edit_pdf_conv())
     app.add_handler(build_guide_conv())
+    app.add_handler(build_reminders_conv())
     app.add_handler(build_developer_conv())
 
     app.add_handler(CallbackQueryHandler(menu.universal_selected, pattern="^menu:universal$"))
     app.add_handler(CallbackQueryHandler(menu.back_to_menu, pattern="^menu:back$"))
+
+    # 🗂 Mening fayllarim — conversation emas, oddiy callback (ro'yxat + qayta yuborish)
+    app.add_handler(CallbackQueryHandler(my_files.entry, pattern="^menu:myfiles$"))
+    app.add_handler(CallbackQueryHandler(my_files.open_file, pattern="^myfiles:open:"))
+
+    # 📋 Test natijasini PDF qilish — test tugagandan KEYIN (conversation allaqachon
+    # tugagan holatda) bosiladigan tugma, shuning uchun ALOHIDA (conv tashqarisida) handler
+    app.add_handler(CallbackQueryHandler(quiz.export_pdf, pattern="^quiz:pdf$"))
+
+    # ⏰ Eslatmalar ro'yxati/o'chirish — reminders_conv tashqarisida ham ishlashi kerak
+    app.add_handler(CallbackQueryHandler(reminders.list_reminders, pattern="^remind:list$"))
+    app.add_handler(CallbackQueryHandler(reminders.delete_reminder, pattern="^remind:del:"))
+
+    # 🎙 Ovozli xabar — istalgan paytda (hech qanday menyu tanlanmagan bo'lsa ham)
+    app.add_handler(MessageHandler(filters.VOICE, voice.handle_voice))
 
     # UNIVERSAL CHAT — hech qanday conversation faol bo'lmaganda ishlaydi
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, universal_chat.handle_message))
