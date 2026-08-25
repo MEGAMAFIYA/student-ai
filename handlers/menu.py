@@ -12,17 +12,28 @@ logger = logging.getLogger(__name__)
 
 MENU_CALLBACKS = {
     "course_work": "📘 Kurs ishi / loyiha",
+    "essay": "🗒 Referat/Insho",
     "translate": "🌐 Tarjima qilish",
+    "pptx": "📊 Taqdimot (PPTX)",
+    "quiz": "📋 Test/Viktorina",
+    "solve": "🧮 Masala yechish",
+    "summarize": "📑 Konspekt qisqartirish",
+    "grammar": "✅ Imlo tekshirish",
+    "citation": "📚 Iqtibos generatori",
     "images_pdf": "🖼 Suratlarni PDF qilish",
     "edit_pdf": "📝 PDF ni tahrirlash",
     "guide": "📖 Qo'llanma tayyorlash",
+    "myfiles": "🗂 Mening fayllarim",
+    "remind": "⏰ Eslatmalar",
 }
 
 
 def main_menu_keyboard() -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton("💬 UNIVERSAL CHAT", callback_data="menu:universal")]]
-    for key, label in MENU_CALLBACKS.items():
-        rows.append([InlineKeyboardButton(label, callback_data=f"menu:{key}")])
+    items = list(MENU_CALLBACKS.items())
+    for i in range(0, len(items), 2):
+        row = [InlineKeyboardButton(label, callback_data=f"menu:{key}") for key, label in items[i:i + 2]]
+        rows.append(row)
     return InlineKeyboardMarkup(rows)
 
 
@@ -38,6 +49,7 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "💬 *UNIVERSAL CHAT* — istalgan savolingizga javob beradi va agar boshqa "
         "funksiya kerak bo'lsa (kurs ishi, tarjima va h.k.), o'zi shu funksiyaga "
         "murojat qilib, javobni sizga qaytaradi.\n\n"
+        "🎙 Ovozli xabar yuborsangiz ham tushunaman va javob beraman.\n\n"
         "Yoki quyidagi funksiyalardan birini tanlang:",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=main_menu_keyboard(),
