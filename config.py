@@ -87,6 +87,21 @@ EDIT_PDF_AI = _cfg("EDIT_PDF", "gemini-3.6-flash")
 GUIDE_AI = _cfg("GUIDE", "gemini-3.6-flash")
 VISION_AI = _cfg("VISION", "gemini-3.6-flash")
 
+# ---- Yangi funksiyalar uchun AI sozlamalari ----
+# PPTX/QUIZ/ESSAY/SUMMARY/GRAMMAR/CITATION — matn asosida ishlaydi, istalgan
+# providerga o'tkazish mumkin (/developer orqali). SOLVE va VOICE — rasm/audio
+# qabul qiladi, shuning uchun HAR DOIM Gemini bo'lishi kerak (multimodal —
+# boshqa provayderlar bu loyihada rasm/audio qabul qilmaydi), lekin ADMIN
+# xohlasa boshqa Gemini kalitiga/modeliga almashtirishi mumkin.
+PPTX_AI = _cfg("PPTX", "gemini-3.6-flash")
+QUIZ_AI = _cfg("QUIZ", "gemini-3.6-flash")
+ESSAY_AI = _cfg("ESSAY", "gemini-3.6-flash")
+SUMMARY_AI = _cfg("SUMMARY", "gemini-3.6-flash")
+GRAMMAR_AI = _cfg("GRAMMAR", "gemini-3.6-flash")
+CITATION_AI = _cfg("CITATION", "gemini-3.6-flash")
+SOLVE_AI = _cfg("SOLVE", "gemini-3.6-flash", default_provider="gemini")
+VOICE_AI = _cfg("VOICE", "gemini-3.6-flash", default_provider="gemini")
+
 # /developer menyusida ko'rinadigan nom va tartib shu yerdan olinadi.
 AI_FUNCTION_LABELS = {
     "UNIVERSAL_CHAT": "💬 Universal chat",
@@ -95,6 +110,14 @@ AI_FUNCTION_LABELS = {
     "EDIT_PDF": "📝 PDF tahrirlash",
     "GUIDE": "📖 Qo'llanma",
     "VISION": "👁 Rasm tahlili (Vision)",
+    "PPTX": "📊 Taqdimot (PPTX)",
+    "QUIZ": "📋 Test/Viktorina",
+    "ESSAY": "🗒 Referat/Insho",
+    "SUMMARY": "📑 Konspekt qisqartirish",
+    "GRAMMAR": "✅ Imlo tekshirish",
+    "CITATION": "📚 Iqtibos generatori",
+    "SOLVE": "🧮 Masala yechish",
+    "VOICE": "🎙 Ovozli xabar",
 }
 
 # Prefiks -> tegishli cfg dict. /developer shu orqali ishlaydi.
@@ -105,6 +128,14 @@ AI_FUNCTIONS = {
     "EDIT_PDF": EDIT_PDF_AI,
     "GUIDE": GUIDE_AI,
     "VISION": VISION_AI,
+    "PPTX": PPTX_AI,
+    "QUIZ": QUIZ_AI,
+    "ESSAY": ESSAY_AI,
+    "SUMMARY": SUMMARY_AI,
+    "GRAMMAR": GRAMMAR_AI,
+    "CITATION": CITATION_AI,
+    "SOLVE": SOLVE_AI,
+    "VOICE": VOICE_AI,
 }
 
 # Qo'llab-quvvatlanadigan AI provayderlar. "gemini" — Google SDK orqali
@@ -184,6 +215,12 @@ DEFAULT_MODEL_BY_PROVIDER = {
 
 MAX_TELEGRAM_TEXT = 3800
 
+# ⏰ Eslatmalar funksiyasi vaqtlarni shu (soat) siljish bilan LOKAL vaqt deb
+# tushunadi (Telegram foydalanuvchining aniq timezone'ini bermaydi, shuning
+# uchun butun bot BITTA umumiy timezone bilan ishlaydi — standart: O'zbekiston,
+# Toshkent, UTC+5). Kerak bo'lsa .env orqali o'zgartiring.
+REMINDER_TZ_OFFSET_HOURS = float(os.getenv("REMINDER_TZ_OFFSET_HOURS", "5"))
+
 # ============================================================
 # KALITLAR TO'PLAMI (KEY POOLS) — /developer > 🔑 AI kalitlari orqali
 # ============================================================
@@ -220,7 +257,39 @@ UPSTASH_REDIS_REST_TOKEN = os.getenv("UPSTASH_REDIS_REST_TOKEN", "")
 USE_UPSTASH = bool(UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN)
 _UPSTASH_KEY = "student_ai_runtime_config"
 
-_RUNTIME_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runtime_ai_config.json")
+# ------------------------------------------------------------
+# IKKINCHI VARIANT (Upstash sozlanmasa): GitHub repo'ga avtomatik yozish.
+# GITHUB_TOKEN (repo yozish huquqiga ega "Fine-grained" yoki "classic"
+# personal access token) va GITHUB_REPO ("username/repo" ko'rinishida)
+# .env/Render Environment'da sozlansa, /developer orqali qilingan HAR BIR
+# o'zgarish (kalit qo'shish, model o'zgartirish va h.k.) avtomatik ravishda
+# shu GitHub repo'siga (GitHub Contents API orqali) COMMIT qilinadi —
+# shuning uchun Render qayta deploy qilinganda ham (git repodan qaytadan
+# tiklanganda ham) o'zgarishlar YO'QOLMAYDI, chunki ular endi repo'ning
+# o'zida saqlanadi.
+#
+#   GITHUB_TOKEN=ghp_xxxxxxxxxxxx      (Settings > Developer settings >
+#                                        Personal access tokens; "repo" yoki
+#                                        "Contents: Read and write" huquqi bilan)
+#   GITHUB_REPO=foydalanuvchi/repo-nomi
+#   GITHUB_BRANCH=main                  (ixtiyoriy, standart "main")
+#
+# MUHIM: bu usul HAR BIR o'zgarishda repo'ga bitta commit qo'shadi — agar
+# kalitlar juda tez-tez o'zgartirilsa, commit tarixi tez to'lishi mumkin
+# (zararsiz, lekin bilib qo'ying). Ustuvorlik tartibi: Upstash sozlangan
+# bo'lsa — Upstash, aks holda GitHub sozlangan bo'lsa — GitHub, aks holda
+# oxirgi chora — mahalliy fayl (Render'da bu FAQAT joriy deploy davomida
+# ishlaydi, qayta deployda o'chadi).
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
+GITHUB_REPO = os.getenv("GITHUB_REPO", "").strip().strip("/")
+GITHUB_BRANCH = os.getenv("GITHUB_BRANCH", "main").strip()
+USE_GITHUB = bool(GITHUB_TOKEN and GITHUB_REPO)
+# Ma'lumot fayllari GitHub repo ichida shu papkada saqlanadi (kod fayllari
+# bilan aralashmasligi uchun) — repo'da avtomatik yaratiladi, qo'lda papka
+# ochish shart emas.
+GITHUB_DATA_DIR = os.getenv("GITHUB_DATA_DIR", "bot_data").strip().strip("/")
+
+_RUNTIME_CONFIG_FILENAME = "runtime_ai_config.json"
 
 _EDITABLE_FIELDS = ("provider", "model", "api_key", "base_url")
 _KEY_FIELDS = ("key", "model")
@@ -244,14 +313,130 @@ def _upstash_request(command: list) -> dict | None:
         return None
 
 
+def _github_headers() -> dict:
+    return {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+
+def _github_path(filename: str) -> str:
+    return f"{GITHUB_DATA_DIR}/{filename}" if GITHUB_DATA_DIR else filename
+
+
+def _github_read_file(filename: str) -> str | None:
+    """GitHub Contents API orqali repo'dagi faylni o'qiydi. Fayl mavjud
+    bo'lmasa (404 — birinchi marta ishga tushirilyapti) yoki xato bo'lsa
+    None qaytaradi."""
+    import base64
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{_github_path(filename)}"
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            r = client.get(url, headers=_github_headers(), params={"ref": GITHUB_BRANCH})
+            if r.status_code == 404:
+                logger.info(f"GitHub'da '{filename}' hali mavjud emas (birinchi marta ishga tushirilyapti).")
+                return None
+            r.raise_for_status()
+            data = r.json()
+            return base64.b64decode(data["content"]).decode("utf-8")
+    except Exception as e:
+        logger.error(f"GitHub'dan '{filename}' o'qishda xato: {type(e).__name__}: {e}")
+        return None
+
+
+def _github_write_file(filename: str, content: str, message: str) -> bool:
+    """GitHub Contents API orqali repo'ga fayl yozadi (mavjud bo'lsa
+    YANGILAYDI, aks holda YARATADI) — bitta YANGI COMMIT sifatida."""
+    import base64
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{_github_path(filename)}"
+    sha = None
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            r = client.get(url, headers=_github_headers(), params={"ref": GITHUB_BRANCH})
+            if r.status_code == 200:
+                sha = r.json().get("sha")
+            body = {
+                "message": message,
+                "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
+                "branch": GITHUB_BRANCH,
+            }
+            if sha:
+                body["sha"] = sha
+            r = client.put(url, headers=_github_headers(), json=body)
+            r.raise_for_status()
+            return True
+    except Exception as e:
+        logger.error(f"❌ GitHub'ga '{filename}' yozishda xato: {type(e).__name__}: {e}")
+        return False
+
+
+def persist_read(local_filename: str, upstash_key: str) -> tuple[str | None, str]:
+    """Umumiy o'qish funksiyasi — config.py (AI sozlamalari) VA storage.py
+    (fayllar tarixi/statistika/eslatmalar) shu orqali ishlaydi. Ustuvorlik:
+    Upstash -> GitHub -> mahalliy fayl. Qaytaradi: (xom matn yoki None, manba nomi)."""
+    if USE_UPSTASH:
+        resp = _upstash_request(["GET", upstash_key])
+        if resp is not None and resp.get("result"):
+            return resp["result"], "Upstash Redis"
+        if resp is None:
+            logger.error(f"Upstash Redis'ga ulanib bo'lmadi ('{local_filename}') — boshqa manbaga o'tilmoqda.")
+        else:
+            logger.info(f"Upstash Redis'da hali '{local_filename}' uchun ma'lumot yo'q.")
+
+    if USE_GITHUB:
+        raw = _github_read_file(local_filename)
+        if raw:
+            return raw, f"GitHub ({GITHUB_REPO})"
+
+    local_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), local_filename)
+    if os.path.exists(local_path):
+        try:
+            with open(local_path, "r", encoding="utf-8") as f:
+                return f.read(), "mahalliy fayl"
+        except Exception as e:
+            logger.error(f"'{local_filename}' mahalliy fayldan o'qishda xato: {e}")
+    return None, ""
+
+
+def persist_write(local_filename: str, upstash_key: str, raw: str, commit_message: str = "") -> None:
+    """Umumiy yozish funksiyasi — xuddi shu ustuvorlik bilan (Upstash ->
+    GitHub -> mahalliy fayl) ma'lumotni saqlaydi."""
+    if USE_UPSTASH:
+        resp = _upstash_request(["SET", upstash_key, raw])
+        if resp is None or resp.get("result") != "OK":
+            logger.error(f"❌ Upstash Redis'ga '{local_filename}' yozib bo'lmadi — o'zgarish DOIMIY saqlanmagan bo'lishi mumkin!")
+        return
+
+    if USE_GITHUB:
+        ok = _github_write_file(local_filename, raw, commit_message or f"Auto-update {local_filename}")
+        if ok:
+            logger.info(f"✅ '{local_filename}' GitHub repo'ga ({GITHUB_REPO}, branch={GITHUB_BRANCH}) muvaffaqiyatli yozildi.")
+        else:
+            logger.error(f"❌ '{local_filename}' GitHub'ga yozilmadi — o'zgarish DOIMIY saqlanmagan bo'lishi mumkin! Mahalliy faylga zaxira sifatida yozib qo'yiladi.")
+            _write_local_fallback(local_filename, raw)
+        return
+
+    _write_local_fallback(local_filename, raw)
+
+
+def _write_local_fallback(local_filename: str, raw: str) -> None:
+    local_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), local_filename)
+    try:
+        with open(local_path, "w", encoding="utf-8") as f:
+            f.write(raw)
+    except Exception as e:
+        logger.error(f"'{local_filename}' mahalliy faylga yozishda xato: {e}")
+
+
 def _load_runtime_overrides() -> None:
-    """Bot ishga tushganda chaqiriladi: agar Upstash sozlangan bo'lsa —
-    o'sha yerdan, aks holda mahalliy runtime_ai_config.json fayldan (agar
-    mavjud bo'lsa) o'qiladi. Topilgan qiymatlar .env'dan o'qilgan
-    BOSHLANG'ICH qiymatlar ustidan qo'yiladi — shu orqali /developer orqali
-    qilingan o'zgarishlar (funksiya sozlamalari HAM, kalitlar to'plami HAM)
-    bot qayta ishga tushganda (Upstash bilan — QAYTA DEPLOY qilinganda ham)
-    yo'qolmaydi.
+    """Bot ishga tushganda chaqiriladi: persist_read() orqali (Upstash ->
+    GitHub -> mahalliy fayl ustuvorligida) saqlangan konfiguratsiyani
+    o'qiydi. Topilgan qiymatlar .env'dan o'qilgan BOSHLANG'ICH qiymatlar
+    ustidan qo'yiladi — shu orqali /developer orqali qilingan o'zgarishlar
+    (funksiya sozlamalari HAM, kalitlar to'plami HAM) bot qayta ishga
+    tushganda (QAYTA DEPLOY qilinganda ham, agar Upstash yoki GitHub
+    sozlangan bo'lsa) yo'qolmaydi.
 
     Format:
         {"functions": {PREFIX: {provider, model, api_key, base_url}, ...},
@@ -260,33 +445,19 @@ def _load_runtime_overrides() -> None:
     Eski (bu funksiya qo'shilishidan oldingi) fayllar "functions" o'rniga
     to'g'ridan-to'g'ri {PREFIX: {...}} shaklida edi — shu format ham
     o'qib qo'llab-quvvatlanadi (key_pools bo'sh deb olinadi)."""
-    raw, source = None, ""
-
-    if USE_UPSTASH:
-        resp = _upstash_request(["GET", _UPSTASH_KEY])
-        if resp is not None and resp.get("result"):
-            raw, source = resp["result"], "Upstash Redis"
-        elif resp is None:
-            logger.error(
-                "Upstash Redis'ga ulanib bo'lmadi — .env qiymatlari bilan davom etiladi "
-                "(kalitlar VAQTINCHA yo'qolgan bo'lishi mumkin, lekin Upstash tuzalganda qayta saqlansa tiklanadi)."
-            )
-        else:
-            logger.info("Upstash Redis'da hali saqlangan konfiguratsiya yo'q (birinchi marta ishga tushirilyapti).")
-    else:
+    if not USE_UPSTASH and not USE_GITHUB:
         logger.warning(
-            "UPSTASH_REDIS_REST_URL/TOKEN sozlanmagan — runtime_ai_config.json MAHALLIY faylga "
-            "yoziladi. Render kabi vaqtinchalik-disk hostinglarda bu fayl HAR BIR DEPLOYDA "
-            "o'chib ketadi! Doimiy saqlash uchun Upstash Redis sozlashni tavsiya qilamiz."
+            "❗️ Hech qanday DOIMIY saqlash (UPSTASH_REDIS_REST_URL/TOKEN yoki "
+            "GITHUB_TOKEN/GITHUB_REPO) sozlanmagan — runtime_ai_config.json MAHALLIY "
+            "faylga yoziladi. Render kabi vaqtinchalik-disk hostinglarda bu fayl HAR BIR "
+            "QAYTA DEPLOYDA o'chib ketadi, ya'ni /developer orqali qo'shilgan kalitlar "
+            "YO'QOLADI! Buni oldini olish uchun IKKI VARIANTDAN BIRINI sozlang: "
+            "(1) Upstash Redis (console.upstash.com, bepul) yoki "
+            "(2) GITHUB_TOKEN + GITHUB_REPO — shunda o'zgarishlar avtomatik GitHub "
+            "repo'siga commit qilinadi."
         )
-        if os.path.exists(_RUNTIME_CONFIG_PATH):
-            try:
-                with open(_RUNTIME_CONFIG_PATH, "r", encoding="utf-8") as f:
-                    raw = f.read()
-                source = "mahalliy fayl"
-            except Exception as e:
-                logger.error(f"runtime_ai_config.json o'qishda xato: {e}")
 
+    raw, source = persist_read(_RUNTIME_CONFIG_FILENAME, _UPSTASH_KEY)
     if not raw:
         return
 
@@ -337,18 +508,7 @@ def _save_runtime_overrides() -> None:
         },
     }
     raw = json.dumps(data, ensure_ascii=False)
-
-    if USE_UPSTASH:
-        resp = _upstash_request(["SET", _UPSTASH_KEY, raw])
-        if resp is None or resp.get("result") != "OK":
-            logger.error("❌ Upstash Redis'ga yozib bo'lmadi — o'zgarish DOIMIY saqlanmadi (qayta deployda yo'qolishi mumkin)!")
-        return
-
-    try:
-        with open(_RUNTIME_CONFIG_PATH, "w", encoding="utf-8") as f:
-            f.write(raw)
-    except Exception as e:
-        logger.error(f"runtime_ai_config.json ga yozishda xato: {e}")
+    persist_write(_RUNTIME_CONFIG_FILENAME, _UPSTASH_KEY, raw, commit_message="🔧 /developer: AI sozlamalari/kalitlari yangilandi")
 
 
 def update_ai_field(prefix: str, field: str, value: str) -> bool:
