@@ -362,3 +362,35 @@ async def ask_gemini_vision(cfg: dict, image, caption: str) -> str | None:
     except Exception as e:
         logger.error(f"Gemini vision xato: {e}")
         return None
+
+
+async def ask_gemini_multimodal(
+    cfg: dict, prompt: str, media_bytes: bytes, mime_type: str, label: str = "Gemini (multimodal)"
+) -> tuple[str | None, str, str]:
+    """Rasm YOKI audio baytlarini (Telegram'dan to'g'ridan-to'g'ri kelgan,
+    hech qanday konvertatsiyasiz) matnli ko'rsatma bilan birga Gemini'ga
+    yuboradi — 🧮 Masala yechish (rasm) va 🎙 Ovozli xabar (audio/ogg)
+    funksiyalari shu orqali ishlaydi. Qaytaradi: (natija yoki None, status,
+    tafsilot) — xuddi _dispatch() kabi, shuning uchun chaqiruvchi kod
+    sababini (limit/kalit yaroqsiz/xato) foydalanuvchiga yoki logga aniq
+    ko'rsata oladi (matn-AI chaqiruvlaridagi kabi)."""
+    api_key, model_name = cfg.get("api_key", ""), cfg.get("model", "")
+    if not api_key or not model_name:
+        return None, "invalid", "Kalit yoki model sozlanmagan."
+    logger.info(f"{label} ({model_name}) ga so'rov yuborilmoqda (media: {len(media_bytes)} bayt, {mime_type})...")
+    try:
+        model = await _get_gemini_model_safe(api_key, model_name)
+        parts = [prompt, {"mime_type": mime_type, "data": media_bytes}]
+        resp = await asyncio.wait_for(
+            asyncio.to_thread(model.generate_content, parts), timeout=GEMINI_TIMEOUT_SEC
+        )
+        text = resp.text
+        logger.info(f"{label} ({model_name}): ✅ javob qabul qilindi ({len(text or '')} belgi).")
+        return text, "ok", ""
+    except asyncio.TimeoutError:
+        logger.error(f"{label} timeout ({model_name}): {GEMINI_TIMEOUT_SEC}s ichida javob kelmadi.")
+        return None, "error", "Vaqt tugadi (timeout)."
+    except Exception as e:
+        status, detail = _classify_gemini_error(e)
+        logger.error(f"{label} xato ({model_name}) [{status}]: {type(e).__name__}: {e}")
+        return None, status, detail
