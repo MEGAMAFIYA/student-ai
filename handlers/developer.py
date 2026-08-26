@@ -36,6 +36,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 
 import ai_clients
 import config
+import storage
 
 logger = logging.getLogger(__name__)
 
@@ -134,9 +135,23 @@ async def _edit_menu(context: ContextTypes.DEFAULT_TYPE, text: str, keyboard: In
 # Asosiy menyu
 # ============================================================
 
+def _persistence_status_line() -> str:
+    if config.USE_UPSTASH:
+        return "💾 Doimiy saqlash: ✅ Upstash Redis (deployda yo'qolmaydi)"
+    if config.USE_NEON:
+        return "💾 Doimiy saqlash: ✅ Neon (Postgres) (deployda yo'qolmaydi)"
+    if config.USE_GITHUB:
+        return f"💾 Doimiy saqlash: ✅ GitHub repo ({_esc(config.GITHUB_REPO)}, avto-commit)"
+    return (
+        "💾 Doimiy saqlash: ⚠️ SOZLANMAGAN — o'zgarishlar faqat MAHALLIY faylda, "
+        "qayta deployda YO'QOLADI! (DATABASE_URL, Upstash yoki GITHUB_TOKEN/GITHUB_REPO sozlang)"
+    )
+
+
 def _main_menu_text() -> str:
     return (
         "🔧 <b>Developer — AI sozlamalari</b>\n\n"
+        f"{_persistence_status_line()}\n\n"
         "Har bir funksiya uchun AI provider, model, API kalit va bazaviy "
         "URL manzilini shu yerdan boshqarishingiz mumkin.\n\n"
         "Bo'limni tanlang:"
@@ -154,6 +169,7 @@ def _main_menu_keyboard() -> InlineKeyboardMarkup:
         rows.append(row)
     rows.append([InlineKeyboardButton("🔑 AI kalitlari", callback_data="dev:keys")])
     rows.append([InlineKeyboardButton("➕ Barcha modellar", callback_data="dev:bulk")])
+    rows.append([InlineKeyboardButton("📊 Statistika", callback_data="dev:stats")])
     rows.append([InlineKeyboardButton("❌ Yopish", callback_data="dev:close")])
     return InlineKeyboardMarkup(rows)
 
@@ -303,6 +319,29 @@ def _keybulk_scope_keyboard(provider: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton("Toq (1, 3, 5...)", callback_data=f"dev:keybulkscope:{provider}:odd")],
         [InlineKeyboardButton("Juft (2, 4, 6...)", callback_data=f"dev:keybulkscope:{provider}:even")],
         [InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:keybulk")],
+    ])
+
+
+def _stats_text() -> str:
+    stats = storage.get_stats()
+    lines = [
+        "📊 <b>Statistika</b>\n",
+        f"👥 Jami noyob foydalanuvchilar: <b>{stats['total_users']}</b>",
+        f"🔢 Jami muvaffaqiyatli so'rovlar: <b>{stats['total_events']}</b>\n",
+        "<b>Funksiya bo'yicha (jami / noyob foydalanuvchi / bugun):</b>",
+    ]
+    for label, total, unique, today in stats["per_function"]:
+        if total == 0:
+            lines.append(f"  <i>{_esc(label)} — hali ishlatilmagan</i>")
+        else:
+            lines.append(f"  {_esc(label)}: {total} / {unique} / {today}")
+    return "\n".join(lines)
+
+
+def _stats_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 Yangilash", callback_data="dev:stats")],
+        [InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:menu")],
     ])
 
 
@@ -563,6 +602,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=_back_keyboard(f"dev:keybulkprov:{provider}"),
         )
         return DEV_WAIT_BULK_MODEL
+
+    if action == "stats":
+        await _safe_edit_query(query, _stats_text(), reply_markup=_stats_keyboard(), parse_mode="HTML")
+        return DEV_MENU
 
     if action == "keycheck":
         await _safe_edit_query(query, "🩺 Tekshirilmoqda, biroz kuting...")
