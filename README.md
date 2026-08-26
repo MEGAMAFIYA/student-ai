@@ -113,15 +113,18 @@ emas.
 `/developer` orqali qo'shilgan AI kalitlar, "Mening fayllarim" tarixi,
 statistika va eslatmalar standart holatda MAHALLIY faylga yoziladi.
 Render kabi vaqtinchalik-disk hostinglarda bu fayl har qayta deployda
-o'chib ketadi. Buni oldini olish uchun quyidagi ikki variantdan
+o'chib ketadi. Buni oldini olish uchun quyidagi uch variantdan
 BITTASINI sozlang (`.env` ga qarang):
 
-1. **Upstash Redis** (tavsiya etiladi) — console.upstash.com dan bepul
-   Redis database yaratib, `UPSTASH_REDIS_REST_URL` va
-   `UPSTASH_REDIS_REST_TOKEN` ni qo'ying.
-2. **GitHub repo** — `GITHUB_TOKEN` (Contents: Read/write huquqi bilan) va
+1. **Neon (Postgres)** (tavsiya etiladi — haqiqiy database) — neon.tech
+   da bepul loyiha yaratib, "Connection string"ni `DATABASE_URL` sifatida
+   qo'ying. Kerakli jadvalni kod birinchi ishga tushganda o'zi yaratadi.
+2. **Upstash Redis** — console.upstash.com dan bepul Redis database
+   yaratib, `UPSTASH_REDIS_REST_URL` va `UPSTASH_REDIS_REST_TOKEN` ni
+   qo'ying.
+3. **GitHub repo** — `GITHUB_TOKEN` (Contents: Read/write huquqi bilan) va
    `GITHUB_REPO` ni qo'ysangiz, har bir o'zgarish avtomatik repo'ga commit
-   qilinadi (Upstash sozlanmagan bo'lsa ishlaydi).
+   qilinadi (yuqoridagilar sozlanmagan bo'lsa ishlaydi).
 
 `/developer` menyusining tepasida qaysi usul faol ekani doim ko'rsatiladi.
 
