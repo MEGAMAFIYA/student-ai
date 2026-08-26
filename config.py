@@ -289,10 +289,99 @@ USE_GITHUB = bool(GITHUB_TOKEN and GITHUB_REPO)
 # ochish shart emas.
 GITHUB_DATA_DIR = os.getenv("GITHUB_DATA_DIR", "bot_data").strip().strip("/")
 
+# ------------------------------------------------------------
+# UCHINCHI VARIANT: Neon (yoki istalgan boshqa) Postgres — HAQIQIY database.
+# https://neon.tech da bepul loyiha yarating -> "Connection string" ni
+# nusxalang -> Render Environment'ga DATABASE_URL (yoki NEON_DATABASE_URL)
+# nomi bilan qo'ying. Kod BIRINCHI ishlatilganda avtomatik ravishda kerakli
+# jadvalni ("student_ai_kv") o'zi yaratadi — qo'lda SQL yozish shart emas.
+#
+#   DATABASE_URL=postgresql://user:pass@ep-xxxx.neon.tech/dbname?sslmode=require
+#
+# (Ko'p hostinglar, jumladan Render'ning o'z Postgres qo'shimchasi ham, shu
+# DATABASE_URL nomini avtomatik beradi — shuning uchun ikkala nom ham
+# qo'llab-quvvatlanadi.)
+NEON_DATABASE_URL = os.getenv("DATABASE_URL", "") or os.getenv("NEON_DATABASE_URL", "")
+USE_NEON = bool(NEON_DATABASE_URL)
+_neon_table_ready = False
+
 _RUNTIME_CONFIG_FILENAME = "runtime_ai_config.json"
 
 _EDITABLE_FIELDS = ("provider", "model", "api_key", "base_url")
 _KEY_FIELDS = ("key", "model")
+
+
+def _neon_connect():
+    """Har chaqiriqda yangi ulanish ochadi (bot kam trafikli bo'lgani uchun
+    connection pool shart emas — soddaligi ustunlik). psycopg2 o'rnatilmagan
+    bo'lsa, tushunarli xato bilan to'xtaydi (requirements.txt'ga qarang)."""
+    try:
+        import psycopg2
+    except ImportError:
+        logger.error(
+            "❌ DATABASE_URL sozlangan, lekin 'psycopg2-binary' o'rnatilmagan! "
+            "requirements.txt faylida borligini va Render qayta deploy qilinganini tekshiring."
+        )
+        return None
+    try:
+        return psycopg2.connect(NEON_DATABASE_URL, connect_timeout=10)
+    except Exception as e:
+        logger.error(f"❌ Neon/Postgres'ga ulanib bo'lmadi: {type(e).__name__}: {e}")
+        return None
+
+
+def _neon_ensure_table(conn) -> None:
+    global _neon_table_ready
+    if _neon_table_ready:
+        return
+    with conn.cursor() as cur:
+        cur.execute(
+            "CREATE TABLE IF NOT EXISTS student_ai_kv ("
+            "  key TEXT PRIMARY KEY,"
+            "  value TEXT NOT NULL,"
+            "  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()"
+            ")"
+        )
+    conn.commit()
+    _neon_table_ready = True
+
+
+def _neon_get(key: str) -> str | None:
+    conn = _neon_connect()
+    if conn is None:
+        return None
+    try:
+        _neon_ensure_table(conn)
+        with conn.cursor() as cur:
+            cur.execute("SELECT value FROM student_ai_kv WHERE key = %s", (key,))
+            row = cur.fetchone()
+            return row[0] if row else None
+    except Exception as e:
+        logger.error(f"❌ Neon/Postgres'dan '{key}' o'qishda xato: {type(e).__name__}: {e}")
+        return None
+    finally:
+        conn.close()
+
+
+def _neon_set(key: str, value: str) -> bool:
+    conn = _neon_connect()
+    if conn is None:
+        return False
+    try:
+        _neon_ensure_table(conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO student_ai_kv (key, value, updated_at) VALUES (%s, %s, now()) "
+                "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
+                (key, value),
+            )
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"❌ Neon/Postgres'ga '{key}' yozishda xato: {type(e).__name__}: {e}")
+        return False
+    finally:
+        conn.close()
 
 
 def _upstash_request(command: list) -> dict | None:
@@ -374,7 +463,8 @@ def _github_write_file(filename: str, content: str, message: str) -> bool:
 def persist_read(local_filename: str, upstash_key: str) -> tuple[str | None, str]:
     """Umumiy o'qish funksiyasi — config.py (AI sozlamalari) VA storage.py
     (fayllar tarixi/statistika/eslatmalar) shu orqali ishlaydi. Ustuvorlik:
-    Upstash -> GitHub -> mahalliy fayl. Qaytaradi: (xom matn yoki None, manba nomi)."""
+    Upstash -> Neon (Postgres) -> GitHub -> mahalliy fayl. Qaytaradi:
+    (xom matn yoki None, manba nomi)."""
     if USE_UPSTASH:
         resp = _upstash_request(["GET", upstash_key])
         if resp is not None and resp.get("result"):
@@ -383,6 +473,12 @@ def persist_read(local_filename: str, upstash_key: str) -> tuple[str | None, str
             logger.error(f"Upstash Redis'ga ulanib bo'lmadi ('{local_filename}') — boshqa manbaga o'tilmoqda.")
         else:
             logger.info(f"Upstash Redis'da hali '{local_filename}' uchun ma'lumot yo'q.")
+
+    if USE_NEON:
+        raw = _neon_get(upstash_key)
+        if raw:
+            return raw, "Neon (Postgres)"
+        logger.info(f"Neon/Postgres'da hali '{local_filename}' uchun ma'lumot yo'q (yoki ulanish xatosi — yuqoridagi logga qarang).")
 
     if USE_GITHUB:
         raw = _github_read_file(local_filename)
@@ -401,11 +497,20 @@ def persist_read(local_filename: str, upstash_key: str) -> tuple[str | None, str
 
 def persist_write(local_filename: str, upstash_key: str, raw: str, commit_message: str = "") -> None:
     """Umumiy yozish funksiyasi — xuddi shu ustuvorlik bilan (Upstash ->
-    GitHub -> mahalliy fayl) ma'lumotni saqlaydi."""
+    Neon -> GitHub -> mahalliy fayl) ma'lumotni saqlaydi."""
     if USE_UPSTASH:
         resp = _upstash_request(["SET", upstash_key, raw])
         if resp is None or resp.get("result") != "OK":
             logger.error(f"❌ Upstash Redis'ga '{local_filename}' yozib bo'lmadi — o'zgarish DOIMIY saqlanmagan bo'lishi mumkin!")
+        return
+
+    if USE_NEON:
+        ok = _neon_set(upstash_key, raw)
+        if ok:
+            logger.info(f"✅ '{local_filename}' Neon/Postgres'ga muvaffaqiyatli yozildi.")
+        else:
+            logger.error(f"❌ '{local_filename}' Neon/Postgres'ga yozilmadi — o'zgarish DOIMIY saqlanmagan bo'lishi mumkin! Mahalliy faylga zaxira sifatida yozib qo'yiladi.")
+            _write_local_fallback(local_filename, raw)
         return
 
     if USE_GITHUB:
@@ -445,15 +550,16 @@ def _load_runtime_overrides() -> None:
     Eski (bu funksiya qo'shilishidan oldingi) fayllar "functions" o'rniga
     to'g'ridan-to'g'ri {PREFIX: {...}} shaklida edi — shu format ham
     o'qib qo'llab-quvvatlanadi (key_pools bo'sh deb olinadi)."""
-    if not USE_UPSTASH and not USE_GITHUB:
+    if not USE_UPSTASH and not USE_NEON and not USE_GITHUB:
         logger.warning(
-            "❗️ Hech qanday DOIMIY saqlash (UPSTASH_REDIS_REST_URL/TOKEN yoki "
-            "GITHUB_TOKEN/GITHUB_REPO) sozlanmagan — runtime_ai_config.json MAHALLIY "
+            "❗️ Hech qanday DOIMIY saqlash (UPSTASH_REDIS_REST_URL/TOKEN, DATABASE_URL "
+            "yoki GITHUB_TOKEN/GITHUB_REPO) sozlanmagan — runtime_ai_config.json MAHALLIY "
             "faylga yoziladi. Render kabi vaqtinchalik-disk hostinglarda bu fayl HAR BIR "
             "QAYTA DEPLOYDA o'chib ketadi, ya'ni /developer orqali qo'shilgan kalitlar "
-            "YO'QOLADI! Buni oldini olish uchun IKKI VARIANTDAN BIRINI sozlang: "
-            "(1) Upstash Redis (console.upstash.com, bepul) yoki "
-            "(2) GITHUB_TOKEN + GITHUB_REPO — shunda o'zgarishlar avtomatik GitHub "
+            "YO'QOLADI! Buni oldini olish uchun UCH VARIANTDAN BIRINI sozlang: "
+            "(1) Neon Postgres (neon.tech, bepul) — DATABASE_URL, "
+            "(2) Upstash Redis (console.upstash.com, bepul) yoki "
+            "(3) GITHUB_TOKEN + GITHUB_REPO — shunda o'zgarishlar avtomatik GitHub "
             "repo'siga commit qilinadi."
         )
 
