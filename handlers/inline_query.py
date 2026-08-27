@@ -385,6 +385,7 @@ async def _handle_chat(
                 f"Botning shaxsiy chatida qayta urinib ko'ring: "
                 f"https://t.me/{BOT_USERNAME}"
             ),
+            reply_markup=INLINE_MESSAGE_MARKUP,
         )
 
         return
@@ -418,14 +419,15 @@ async def _handle_chat(
     final_text = (
         f"{answer}"
         f"{maps_line}"
-        f"\n\n🤖 _Talaba AI — @{BOT_USERNAME}_"
+        f"\n\n🤖 Talaba AI — @{BOT_USERNAME}"
     )
 
     await _safe_edit_text(
         context,
         inline_message_id,
         final_text,
-        parse_mode=ParseMode.MARKDOWN
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=INLINE_MESSAGE_MARKUP,
     )
 
 
@@ -437,13 +439,15 @@ async def _safe_edit_text(
     context,
     inline_message_id,
     text,
-    parse_mode=None
+    parse_mode=None,
+    reply_markup=None
 ):
     try:
         await context.bot.edit_message_text(
             inline_message_id=inline_message_id,
             text=text,
-            parse_mode=parse_mode
+            parse_mode=parse_mode,
+            reply_markup=reply_markup
         )
 
     except BadRequest as e:
@@ -460,7 +464,8 @@ async def _safe_edit_text(
             try:
                 await context.bot.edit_message_text(
                     inline_message_id=inline_message_id,
-                    text=text
+                    text=text,
+                    reply_markup=reply_markup
                 )
 
             except Exception as e2:
@@ -577,6 +582,7 @@ async def _handle_course_work(
                     f"qayta urinib ko'ring: "
                     f"https://t.me/{BOT_USERNAME}"
                 ),
+                reply_markup=INLINE_MESSAGE_MARKUP,
             )
 
         except Exception as e:
@@ -613,6 +619,7 @@ async def _handle_course_work(
                     f"🤖 Talaba AI — @{BOT_USERNAME}"
                 ),
             ),
+            reply_markup=INLINE_MESSAGE_MARKUP,
         )
 
     except Exception as e:
@@ -633,6 +640,7 @@ async def _handle_course_work(
                     f"qayta urinib ko'ring: "
                     f"https://t.me/{BOT_USERNAME}"
                 ),
+                reply_markup=INLINE_MESSAGE_MARKUP,
             )
 
         except Exception:
