@@ -219,8 +219,13 @@ def _facts_block(registry: list[str]) -> str:
     bullet_list = "\n".join(f"- {f}" for f in items)
     return (
         "\n\nMUHIM — HUJJATDA AVVAL YOZILGAN ASOSIY RAQAM VA KOʻRSATKICHLAR "
-        "(bular bilan ZID kelmang; agar shu turdagi parametrni qayta tilga olsangiz, "
-        "aynan shu qiymatlardan foydalaning, yangi/boshqa raqam o'ylab topmang):\n"
+        "(bular FAQAT ziddiyatni oldini olish uchun berilgan ma'lumot — bu bo'lim "
+        "matnining bir qismi EMAS. Agar shu turdagi parametrni qayta tilga olishga "
+        "haqiqiy zarurat bo'lsa, aynan shu qiymatdan foydalaning, lekin gapni "
+        "har safar BOSHQACHA so'z va tuzilish bilan yozing. Agar joriy bo'lim mavzusi "
+        "bu ko'rsatkichlarga umuman aloqador bo'lmasa, ularni matnga umuman kiritmang. "
+        "Bir xil jumlani yoki deyarli bir xil jumlani boshqa bo'limdan koʻchirib "
+        "qo'yish QAT'IY TAQIQLANADI):\n"
         f"{bullet_list}"
     )
 
@@ -515,7 +520,13 @@ async def generate_course_work(topic: str, pages: int, status_msg=None):
     await _status(f"⏳ *{topic}* — matn ziddiyatlari va xatolari tekshirilmoqda...")
     sections["kirish"] = await _harmonize_text(topic, sections["kirish"])
     for bob in sections["bobs"]:
-        bob["content"] = await _harmonize_text(topic, bob["content"])
+        # Butun bob matnini bir yo'la emas, HAR BIR kichik bo'limni ALOHIDA
+        # muharrirlikdan o'tkazamiz — aks holda bob matni MAX_HARMONIZE_WORDS
+        # chegarasidan oshsa, butun bob (undagi barcha ziddiyatlar bilan birga)
+        # tekshiruvsiz qolib ketardi.
+        for sub in bob["subsections"]:
+            sub["content"] = await _harmonize_text(topic, sub["content"])
+        bob["content"] = _bob_content(bob)
     sections["xulosa"] = await _harmonize_text(topic, sections["xulosa"])
 
     # ===== HAQIQIY PDF SAHIFA SONIGA QARAB KENGAYTIRISH =====
@@ -568,6 +579,20 @@ def _bob_content(bob: dict) -> str:
     return "\n\n".join(f"{s['heading']}\n{s['content']}".strip() for s in bob["subsections"])
 
 
+_angle_cursor = {"i": 0}
+
+
+def _next_angle() -> str:
+    """Global aylanma hisoblagich: har chaqiruvda navbatdagi yo'nalishni beradi,
+    shu orqali turli kichik bo'limlarning TO'LDIRISH bosqichlari bir xil
+    yo'nalishdan (masalan har doim 'case study'dan) boshlanib, natijada bir xil
+    naqshdagi ('Yirik korxonada...') sun'iy holatlar takrorlanib qolishining
+    oldi olinadi."""
+    angle = _EXPAND_ANGLES[_angle_cursor["i"] % len(_EXPAND_ANGLES)]
+    _angle_cursor["i"] += 1
+    return angle
+
+
 async def _generate_one_subsection(
     topic: str, heading: str, sub_title: str, target_words: int, facts: list | None = None
 ) -> str:
@@ -587,7 +612,7 @@ async def _generate_one_subsection(
 
     fill_rounds = 0
     while len(content.split()) < target_words and fill_rounds < MAX_SUBSECTION_FILL_ROUNDS:
-        angle = _EXPAND_ANGLES[fill_rounds % len(_EXPAND_ANGLES)]
+        angle = _next_angle()
         fill_rounds += 1
         logger.info(
             f"[{heading}] Hajm yetarli emas ({len(content.split())}/{target_words} so'z) — "
