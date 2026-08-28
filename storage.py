@@ -45,6 +45,7 @@ _DEFAULT_DATA = {
     "usage": {},       # {"<func>": {"total": int, "unique_users": [ids], "by_date": {date: int}}}
     "all_users": [],   # botdan umuman foydalangan barcha noyob user_id'lar
     "reminders": [],   # [{"id","user_id","chat_id","text","due_ts","created_ts"}]
+    "groups": {},      # {"<chat_id>": {"active": bool}} — guruhda Universal chat holati
 }
 
 
@@ -210,3 +211,31 @@ def remove_reminder(reminder_id: str) -> bool:
     if changed:
         logger.info(f"⏰ Eslatma o'chirildi: id={reminder_id}.")
     return changed
+
+
+# ============================================================
+# 👥 Guruhlarda Universal chat holati
+# ============================================================
+# STANDART HOLAT — FAOL (True). Bot yangi guruhga qo'shilganda yoki
+# deploy/restart bo'lganda, agar o'sha guruh uchun ANIQ "o'chirilgan" yozuvi
+# bo'lmasa, u FAOL hisoblanadi. Guruh /ochirish buyrug'i bilan buni ANIQ
+# o'chirsa, bu holat shu yerda (Upstash/app_data.json) doimiy saqlanadi va
+# keyingi har qanday deployda ham o'sha holicha ("o'chirilgan") qoladi —
+# chunki context.chat_data (PTB xotirasi) har restartda tozalanadi, bu esa
+# tozalanmaydi.
+
+def is_group_active(chat_id: int) -> bool:
+    entry = _data["groups"].get(str(chat_id))
+    if entry is None:
+        return True  # hali hech qanday sozlama saqlanmagan — standart holat: FAOL
+    return bool(entry.get("active", True))
+
+
+def set_group_active(chat_id: int, active: bool) -> None:
+    with _lock:
+        key = str(chat_id)
+        entry = _data["groups"].setdefault(key, {})
+        entry["active"] = bool(active)
+        entry["updated_ts"] = _now_iso()
+        _save()
+    logger.info(f"👥 Guruh holati o'zgartirildi: chat_id={chat_id}, active={active} (doimiy saqlandi).")
