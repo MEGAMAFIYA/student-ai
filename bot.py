@@ -22,6 +22,7 @@ from telegram.ext import (
     ConversationHandler,
     InlineQueryHandler,
     ChosenInlineResultHandler,
+    ChatMemberHandler,
     filters,
 )
 
@@ -442,6 +443,10 @@ def main():
     app.add_handler(CommandHandler("cancel", menu.cancel_cmd))
     app.add_handler(CommandHandler("yoqish", menu.group_enable_cmd))
     app.add_handler(CommandHandler("ochirish", menu.group_disable_cmd))
+    # Bot biror guruhga QO'SHILGANDA avtomatik xush kelibsiz xabari va
+    # standart FAOL holatni bildirish uchun (guruh holati doimiy
+    # saqlanadi — batafsili storage.py > "Guruhlarda Universal chat holati").
+    app.add_handler(ChatMemberHandler(menu.my_chat_member_update, ChatMemberHandler.MY_CHAT_MEMBER))
 
     # Har bir funksiya uchun alohida conversation (bosqichma-bosqich so'rov-javob)
     app.add_handler(build_course_work_conv())
