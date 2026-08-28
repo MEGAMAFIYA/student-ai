@@ -37,6 +37,8 @@ from telegram.ext import ContextTypes, ConversationHandler
 import ai_clients
 import config
 import storage
+import wallet
+from handlers import payment_admin as pay_ui
 
 logger = logging.getLogger(__name__)
 
@@ -170,6 +172,10 @@ def _main_menu_keyboard() -> InlineKeyboardMarkup:
     rows.append([InlineKeyboardButton("🔑 AI kalitlari", callback_data="dev:keys")])
     rows.append([InlineKeyboardButton("➕ Barcha modellar", callback_data="dev:bulk")])
     rows.append([InlineKeyboardButton("📊 Statistika", callback_data="dev:stats")])
+    rows.append([InlineKeyboardButton("💳 To'lovlar", callback_data="dev:pay"),
+                 InlineKeyboardButton("💰 Balanslar", callback_data="dev:paybal")])
+    rows.append([InlineKeyboardButton("⚙️ Funksiya narxlari", callback_data="dev:payprice"),
+                 InlineKeyboardButton("💳 To'lov sozlamalari", callback_data="dev:paysettings")])
     rows.append([InlineKeyboardButton("❌ Yopish", callback_data="dev:close")])
     return InlineKeyboardMarkup(rows)
 
@@ -434,7 +440,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # oldingi "kutilayotgan matn kiritish" holatini tozalaydi — pastda
     # tegishli branch (edit/keyaddprov/keyrepl/keymodel/bulkprov/keybulkscope)
     # kerak bo'lsa uni qaytadan o'rnatadi.
-    if action not in ("edit", "bulkprov", "keyaddprov", "keyrepl", "keymodel", "keybulkscope"):
+    if action not in ("edit", "bulkprov", "keyaddprov", "keyrepl", "keymodel", "keybulkscope", "priceedit", "balsearch"):
         context.user_data.pop("dev_action", None)
 
     # ---------- Asosiy menyu ----------
@@ -613,6 +619,108 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _edit_menu(context, report, _keys_menu_keyboard())
         return DEV_MENU
 
+    # ---------- 💳 To'lovlar ----------
+    if action == "pay":
+        await _safe_edit_query(query, pay_ui.payments_menu_text(), reply_markup=pay_ui.payments_menu_keyboard(), parse_mode="HTML")
+        return DEV_MENU
+
+    if action == "paylist":
+        tab_key = parts[2]
+        await _safe_edit_query(
+            query, pay_ui.payment_list_text(tab_key), reply_markup=pay_ui.payment_list_keyboard(tab_key), parse_mode="HTML"
+        )
+        return DEV_MENU
+
+    if action == "payview":
+        payment_id = parts[2]
+        # Qaysi ro'yxatdan kelganini bilmasak ham, "orqaga" tugmasi xavfsiz
+        # standart sifatida "pending" bo'limiga qaytaradi.
+        await _safe_edit_query(
+            query, pay_ui.payment_detail_text(payment_id),
+            reply_markup=pay_ui.payment_detail_keyboard(payment_id), parse_mode="HTML",
+        )
+        return DEV_MENU
+
+    if action == "payact":
+        sub_action, payment_id = parts[2], parts[3]
+        admin_id = update.effective_user.id
+        ok, message = pay_ui.apply_payment_action(payment_id, sub_action, admin_id)
+        if ok:
+            from handlers import wallet_ui
+            payment = wallet.get_payment(payment_id)
+            if payment:
+                await wallet_ui.notify_user_payment_decision(
+                    context.bot, payment, approved=(sub_action == "approve"),
+                    reason="" if sub_action == "approve" else "Admin tomonidan rad etildi.",
+                )
+        await _safe_edit_query(
+            query, f"{message}\n\n" + pay_ui.payment_detail_text(payment_id),
+            reply_markup=pay_ui.payment_detail_keyboard(payment_id), parse_mode="HTML",
+        )
+        return DEV_MENU
+
+    if action == "payphoto":
+        payment_id = parts[2]
+        payment = wallet.get_payment(payment_id)
+        receipt = (payment or {}).get("receipt") or {}
+        if receipt.get("file_id"):
+            try:
+                await context.bot.send_document(update.effective_chat.id, receipt["file_id"], caption=f"🧾 Chek — payment_id: {payment_id}")
+            except Exception:
+                await context.bot.send_photo(update.effective_chat.id, receipt["file_id"], caption=f"🧾 Chek — payment_id: {payment_id}")
+        return DEV_MENU
+
+    # ---------- 💰 Balanslar ----------
+    if action == "paybal":
+        await _safe_edit_query(query, pay_ui.balances_text(), reply_markup=pay_ui.balances_keyboard(), parse_mode="HTML")
+        return DEV_MENU
+
+    if action == "balsearch":
+        context.user_data["dev_action"] = {"type": "balance_search"}
+        await _safe_edit_query(
+            query, "🔍 Qidirilayotgan foydalanuvchining Telegram ID raqamini yuboring:",
+            reply_markup=_back_keyboard("dev:paybal"),
+        )
+        return DEV_WAIT_TEXT
+
+    # ---------- ⚙️ Funksiya narxlari ----------
+    if action == "payprice":
+        await _safe_edit_query(query, pay_ui.price_menu_text(), reply_markup=pay_ui.price_menu_keyboard(), parse_mode="HTML")
+        return DEV_MENU
+
+    if action == "pricefeat":
+        feature_id = parts[2]
+        await _safe_edit_query(
+            query, pay_ui.price_detail_text(feature_id),
+            reply_markup=pay_ui.price_detail_keyboard(feature_id), parse_mode="HTML",
+        )
+        return DEV_MENU
+
+    if action == "priceedit":
+        feature_id = parts[2]
+        context.user_data["dev_action"] = {"type": "feature_price", "feature_id": feature_id}
+        await _safe_edit_query(
+            query, "✏️ Yangi narxni (so'mda, faqat butun son, 0 — bepul) yuboring:",
+            reply_markup=_back_keyboard(f"dev:pricefeat:{feature_id}"),
+        )
+        return DEV_WAIT_TEXT
+
+    if action == "pricetoggle":
+        feature_id = parts[2]
+        f = wallet.get_feature(feature_id)
+        if f:
+            wallet.set_feature_enabled(feature_id, not f.get("enabled", True), actor_id=update.effective_user.id)
+        await _safe_edit_query(
+            query, pay_ui.price_detail_text(feature_id),
+            reply_markup=pay_ui.price_detail_keyboard(feature_id), parse_mode="HTML",
+        )
+        return DEV_MENU
+
+    # ---------- 💳 To'lov sozlamalari ----------
+    if action == "paysettings":
+        await _safe_edit_query(query, pay_ui.payment_settings_text(), reply_markup=pay_ui.payment_settings_keyboard(), parse_mode="HTML")
+        return DEV_MENU
+
     return DEV_MENU
 
 
@@ -672,6 +780,36 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Boshqa model qo'yish uchun kalitni ochib \"✏️ Modelni o'zgartirish\"ni bosing.\n\n"
             + _keys_menu_text(),
             _keys_menu_keyboard(),
+        )
+
+    elif action_type == "feature_price":
+        feature_id = action["feature_id"]
+        if not raw_value.isdigit():
+            await _edit_menu(
+                context,
+                "⚠️ Iltimos, faqat butun son yuboring (masalan: 5000 yoki 0).\n\n" + pay_ui.price_detail_text(feature_id),
+                pay_ui.price_detail_keyboard(feature_id),
+            )
+            context.user_data["dev_action"] = action
+            return DEV_WAIT_TEXT
+        price = int(raw_value)
+        wallet.set_feature_price(feature_id, price, actor_id=update.effective_user.id)
+        await _edit_menu(
+            context, f"✅ Narx yangilandi.\n\n" + pay_ui.price_detail_text(feature_id),
+            pay_ui.price_detail_keyboard(feature_id),
+        )
+
+    elif action_type == "balance_search":
+        if not raw_value.isdigit():
+            await _edit_menu(
+                context, "⚠️ Iltimos, faqat Telegram ID raqamini yuboring.\n\n" + pay_ui.balances_text(),
+                pay_ui.balances_keyboard(),
+            )
+            context.user_data["dev_action"] = action
+            return DEV_WAIT_TEXT
+        await _edit_menu(
+            context, pay_ui.user_balance_text(int(raw_value)),
+            InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:paybal")]]),
         )
 
     context.user_data.pop("dev_action", None)
