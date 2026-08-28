@@ -701,3 +701,38 @@ def bulk_update_pool_models(provider: str, scope: str, model: str) -> list[int]:
 
 
 _load_runtime_overrides()
+
+
+# ============================================================
+# 💳 TO'LOV TIZIMI — Kapitalbank sozlamalari (FAQAT konfiguratsiya interfeysi)
+# ============================================================
+# MUHIM: bu yerda Kapitalbank'ning haqiqiy API endpoint'lari, so'rov/javob
+# formati yoki avtorizatsiya sxemasi HECH QACHON o'ylab topilmagan — faqat
+# .env orqali beriladigan SOZLAMA NOMLARI shu yerda e'lon qilingan. Haqiqiy
+# qiymatlar (agar mavjud bo'lsa) rasmiy Kapitalbank hujjatlaridan olinishi
+# kerak (payment_providers.py'dagi KapitalbankPaymentProvider va
+# KapitalbankTransactionVerifier'ga qarang — ular shu sozlamalar orqali
+# ishlaydi, lekin haqiqiy HTTP chaqiruvlari hali TODO sifatida qoldirilgan).
+#
+# Kerakli environment variables (hali BIRORTASI ham majburiy emas — bo'sh
+# bo'lsa, adapter "sozlanmagan" holatda ishlaydi va har doim manual_review'ga
+# yo'naltiradi):
+#   KAPITALBANK_MERCHANT_ID       — savdo nuqtasi/merchant identifikatori
+#   KAPITALBANK_TERMINAL_ID       — terminal identifikatori (agar kerak bo'lsa)
+#   KAPITALBANK_API_BASE_URL      — API bazaviy manzili (masalan https://...)
+#   KAPITALBANK_API_KEY           — API kalit/token
+#   KAPITALBANK_API_SECRET        — (agar imzo/HMAC kerak bo'lsa)
+#   KAPITALBANK_WEBHOOK_SECRET    — webhook imzosini tekshirish uchun maxfiy kalit
+KAPITALBANK_MERCHANT_ID = os.getenv("KAPITALBANK_MERCHANT_ID", "")
+KAPITALBANK_TERMINAL_ID = os.getenv("KAPITALBANK_TERMINAL_ID", "")
+KAPITALBANK_API_BASE_URL = os.getenv("KAPITALBANK_API_BASE_URL", "")
+KAPITALBANK_API_KEY = os.getenv("KAPITALBANK_API_KEY", "")
+KAPITALBANK_API_SECRET = os.getenv("KAPITALBANK_API_SECRET", "")
+KAPITALBANK_WEBHOOK_SECRET = os.getenv("KAPITALBANK_WEBHOOK_SECRET", "")
+
+# To'lov (bank/paynet) rekvizitlari — foydalanuvchiga "🟡 Bank/Paynet orqali
+# o'tkazma" tanlaganda ko'rsatiladi. .env orqali sozlanadi (kod ichida
+# to'qib chiqarilmagan haqiqiy hisob raqami/karta bo'lishi kerak).
+PAYMENT_CARD_NUMBER = os.getenv("PAYMENT_CARD_NUMBER", "")
+PAYMENT_CARD_HOLDER = os.getenv("PAYMENT_CARD_HOLDER", "")
+PAYMENT_RECEIVER_NOTE = os.getenv("PAYMENT_RECEIVER_NOTE", "")
