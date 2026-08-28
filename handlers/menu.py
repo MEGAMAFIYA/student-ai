@@ -8,6 +8,8 @@ from telegram import InlineKeyboardMarkup, InlineKeyboardButton, Update
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
 
+import storage
+
 logger = logging.getLogger(__name__)
 
 MENU_CALLBACKS = {
@@ -89,9 +91,10 @@ async def group_enable_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "har doim faol."
         )
         return
-    context.chat_data["group_active"] = True
+    storage.set_group_active(chat.id, True)
     await update.message.reply_text(
-        "✅ *Universal chat* ushbu guruhda yoqildi.\n\n"
+        "✅ *Universal chat* ushbu guruhda yoqildi (bu holat doimiy saqlanadi — "
+        "bot qayta ishga tushirilsa ham FAOL qoladi).\n\n"
         "Menga murojaat qilish uchun xabaringizda *dase* so'zini ishlating "
         "(masalan: \"dase bugun qanaqa kun\") yoki mening xabarimga reply qiling.\n\n"
         "⚠️ Eslatma: guruhda barcha xabarlarni ko'rishim uchun @BotFather orqali "
@@ -105,8 +108,54 @@ async def group_disable_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if chat.type not in ("group", "supergroup"):
         await update.message.reply_text("ℹ️ Bu buyruq faqat guruhlarda ishlatiladi.")
         return
-    context.chat_data["group_active"] = False
-    await update.message.reply_text("❌ Universal chat ushbu guruhda o'chirildi.")
+    storage.set_group_active(chat.id, False)
+    await update.message.reply_text(
+        "❌ Universal chat ushbu guruhda o'chirildi.\n"
+        "Bu holat doimiy saqlanadi — bot qayta deploy qilinsa ham shu guruhda "
+        "o'chirilgan holicha qoladi, /yoqish bilan qayta yoqmaguningizcha."
+    )
+
+
+async def my_chat_member_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Bot biror guruhga QO'SHILGANDA (yoki admin qilinganda) chaqiriladi.
+    Standart holat allaqachon FAOL (storage.is_group_active default=True),
+    shuning uchun bu yerda alohida yozish shart emas — faqat guruhga
+    xabar berib qo'yamiz, shu bilan birga agar bu guruh AVVAL /ochirish
+    bilan o'chirilgan bo'lsa (masalan bot chiqarilib qayta qo'shilgan bo'lsa),
+    o'sha "o'chirilgan" holat ATAYLAB o'zgartirilmaydi — chunki guruh buni
+    ongli ravishda o'chirgan bo'lishi mumkin."""
+    result = update.my_chat_member
+    if not result:
+        return
+    chat = result.chat
+    if chat.type not in ("group", "supergroup"):
+        return
+
+    old_status = result.old_chat_member.status
+    new_status = result.new_chat_member.status
+    bot_just_added = old_status in ("left", "kicked") and new_status in ("member", "administrator")
+    if not bot_just_added:
+        return
+
+    active = storage.is_group_active(chat.id)
+    status_label = "FAOL" if active else "O'CHIRILGAN"
+    logger.info(f"👥 Bot guruhga qo'shildi: chat_id={chat.id}, chat_title='{chat.title}', joriy holat={status_label}.")
+
+    if active:
+        try:
+            await context.bot.send_message(
+                chat.id,
+                "👋 Salom! Men shu guruhda *Universal chat* rejimida FAOL holatda ishga tushdim.\n\n"
+                "Menga murojaat qilish uchun xabaringizda *dase* so'zini ishlating "
+                "(masalan: \"dase bugun qanaqa kun\") yoki mening xabarimga reply qiling.\n\n"
+                "Agar meni shu guruhda o'chirib qo'ymoqchi bo'lsangiz — /ochirish, "
+                "qayta yoqish uchun — /yoqish buyrug'ini yuboring.\n\n"
+                "⚠️ Eslatma: barcha xabarlarni ko'rishim uchun @BotFather orqali "
+                "\"Group Privacy\" sozlamasini o'chirib qo'yish kerak bo'lishi mumkin.",
+                parse_mode=ParseMode.MARKDOWN,
+            )
+        except Exception as e:
+            logger.warning(f"Guruhga xush kelibsiz xabarini yuborib bo'lmadi: {e}")
 
 
 async def back_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
