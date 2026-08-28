@@ -29,9 +29,25 @@ MENU_CALLBACKS = {
     "remind": "⏰ Eslatmalar",
 }
 
+# 💳 Balans/to'lov tugmalari — asosiy menyuning yuqori qismida, boshqalardan
+# ALOHIDA qatorda ko'rsatiladi (main_menu_keyboard()ga qarang), shuning
+# uchun MENU_CALLBACKS ichida EMAS (u pastdagi 2 ustunli funksiyalar
+# panjarasi uchun ishlatiladi).
+WALLET_MENU_CALLBACKS = {
+    "wallet_balance": "💰 Balansim",
+    "wallet_topup": "➕ Balansni to'ldirish",
+    "wallet_history": "🧾 To'lovlar tarixi",
+}
+
 
 def main_menu_keyboard() -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton("💬 UNIVERSAL CHAT", callback_data="menu:universal")]]
+    wallet_items = list(WALLET_MENU_CALLBACKS.items())
+    for i in range(0, len(wallet_items), 2):
+        rows.append([
+            InlineKeyboardButton(label, callback_data=f"menu:{key}")
+            for key, label in wallet_items[i:i + 2]
+        ])
     items = list(MENU_CALLBACKS.items())
     for i in range(0, len(items), 2):
         row = [InlineKeyboardButton(label, callback_data=f"menu:{key}") for key, label in items[i:i + 2]]
