@@ -3,8 +3,12 @@
 asosiy matn handler.
 
 - Shaxsiy chatda: barcha xabarlarga javob beradi (avvalgidek).
-- Guruhda: faqat /yoqish bilan faollashtirilgandan keyin, va faqat xabarda
-  "dase" so'zi ishlatilganda YOKI botning oldingi xabariga reply qilinganda javob beradi.
+- Guruhda: STANDART holatda FAOL (bot guruhga qo'shilgan zahoti ishlaydi),
+  faqat xabarda "dase" so'zi ishlatilganda YOKI botning oldingi xabariga
+  reply qilinganda javob beradi. Agar guruh /ochirish bilan buni ANIQ
+  o'chirsa, bu holat doimiy saqlanadi (Upstash/app_data.json) — bot qayta
+  deploy qilinsa ham o'sha guruhda o'chirilgan holicha qoladi (/yoqish bilan
+  qayta yoqilmaguncha).
 - Suhbat tarixi har bir chat uchun saqlanadi (oxirgi bir necha savol-javob) —
   shu orqali bot oldingi savollarni "eslab qoladi".
 - Agar xabarda boshqa funksiyaga tegishli buyruq va yetarli ma'lumot bo'lsa,
@@ -25,6 +29,7 @@ from ai_clients import ask_ai
 from pdf_tools import build_course_work_pdf, count_pdf_pages
 from handlers.menu import main_menu_keyboard, MENU_CALLBACKS
 from handlers import course_work
+import storage
 
 logger = logging.getLogger(__name__)
 
@@ -69,8 +74,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text.strip()
 
     if is_group:
-        if not context.chat_data.get("group_active", False):
-            return  # guruhda universal chat hali yoqilmagan
+        # Doimiy saqlashdan o'qiladi (Upstash/app_data.json) — deploy/restart
+        # bo'lsa ham yo'qolmaydi. Standart holat: FAOL (True). Guruh /ochirish
+        # bilan buni ANIQ o'chirmagan bo'lsa, bot javob beraveradi.
+        if not storage.is_group_active(chat.id):
+            return  # ushbu guruh o'chirib qo'ygan — deploy bo'lsa ham o'chgan qoladi
 
         is_reply_to_bot = bool(
             update.message.reply_to_message
