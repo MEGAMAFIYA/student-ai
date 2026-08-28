@@ -28,10 +28,12 @@ from telegram.ext import (
 
 import config
 from config import TELEGRAM_TOKEN
+import wallet
+import payment_providers
 from handlers import (
     menu, universal_chat, course_work, translate as translate_handler, images_to_pdf,
     edit_pdf, guide, inline_query, developer, pptx_gen, essay, quiz, solve, summarize,
-    grammar, citation, my_files, reminders, voice,
+    grammar, citation, my_files, reminders, voice, wallet_ui,
 )
 from pdf_tools import make_pdf
 
@@ -153,6 +155,67 @@ class HealthHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         return
 
+    def do_POST(self):
+        """💳 Kapitalbank (yoki kelajakda boshqa provider) TO'LOV WEBHOOK'i
+        shu yerga keladi (PUBLIC_BASE_URL + '/webhook/kapitalbank').
+
+        MUHIM: bu HTTP server ALOHIDA OS thread'da ishlaydi (asyncio event
+        loop'dan tashqarida) — shuning uchun wallet.py/payment_providers.py
+        FAQAT sinxron (threading.Lock asosidagi) funksiyalardan iborat
+        qilib ATAYLAB shunday loyihalangan, shu orqali bu yerdan to'g'ridan
+        to'g'ri, xavfsiz chaqirish mumkin.
+
+        Haqiqiy imzo tekshiruvi va JSON maydon nomlari hali Kapitalbank
+        rasmiy hujjatiga asoslanmagan (payment_providers.py'dagi TODO'larga
+        qarang) — shuning uchun bu endpoint hozircha faqat "sozlanmagan"
+        holatda ishlaydi va har doim xavfsiz tarzda rad javobi qaytaradi."""
+        if self.path != "/webhook/kapitalbank":
+            self.send_response(404)
+            self.end_headers()
+            return
+
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            raw_body = self.rfile.read(length) if length > 0 else b""
+            headers = {k: v for k, v in self.headers.items()}
+
+            provider = payment_providers.get_ecommerce_provider()
+            if not provider.verify_webhook_signature(headers, raw_body):
+                logger.warning("💳 Kapitalbank webhook: imzo tekshiruvidan o'tmadi yoki sozlanmagan — rad etildi.")
+                self.send_response(403)
+                self.end_headers()
+                self.wfile.write(b'{"status":"invalid_signature"}')
+                return
+
+            event = provider.parse_webhook(raw_body)
+            if not event.ok:
+                logger.error(f"💳 Kapitalbank webhook: parse xato — {event.error}")
+                self.send_response(400)
+                self.end_headers()
+                self.wfile.write(b'{"status":"parse_error"}')
+                return
+
+            if event.status == "success":
+                if event.provider_transaction_id:
+                    try:
+                        wallet.register_provider_transaction(event.payment_id, provider.name, event.provider_transaction_id)
+                    except wallet.DuplicateTransactionError as e:
+                        logger.warning(f"💳 Kapitalbank webhook: DUPLICATE tranzaksiya — {e}")
+                        self.send_response(200)
+                        self.end_headers()
+                        self.wfile.write(b'{"status":"already_used"}')
+                        return
+                wallet.confirm_payment(event.payment_id, actor_id="kapitalbank_webhook", source="webhook")
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"status":"ok"}')
+        except Exception as e:
+            logger.error(f"💳 Kapitalbank webhook qayta ishlashda xato: {type(e).__name__}: {e}", exc_info=True)
+            self.send_response(500)
+            self.end_headers()
+
 
 def start_health_server():
     global _PLACEHOLDER_PDF_BYTES
@@ -172,7 +235,7 @@ def start_health_server():
 
 def build_course_work_conv():
     return ConversationHandler(
-        entry_points=[CallbackQueryHandler(course_work.entry, pattern="^menu:course_work$")],
+        entry_points=[CallbackQueryHandler(wallet_ui.require_payment("course_work")(course_work.entry), pattern="^menu:course_work$")],
         states={
             course_work.CW_PAGES: [MessageHandler(filters.TEXT & ~filters.COMMAND, course_work.receive_pages)],
             course_work.CW_TOPIC: [MessageHandler(filters.TEXT & ~filters.COMMAND, course_work.receive_topic_and_generate)],
@@ -184,7 +247,7 @@ def build_course_work_conv():
 
 def build_translate_conv():
     return ConversationHandler(
-        entry_points=[CallbackQueryHandler(translate_handler.entry, pattern="^menu:translate$")],
+        entry_points=[CallbackQueryHandler(wallet_ui.require_payment("translate")(translate_handler.entry), pattern="^menu:translate$")],
         states={
             translate_handler.TR_WAIT_CONTENT: [
                 MessageHandler((filters.TEXT | filters.Document.PDF) & ~filters.COMMAND, translate_handler.receive_content)
@@ -203,7 +266,7 @@ def build_translate_conv():
 
 def build_images_pdf_conv():
     return ConversationHandler(
-        entry_points=[CallbackQueryHandler(images_to_pdf.entry, pattern="^menu:images_pdf$")],
+        entry_points=[CallbackQueryHandler(wallet_ui.require_payment("images_pdf")(images_to_pdf.entry), pattern="^menu:images_pdf$")],
         states={
             images_to_pdf.IMG_COLLECTING: [
                 MessageHandler(filters.PHOTO, images_to_pdf.receive_photo),
@@ -217,7 +280,7 @@ def build_images_pdf_conv():
 
 def build_edit_pdf_conv():
     return ConversationHandler(
-        entry_points=[CallbackQueryHandler(edit_pdf.entry, pattern="^menu:edit_pdf$")],
+        entry_points=[CallbackQueryHandler(wallet_ui.require_payment("edit_pdf")(edit_pdf.entry), pattern="^menu:edit_pdf$")],
         states={
             edit_pdf.EP_WAIT_PDF: [MessageHandler(filters.Document.PDF, edit_pdf.receive_pdf)],
             edit_pdf.EP_WAIT_INSTRUCTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_pdf.receive_instruction)],
@@ -229,7 +292,7 @@ def build_edit_pdf_conv():
 
 def build_guide_conv():
     return ConversationHandler(
-        entry_points=[CallbackQueryHandler(guide.entry, pattern="^menu:guide$")],
+        entry_points=[CallbackQueryHandler(wallet_ui.require_payment("guide")(guide.entry), pattern="^menu:guide$")],
         states={
             guide.GD_COLLECTING: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, guide.receive_questions),
@@ -243,7 +306,7 @@ def build_guide_conv():
 
 def build_pptx_conv():
     return ConversationHandler(
-        entry_points=[CallbackQueryHandler(pptx_gen.entry, pattern="^menu:pptx$")],
+        entry_points=[CallbackQueryHandler(wallet_ui.require_payment("pptx")(pptx_gen.entry), pattern="^menu:pptx$")],
         states={
             pptx_gen.PX_TOPIC: [MessageHandler(filters.TEXT & ~filters.COMMAND, pptx_gen.receive_topic)],
             pptx_gen.PX_COUNT: [CallbackQueryHandler(pptx_gen.receive_count, pattern="^pptx:count:")],
@@ -255,7 +318,7 @@ def build_pptx_conv():
 
 def build_essay_conv():
     return ConversationHandler(
-        entry_points=[CallbackQueryHandler(essay.entry, pattern="^menu:essay$")],
+        entry_points=[CallbackQueryHandler(wallet_ui.require_payment("essay")(essay.entry), pattern="^menu:essay$")],
         states={
             essay.ES_TYPE: [CallbackQueryHandler(essay.receive_type, pattern="^essay:type:")],
             essay.ES_PAGES: [MessageHandler(filters.TEXT & ~filters.COMMAND, essay.receive_pages)],
@@ -268,7 +331,7 @@ def build_essay_conv():
 
 def build_quiz_conv():
     return ConversationHandler(
-        entry_points=[CallbackQueryHandler(quiz.entry, pattern="^menu:quiz$")],
+        entry_points=[CallbackQueryHandler(wallet_ui.require_payment("quiz")(quiz.entry), pattern="^menu:quiz$")],
         states={
             quiz.QZ_TOPIC: [MessageHandler(filters.TEXT & ~filters.COMMAND, quiz.receive_topic)],
             quiz.QZ_COUNT: [CallbackQueryHandler(quiz.receive_count, pattern="^quiz:count:")],
@@ -283,7 +346,7 @@ def build_quiz_conv():
 
 def build_solve_conv():
     return ConversationHandler(
-        entry_points=[CallbackQueryHandler(solve.entry, pattern="^menu:solve$")],
+        entry_points=[CallbackQueryHandler(wallet_ui.require_payment("solve")(solve.entry), pattern="^menu:solve$")],
         states={
             solve.SV_WAIT: [
                 MessageHandler(filters.PHOTO, solve.receive_photo),
@@ -297,7 +360,7 @@ def build_solve_conv():
 
 def build_summarize_conv():
     return ConversationHandler(
-        entry_points=[CallbackQueryHandler(summarize.entry, pattern="^menu:summarize$")],
+        entry_points=[CallbackQueryHandler(wallet_ui.require_payment("summarize")(summarize.entry), pattern="^menu:summarize$")],
         states={
             summarize.SM_WAIT: [
                 MessageHandler((filters.TEXT | filters.Document.PDF) & ~filters.COMMAND, summarize.receive_content),
@@ -310,7 +373,7 @@ def build_summarize_conv():
 
 def build_grammar_conv():
     return ConversationHandler(
-        entry_points=[CallbackQueryHandler(grammar.entry, pattern="^menu:grammar$")],
+        entry_points=[CallbackQueryHandler(wallet_ui.require_payment("grammar")(grammar.entry), pattern="^menu:grammar$")],
         states={
             grammar.GR_WAIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, grammar.receive_text)],
         },
@@ -321,7 +384,7 @@ def build_grammar_conv():
 
 def build_citation_conv():
     return ConversationHandler(
-        entry_points=[CallbackQueryHandler(citation.entry, pattern="^menu:citation$")],
+        entry_points=[CallbackQueryHandler(wallet_ui.require_payment("citation")(citation.entry), pattern="^menu:citation$")],
         states={
             citation.CT_FORMAT: [CallbackQueryHandler(citation.receive_format, pattern="^cite:fmt:")],
             citation.CT_TYPE: [CallbackQueryHandler(citation.receive_type, pattern="^cite:type:")],
@@ -350,6 +413,24 @@ def build_reminders_conv():
         fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
         name="reminders_conv",
         allow_reentry=True,
+    )
+
+
+def build_wallet_topup_conv():
+    """➕ Balansni to'ldirish — summa tanlash -> to'lov usuli -> (bank/manual
+    uchun) chek qabul qilish. E-commerce usulida chek kutish shart emas —
+    to'lov havolasi ko'rsatilgach conversation darhol tugaydi (haqiqiy
+    to'lov Kapitalbank'ning o'z sahifasida, webhook orqali tasdiqlanadi)."""
+    return ConversationHandler(
+        entry_points=[CallbackQueryHandler(wallet_ui.entry_topup, pattern="^menu:wallet_topup$")],
+        states={
+            wallet_ui.WT_AMOUNT: [CallbackQueryHandler(wallet_ui.amount_chosen, pattern="^wallet:amt:")],
+            wallet_ui.WT_CUSTOM_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, wallet_ui.custom_amount_received)],
+            wallet_ui.WT_METHOD: [CallbackQueryHandler(wallet_ui.method_chosen, pattern="^wallet:method:")],
+            wallet_ui.WT_RECEIPT: [MessageHandler(filters.PHOTO | filters.Document.ALL, wallet_ui.receive_receipt)],
+        },
+        fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
+        name="wallet_topup_conv",
     )
 
 
@@ -462,10 +543,15 @@ def main():
     app.add_handler(build_edit_pdf_conv())
     app.add_handler(build_guide_conv())
     app.add_handler(build_reminders_conv())
+    app.add_handler(build_wallet_topup_conv())
     app.add_handler(build_developer_conv())
 
     app.add_handler(CallbackQueryHandler(menu.universal_selected, pattern="^menu:universal$"))
     app.add_handler(CallbackQueryHandler(menu.back_to_menu, pattern="^menu:back$"))
+
+    # 💰 Balansim / 🧾 To'lovlar tarixi — conversation emas, oddiy callback
+    app.add_handler(CallbackQueryHandler(wallet_ui.entry_balance, pattern="^menu:wallet_balance$"))
+    app.add_handler(CallbackQueryHandler(wallet_ui.entry_history, pattern="^menu:wallet_history$"))
 
     # 🗂 Mening fayllarim — conversation emas, oddiy callback (ro'yxat + qayta yuborish)
     app.add_handler(CallbackQueryHandler(my_files.entry, pattern="^menu:myfiles$"))
