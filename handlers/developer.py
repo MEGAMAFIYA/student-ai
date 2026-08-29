@@ -174,6 +174,7 @@ def _main_menu_keyboard() -> InlineKeyboardMarkup:
     rows.append([InlineKeyboardButton("📊 Statistika", callback_data="dev:stats")])
     rows.append([InlineKeyboardButton("💳 To'lovlar", callback_data="dev:pay"),
                  InlineKeyboardButton("💰 Balanslar", callback_data="dev:paybal")])
+    rows.append([InlineKeyboardButton("📈 Moliyaviy statistika", callback_data="dev:finstats")])
     rows.append([InlineKeyboardButton("⚙️ Funksiya narxlari", callback_data="dev:payprice"),
                  InlineKeyboardButton("💳 To'lov sozlamalari", callback_data="dev:paysettings")])
     rows.append([InlineKeyboardButton("❌ Yopish", callback_data="dev:close")])
@@ -673,6 +674,15 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ---------- 💰 Balanslar ----------
     if action == "paybal":
         await _safe_edit_query(query, pay_ui.balances_text(), reply_markup=pay_ui.balances_keyboard(), parse_mode="HTML")
+        return DEV_MENU
+
+    # ---------- 📈 Moliyaviy statistika ----------
+    if action == "finstats":
+        await _safe_edit_query(query, pay_ui.financial_stats_text(), reply_markup=pay_ui.financial_stats_keyboard(), parse_mode="HTML")
+        return DEV_MENU
+
+    if action == "resactive":
+        await _safe_edit_query(query, pay_ui.active_reservations_text(), reply_markup=pay_ui.active_reservations_keyboard(), parse_mode="HTML")
         return DEV_MENU
 
     if action == "balsearch":
