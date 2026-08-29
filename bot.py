@@ -7,8 +7,13 @@ health-check server ham ishga tushiriladi.
 """
 
 import asyncio
+import base64
+import json
 import logging
+import mimetypes
 import os
+import tempfile
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
@@ -30,10 +35,11 @@ import config
 from config import TELEGRAM_TOKEN
 import wallet
 import payment_providers
+import webapp_security
 from handlers import (
     menu, universal_chat, course_work, translate as translate_handler, images_to_pdf,
     edit_pdf, guide, inline_query, developer, pptx_gen, essay, quiz, solve, summarize,
-    grammar, citation, my_files, reminders, voice, wallet_ui,
+    grammar, citation, my_files, reminders, voice, wallet_ui, tabrik, rasim,
 )
 from pdf_tools import make_pdf
 
@@ -53,6 +59,8 @@ logger = logging.getLogger(__name__)
 
 BOT_COMMANDS = [
     BotCommand("start", "Botni ishga tushirish / asosiy menyu"),
+    BotCommand("tabrik", "🎁 Chiroyli tabrik xabari yuborish"),
+    BotCommand("rasim", "🎨 Mini App orqali rasm chizish"),
     BotCommand("yoqish", "Guruhda Universal chatni yoqish"),
     BotCommand("ochirish", "Guruhda Universal chatni o'chirish"),
     BotCommand("cancel", "Joriy amalni bekor qilish"),
@@ -132,6 +140,168 @@ def _build_placeholder_pdf() -> bytes:
         return b""
 
 
+# ============================================================
+# 🎨 /rasim MINI APP — statik fayllarni xizmat qilish + rasm yuklash
+# ============================================================
+# MUHIM: bu HTTP server ALOHIDA OS thread'da ishlaydi (yuqoridagi
+# Kapitalbank webhook izohiga qarang), lekin rasmni Telegram'ga
+# YUBORISH uchun asyncio Bot obyekti (asosiy event loop) kerak — shuning
+# uchun `_MAIN_LOOP`/`_BOT_INSTANCE` global o'zgaruvchilarga `main()`
+# ichida `app`/`loop` tayyor bo'lgach yoziladi, bu yerdan esa
+# `asyncio.run_coroutine_threadsafe()` orqali xavfsiz chaqiriladi.
+_MAIN_LOOP = None
+_BOT_INSTANCE = None
+
+_WEBAPP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webapp", "rasim")
+_WEBAPP_STATIC_FILES = {
+    "/miniapp/rasim/": "index.html",
+    "/miniapp/rasim/index.html": "index.html",
+    "/miniapp/rasim/style.css": "style.css",
+    "/miniapp/rasim/app.js": "app.js",
+}
+_WEBAPP_MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MB — Mini App rasm yuklash chegarasi
+_WEBAPP_UPLOAD_TMP_DIR = os.path.join(tempfile.gettempdir(), "rasim_uploads")
+
+
+def _serve_webapp_static(handler: "HealthHandler", path: str) -> bool:
+    """`/miniapp/rasim/...` ostidagi statik fayllarni xizmat qiladi.
+    Mos fayl topilmasa False qaytaradi (chaqiruvchi 404 qaytarsin)."""
+    filename = _WEBAPP_STATIC_FILES.get(path)
+    if not filename:
+        return False
+    file_path = os.path.join(_WEBAPP_DIR, filename)
+    try:
+        with open(file_path, "rb") as f:
+            body = f.read()
+    except OSError:
+        return False
+    content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    handler.send_response(200)
+    handler.send_header("Content-Type", content_type + ("; charset=utf-8" if content_type.startswith("text") or filename.endswith(".js") else ""))
+    handler.send_header("Content-Length", str(len(body)))
+    # Mini App fayllari tez-tez o'zgarmaydi, lekin ishlab chiqish paytida
+    # eskirgan versiyani ko'rsatib qolmasligi uchun keshni cheklaymiz.
+    handler.send_header("Cache-Control", "no-cache")
+    handler.end_headers()
+    handler.wfile.write(body)
+    return True
+
+
+def _decode_data_url_image(data_url: str) -> bytes | None:
+    """`data:image/png;base64,....` ko'rinishidagi satrni dekodlaydi va
+    HAQIQIY PNG ekanini (magic bytes orqali) tekshiradi — front-end
+    yuborgan Content-Type'ga (spoof qilinishi mumkin) ishonilmaydi."""
+    try:
+        header, b64data = data_url.split(",", 1)
+    except (ValueError, AttributeError):
+        return None
+    if "image/png" not in header and "image/jpeg" not in header:
+        return None
+    try:
+        raw = base64.b64decode(b64data, validate=True)
+    except Exception:
+        return None
+    if len(raw) > _WEBAPP_MAX_UPLOAD_BYTES:
+        return None
+    is_png = raw.startswith(b"\x89PNG\r\n\x1a\n")
+    is_jpeg = raw.startswith(b"\xff\xd8\xff")
+    if not (is_png or is_jpeg):
+        return None
+    return raw
+
+
+def _handle_rasim_upload(handler: "HealthHandler") -> None:
+    """POST /miniapp/rasim/upload — Mini App'dan chizilgan rasmni qabul
+    qiladi, Telegram initData'ni tasdiqlaydi, bitta martalik `rid`
+    tokeni orqali TO'G'RI chatni aniqlaydi va rasmni o'sha chatga
+    yuboradi. Har bir qadam mustaqil ravishda rad etilishi mumkin —
+    hech qanday bosqichda boshqa foydalanuvchining fayli/chatiga
+    kirish imkoni yo'q."""
+    def _json_error(status: int, message: str) -> None:
+        body = json.dumps({"ok": False, "error": message}).encode("utf-8")
+        handler.send_response(status)
+        handler.send_header("Content-Type", "application/json; charset=utf-8")
+        handler.send_header("Content-Length", str(len(body)))
+        handler.end_headers()
+        handler.wfile.write(body)
+
+    try:
+        length = int(handler.headers.get("Content-Length", 0))
+    except ValueError:
+        length = 0
+    if length <= 0 or length > _WEBAPP_MAX_UPLOAD_BYTES * 2:  # base64 ~1.34x kattaroq
+        _json_error(413, "Fayl juda katta.")
+        return
+
+    try:
+        raw_body = handler.rfile.read(length)
+        payload = json.loads(raw_body.decode("utf-8"))
+    except Exception:
+        _json_error(400, "Noto'g'ri so'rov.")
+        return
+
+    rid = payload.get("rid")
+    init_data = payload.get("init_data")
+    image_data_url = payload.get("image")
+    if not rid or not init_data or not image_data_url:
+        _json_error(400, "To'liq bo'lmagan so'rov.")
+        return
+
+    verified_user = webapp_security.verify_telegram_init_data(init_data, TELEGRAM_TOKEN)
+    if not verified_user:
+        logger.warning("🎨 /rasim upload: initData tasdiqlanmadi (imzo mos kelmadi yoki eskirgan).")
+        _json_error(403, "Tasdiqlashda xatolik. Mini App'ni qayta oching.")
+        return
+
+    chat_id = webapp_security.consume_request(rid, verified_user_id=verified_user["id"])
+    if chat_id is None:
+        logger.warning(f"🎨 /rasim upload: rid yaroqsiz/eskirgan/ishlatilgan (user_id={verified_user['id']}).")
+        _json_error(410, "So'rov muddati o'tgan. /rasim buyrug'ini qayta yuboring.")
+        return
+
+    image_bytes = _decode_data_url_image(image_data_url)
+    if image_bytes is None:
+        _json_error(400, "Rasm formati noto'g'ri yoki juda katta.")
+        return
+
+    if _MAIN_LOOP is None or _BOT_INSTANCE is None:
+        logger.error("🎨 /rasim upload: bot hali to'liq ishga tushmagan.")
+        _json_error(503, "Server hali tayyor emas, birozdan so'ng urinib ko'ring.")
+        return
+
+    os.makedirs(_WEBAPP_UPLOAD_TMP_DIR, exist_ok=True)
+    tmp_path = os.path.join(_WEBAPP_UPLOAD_TMP_DIR, f"{uuid.uuid4().hex}.png")
+    try:
+        with open(tmp_path, "wb") as f:
+            f.write(image_bytes)
+
+        async def _send():
+            with open(tmp_path, "rb") as fh:
+                await _BOT_INSTANCE.send_photo(chat_id, photo=fh, caption="🎨 Mini App orqali chizilgan rasm.")
+
+        future = asyncio.run_coroutine_threadsafe(_send(), _MAIN_LOOP)
+        future.result(timeout=30)  # HTTP javobini foydalanuvchi kutayotgani uchun sinxron kutamiz
+    except Exception as e:
+        logger.error(f"🎨 /rasim rasmni yuborishda xato (chat_id={chat_id}): {type(e).__name__}: {e}", exc_info=True)
+        _json_error(502, "Rasmni yuborishda xatolik yuz berdi.")
+        return
+    finally:
+        # 🧹 Vaqtinchalik fayl albatta o'chiriladi — muvaffaqiyatli
+        # yuborilgan yoki yubormaganida ham diskni ifloslantirmasligi kerak.
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+
+    logger.info(f"🎨 Mini App rasmi yuborildi: chat_id={chat_id}, user_id={verified_user['id']}.")
+    body = json.dumps({"ok": True}).encode("utf-8")
+    handler.send_response(200)
+    handler.send_header("Content-Type", "application/json; charset=utf-8")
+    handler.send_header("Content-Length", str(len(body)))
+    handler.end_headers()
+    handler.wfile.write(body)
+
+
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == _PLACEHOLDER_PDF_PATH and _PLACEHOLDER_PDF_BYTES:
@@ -140,6 +310,17 @@ class HealthHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(_PLACEHOLDER_PDF_BYTES)))
             self.end_headers()
             self.wfile.write(_PLACEHOLDER_PDF_BYTES)
+            return
+
+        if self.path.startswith("/miniapp/rasim"):
+            from urllib.parse import urlsplit
+            path = urlsplit(self.path).path
+            if path == "/miniapp/rasim":
+                path = "/miniapp/rasim/"
+            if _serve_webapp_static(self, path):
+                return
+            self.send_response(404)
+            self.end_headers()
             return
 
         self.send_response(200)
@@ -156,19 +337,12 @@ class HealthHandler(BaseHTTPRequestHandler):
         return
 
     def do_POST(self):
-        """💳 Kapitalbank (yoki kelajakda boshqa provider) TO'LOV WEBHOOK'i
-        shu yerga keladi (PUBLIC_BASE_URL + '/webhook/kapitalbank').
+        """💳 Kapitalbank to'lov webhook'i VA 🎨 /rasim Mini App rasm
+        yuklash so'rovi shu yerga keladi."""
+        if self.path == "/miniapp/rasim/upload":
+            _handle_rasim_upload(self)
+            return
 
-        MUHIM: bu HTTP server ALOHIDA OS thread'da ishlaydi (asyncio event
-        loop'dan tashqarida) — shuning uchun wallet.py/payment_providers.py
-        FAQAT sinxron (threading.Lock asosidagi) funksiyalardan iborat
-        qilib ATAYLAB shunday loyihalangan, shu orqali bu yerdan to'g'ridan
-        to'g'ri, xavfsiz chaqirish mumkin.
-
-        Haqiqiy imzo tekshiruvi va JSON maydon nomlari hali Kapitalbank
-        rasmiy hujjatiga asoslanmagan (payment_providers.py'dagi TODO'larga
-        qarang) — shuning uchun bu endpoint hozircha faqat "sozlanmagan"
-        holatda ishlaydi va har doim xavfsiz tarzda rad javobi qaytaradi."""
         if self.path != "/webhook/kapitalbank":
             self.send_response(404)
             self.end_headers()
@@ -520,10 +694,24 @@ def main():
     loop = asyncio.get_event_loop()
     loop.set_default_executor(ThreadPoolExecutor(max_workers=CONCURRENT_UPDATES))
 
+    # 🎨 /rasim Mini App'ining upload endpoint'i (alohida HTTP thread'da)
+    # rasmni Telegram'ga yuborish uchun shu bot instansi/asosiy event
+    # loop'ga muhtoj — yuqoridagi HealthHandler.do_POST'ga qarang.
+    global _MAIN_LOOP, _BOT_INSTANCE
+    _MAIN_LOOP = loop
+    _BOT_INSTANCE = app.bot
+
     app.add_handler(CommandHandler("start", menu.start_cmd))
     app.add_handler(CommandHandler("cancel", menu.cancel_cmd))
     app.add_handler(CommandHandler("yoqish", menu.group_enable_cmd))
     app.add_handler(CommandHandler("ochirish", menu.group_disable_cmd))
+    # 🎁 /tabrik — private va group ikkalasida ham (filtersiz CommandHandler
+    # standart holatda BARCHA chat turlarida ishlaydi, shu jumladan
+    # "/tabrik@Student_ai_uz_bot ..." formatida ham).
+    app.add_handler(CommandHandler("tabrik", tabrik.tabrik_cmd))
+    app.add_handler(CallbackQueryHandler(tabrik.tabrik_claim_callback, pattern="^tabrik:claim:"))
+    # 🎨 /rasim — Telegram Mini App orqali rasm chizish.
+    app.add_handler(CommandHandler("rasim", rasim.rasim_cmd))
     # Bot biror guruhga QO'SHILGANDA avtomatik xush kelibsiz xabari va
     # standart FAOL holatni bildirish uchun (guruh holati doimiy
     # saqlanadi — batafsili storage.py > "Guruhlarda Universal chat holati").
