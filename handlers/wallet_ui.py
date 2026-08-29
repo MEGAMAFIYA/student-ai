@@ -472,31 +472,55 @@ async def notify_user_payment_decision(bot, payment: dict, approved: bool, reaso
 # 🔒 "To'lov devori" dekoratori — bot.py'da har bir pullik funksiyaning
 # ENTRY nuqtasini (menyu tugmasi bosilgan payt) o'rab oladi.
 # ============================================================
-# MUHIM ARXITEKTURA QARORI: to'lov aynan shu yerda — funksiya "ISHGA
-# TUSHIRILGANDA" (foydalanuvchi menyudan tugmani bosgan zahoti, HALI
-# hech qanday ma'lumot (mavzu, sahifa soni va h.k.) so'ralmasdan turib)
-# yechiladi. Bu spetsifikatsiyadagi "Foydalanuvchi pullik funksiyani
-# ishga tushirganda" iborasiga aynan mos keladi va BARCHA funksiyalar
-# uchun BITTA joyda (bot.py) qo'llaniladi — shuning uchun har bir
-# alohida handler faylini (course_work.py, essay.py va h.k.) o'zgartirish
-# SHART emas, mavjud kod BUTUNLAY saqlanib qoladi.
+# MUHIM ARXITEKTURA QARORI (RESERVATION/HOLD tizimi): endi funksiya
+# "ISHGA TUSHIRILGANDA" pul DARHOL yechilmaydi — buning o'rniga
+# wallet.reserve_for_feature() orqali summa faqat "band qilinadi"
+# (status='reserved'). Balansdan HAQIQIY yechish faqat xizmat/AI
+# MUVAFFAQIYATLI yakunlangandan keyin `finalize_success()` chaqirilganda
+# sodir bo'ladi. Xizmat xato qilsa yoki bekor qilinsa `finalize_failure()`
+# chaqiriladi — pul balansga umuman tegilmagani uchun "qaytarish" fizik
+# jihatdan shart emas, faqat bandlik olib tashlanadi.
 #
-# Race condition himoyasi: wallet.charge_for_feature() ICHKARIDA
+# Har bir alohida handler (course_work.py, essay.py, pptx_gen.py va h.k.)
+# o'zining ANIQ yakunlanish (muvaffaqiyat/xato) nuqtasida
+# `wallet_ui.finalize_success(context)` yoki
+# `wallet_ui.finalize_failure(context, update=update)` ni chaqirishi kerak
+# — reservation_id context.user_data['_reservation'] ichida saqlanadi,
+# shuning uchun handler kodida reservation_id'ni o'zi hisoblab
+# yurishi shart emas.
+#
+# CRASH SAFETY: agar handler HECH QACHON finalize_* chaqirmasa (masalan
+# process crash bo'lsa, yoki foydalanuvchi suhbatni tark etsa), reservation
+# wallet.py ichida RESERVATION_TTL_SECONDS o'tgach avtomatik "expired"ga
+# o'tadi va band qilingan pul yana ishlatish uchun ochiladi (orphaned
+# reservation abadiy qolib ketmaydi) — bunga hech qanday qo'shimcha kod
+# kerak emas, chunki bu wallet.py'ning barcha o'qish funksiyalarida LAZY
+# tarzda avtomatik bajariladi. Shuning ustiga: har bir ConversationHandler
+# uchun bot.py'da `conversation_timeout` + `fallbacks` (pastga qarang)
+# ORQALI ham, suhbat vaqt tugagach yoki /cancel bilan tashlab ketilgach,
+# ochiq reservation zudlik bilan release qilinadi (20 daqiqalik TTL'ni
+# kutmasdan) — buning uchun `release_dangling_reservation()` dan
+# fallback/timeout handlerlarida foydalaning.
+#
+# Race condition himoyasi: wallet.reserve_balance() ICHKARIDA
 # threading.Lock bilan butunlay atomik — shuning uchun bitta foydalanuvchi
 # bir tugmani juda tez-tez bossa ham (Telegram ba'zan bir nechta bosishni
-# deyarli bir vaqtda yuborishi mumkin), balans FAQAT BIR MARTA yechiladi.
+# deyarli bir vaqtda yuborishi mumkin), summa FAQAT BIR MARTA band qilinadi.
+_RESERVATION_KEY = "_reservation"
+
+
 def require_payment(feature_id: str):
     """Dekorator: `handlers/xxx.py`dagi asl `entry()` funksiyasini
-    o'zgartirmasdan, uni to'lov tekshiruvi bilan o'raydi. Ishlatilishi:
-    `CallbackQueryHandler(require_payment("course_work")(course_work.entry), ...)`
-    — bot.py'dagi conv builder funksiyalarida."""
+    o'zgartirmasdan, uni to'lov (reservation) tekshiruvi bilan o'raydi.
+    Ishlatilishi: `CallbackQueryHandler(require_payment("course_work")
+    (course_work.entry), ...)` — bot.py'dagi conv builder funksiyalarida."""
     def decorator(handler_func):
         @functools.wraps(handler_func)
         async def wrapped(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user = update.effective_user
             query = update.callback_query
 
-            result = wallet.charge_for_feature(user.id, feature_id)
+            result = wallet.reserve_for_feature(user.id, feature_id)
 
             if result.reason == "disabled":
                 if query:
@@ -515,13 +539,125 @@ def require_payment(feature_id: str):
                     )
                 return ConversationHandler.END
 
-            # "free" yoki "charged" — funksiya haqiqatan ishga tushadi
-            if result.reason == "charged":
+            if result.reason == "reserved":
                 logger.info(
-                    f"💳 Pullik funksiya uchun to'lov YECHILDI: feature={feature_id}, "
-                    f"user_id={user.id}, narx={result.price}, yangi balans={result.balance}."
+                    f"🔒 Pullik funksiya uchun summa BAND QILINDI (hali yechilmagan): "
+                    f"feature={feature_id}, user_id={user.id}, narx={result.price}, "
+                    f"reservation_id={result.reservation_id}."
                 )
-            return await handler_func(update, context)
+                context.user_data[_RESERVATION_KEY] = {
+                    "reservation_id": result.reservation_id,
+                    "feature_id": feature_id,
+                    "price": result.price,
+                }
+                # 5-band (UX): funksiya boshlanganda narx/balans ko'rsatiladi.
+                if query:
+                    try:
+                        await query.answer(
+                            f"💰 Narxi: {_fmt_sum(result.price)}   💳 Balans: {_fmt_sum(result.balance)}"
+                        )
+                    except Exception:
+                        pass
+
+            # "free" yoki "reserved" — funksiya haqiqatan ishga tushadi.
+            try:
+                return await handler_func(update, context)
+            except Exception:
+                # Handler ENTRY bosqichida (hali birinchi javob yozilmasdan)
+                # kutilmagan xato bersa — band qilingan summa DARHOL
+                # ozod qilinadi (foydalanuvchi pulsiz qolmasin) va xato
+                # yana yuqoriga uzatiladi (bot.py'dagi umumiy error_handler
+                # buni logga yozadi/adminlarga xabar beradi).
+                if result.reason == "reserved":
+                    await finalize_failure(context, update=update, reason="handler_exception", silent_if_missing=True)
+                raise
 
         return wrapped
     return decorator
+
+
+# ============================================================
+# ✅❌ Reservation yakunlash — handlerlar (course_work.py, essay.py,
+# pptx_gen.py va h.k.) xizmat/AI generatsiyasi HAQIQATAN muvaffaqiyatli
+# yoki muvaffaqiyatsiz tugagan ANIQ nuqtada shularni chaqirishi kerak.
+# ============================================================
+
+def get_active_reservation(context: ContextTypes.DEFAULT_TYPE) -> dict | None:
+    """Joriy suhbatda ochiq (hali finalize qilinmagan) reservation
+    ma'lumotini qaytaradi (yoki bepul/reservationsiz funksiya bo'lsa None)."""
+    return context.user_data.get(_RESERVATION_KEY)
+
+
+async def send_processing_notice(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                                   text: str = "⏳ Xizmat tayyorlanmoqda...") -> None:
+    """Handler AI/xizmat generatsiyasini boshlashdan OLDIN chaqirishi mumkin
+    bo'lgan ixtiyoriy UX xabari (5-band)."""
+    try:
+        if update.callback_query:
+            await update.callback_query.answer()
+        await context.bot.send_message(update.effective_chat.id, text)
+    except Exception as e:
+        logger.warning(f"⏳ 'Xizmat tayyorlanmoqda' xabarini yuborib bo'lmadi: {e}")
+
+
+async def finalize_success(context: ContextTypes.DEFAULT_TYPE, update: Update | None = None,
+                            chat_id: int | None = None, extra_note: str = "") -> bool:
+    """Xizmat/AI MUVAFFAQIYATLI yakunlanganda chaqiriladi — band qilingan
+    summa endi HAQIQATAN balansdan yechiladi va foydalanuvchiga tasdiq
+    xabari yuboriladi (5-band). Bepul funksiya (reservation yo'q) bo'lsa
+    hech narsa qilmaydi (True qaytaradi — "muvaffaqiyatli" holat).
+    IDEMPOTENT: reservation allaqachon yakunlangan bo'lsa qayta hech
+    narsa qilmaydi (wallet.complete_reservation() o'zi buni kafolatlaydi)."""
+    reservation = context.user_data.pop(_RESERVATION_KEY, None)
+    if not reservation:
+        return True  # bepul funksiya edi — to'lov bilan bog'liq hech narsa qilinmaydi
+
+    ok = wallet.complete_reservation(reservation["reservation_id"])
+    price = reservation["price"]
+    chat = chat_id or (update.effective_chat.id if update is not None else None)
+    if ok and chat is not None:
+        text = f"✅ Tayyor!\n💰 {_fmt_sum(price)} yechildi."
+        if extra_note:
+            text += f"\n{extra_note}"
+        try:
+            await context.bot.send_message(chat, text)
+        except Exception as e:
+            logger.warning(f"✅ Muvaffaqiyat xabarini yuborib bo'lmadi: {e}")
+    return ok
+
+
+async def finalize_failure(context: ContextTypes.DEFAULT_TYPE, update: Update | None = None,
+                            chat_id: int | None = None, reason: str = "",
+                            silent_if_missing: bool = False) -> bool:
+    """Xizmat/AI MUVAFFAQIYATSIZ bo'lganda (yoki foydalanuvchi bekor
+    qilganda) chaqiriladi — band qilingan summa OZOD qilinadi (balansga
+    umuman tegilmagani uchun "qaytarish" shart emas, shunchaki bandlik
+    bekor qilinadi) va foydalanuvchiga aniq xabar yuboriladi (5-band).
+    IDEMPOTENT: reservation allaqachon yakunlangan bo'lsa qayta hech
+    narsa qilmaydi."""
+    reservation = context.user_data.pop(_RESERVATION_KEY, None)
+    if not reservation:
+        return not silent_if_missing  # bepul funksiya edi yoki reservation allaqachon yakunlangan
+
+    ok = wallet.release_reservation(reservation["reservation_id"], reason=reason or "xizmat muvaffaqiyatsiz tugadi")
+    price = reservation["price"]
+    chat = chat_id or (update.effective_chat.id if update is not None else None)
+    if ok and chat is not None:
+        text = f"❌ Xizmatni bajarishda xatolik yuz berdi.\n💰 {_fmt_sum(price)} hisobingizga qaytarildi."
+        try:
+            await context.bot.send_message(chat, text)
+        except Exception as e:
+            logger.warning(f"❌ Xato xabarini yuborib bo'lmadi: {e}")
+    return ok
+
+
+async def release_dangling_reservation(context: ContextTypes.DEFAULT_TYPE, reason: str = "conversation_abandoned") -> None:
+    """bot.py'dagi ConversationHandler `fallbacks=`/`conversation_timeout`
+    orqali chaqiriladi — foydalanuvchi suhbatni /cancel qilsa yoki vaqt
+    tugab avtomatik yopilsa, ORQADA "osilib qolgan" reservation (agar
+    bo'lsa) DARHOL ozod qilinadi (20 daqiqalik TTL'ni kutish shart emas).
+    Foydalanuvchiga xabar yubormaydi (jimgina tozalaydi) — chaqiruvchi
+    kerak bo'lsa o'zi xabar beradi."""
+    reservation = context.user_data.pop(_RESERVATION_KEY, None)
+    if reservation:
+        wallet.release_reservation(reservation["reservation_id"], reason=reason)
