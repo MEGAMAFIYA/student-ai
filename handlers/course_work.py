@@ -29,6 +29,7 @@ from config import COURSE_WORK_AI
 from ai_clients import ask_ai
 from pdf_tools import build_course_work_pdf, count_pdf_pages
 from handlers.menu import main_menu_keyboard
+from handlers import wallet_ui
 
 logger = logging.getLogger(__name__)
 
@@ -362,6 +363,10 @@ async def _generate_and_send(update, context, topic: str, pages: int, status):
             "yoki ba'zi bo'limlarni bir necha urinishdan keyin ham to'liq yoza olmadi. "
             "Birozdan so'ng qayta urinib ko'ring."
         )
+        # 💰 Xizmat MUVAFFAQIYATSIZ bo'ldi — band qilingan pul ozod qilinadi
+        # (hech qachon yechilmagani uchun "qaytarish" shart emas, faqat
+        # bandlik bekor qilinadi) va foydalanuvchiga alohida xabar boradi.
+        await wallet_ui.finalize_failure(context, update=update, reason="course_work_generation_failed")
         return
 
     sections, pdf_buf, actual_pages = result
@@ -380,6 +385,9 @@ async def _generate_and_send(update, context, topic: str, pages: int, status):
         await status.delete()
     except Exception:
         pass
+    # 💰 Xizmat MUVAFFAQIYATLI yakunlandi — band qilingan summa endi
+    # HAQIQATAN balansdan yechiladi (avval emas!).
+    await wallet_ui.finalize_success(context, update=update)
 
 
 async def _ask_retry(prompt: str, system: str, attempts: int = RETRY_ATTEMPTS, delay: int = RETRY_DELAY_SEC, raw: bool = False, tag: str = "") -> str | None:
