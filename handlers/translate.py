@@ -15,6 +15,7 @@ from config import TRANSLATE_AI
 from ai_clients import ask_ai
 from pdf_tools import make_pdf, extract_pdf_text
 from handlers.menu import main_menu_keyboard
+from handlers import wallet_ui
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +130,7 @@ async def _do_translate(update, context, target_lang: str, edit_query=None, stat
             "yuqoridagi loglarda ai_clients moduli tomonidan yozilgan bo'lishi kerak."
         )
         await context.bot.send_message(chat_id, "❌ Tarjima qilib bo'lmadi. Qayta urinib ko'ring.", reply_markup=main_menu_keyboard())
+        await wallet_ui.finalize_failure(context, update=update, chat_id=chat_id, reason="translate_ai_failed")
         context.user_data.clear()
         return
 
@@ -171,4 +173,6 @@ async def _do_translate(update, context, target_lang: str, edit_query=None, stat
         except Exception:
             pass
 
+    # 💰 Tarjima muvaffaqiyatli yakunlandi va foydalanuvchiga yetkazildi.
+    await wallet_ui.finalize_success(context, update=update, chat_id=chat_id)
     context.user_data.clear()
