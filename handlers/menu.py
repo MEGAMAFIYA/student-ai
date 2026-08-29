@@ -9,6 +9,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
 
 import storage
+import wallet
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +95,14 @@ async def universal_selected(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def cancel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # 💰 Agar shu suhbat ichida band qilingan (reserved) pul bo'lsa —
+    # /cancel bosilganda DARHOL ozod qilinadi (20 daqiqalik avtomatik
+    # muddat tugashini kutmasdan). Bu BARCHA pullik funksiyalar uchun
+    # (course_work_conv, essay_conv, pptx_conv va h.k.) BITTA umumiy
+    # fallback orqali ishlaydi, chunki hammasi shu cancel_cmd'ni ishlatadi.
+    reservation = context.user_data.get("_reservation")
+    if reservation:
+        wallet.release_reservation(reservation["reservation_id"], reason="user_cancelled")
     context.user_data.clear()
     await update.message.reply_text("❌ Bekor qilindi.", reply_markup=main_menu_keyboard())
     return ConversationHandler.END
