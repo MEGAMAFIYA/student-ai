@@ -23,7 +23,11 @@ import webapp_security
 logger = logging.getLogger(__name__)
 
 
-async def rasim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def rasim_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE, override_text: str | None = None):
+    """`override_text` — /rasim uchun ishlatilmaydi (buyruqdan keyin
+    matn kerak emas), lekin handlers/mention_dispatch.py BARCHA maxsus
+    handlerlarni bir xil signatura bilan chaqirgani uchun shu yerda ham
+    qabul qilinadi (e'tiborsiz qoldiriladi)."""
     if not update.message:
         return
     user = update.effective_user
