@@ -40,6 +40,7 @@ from handlers import (
     menu, universal_chat, course_work, translate as translate_handler, images_to_pdf,
     edit_pdf, guide, inline_query, developer, pptx_gen, essay, quiz, solve, summarize,
     grammar, citation, my_files, reminders, voice, wallet_ui, tabrik, rasim,
+    vid, qoshiq, mention_dispatch,
 )
 from pdf_tools import make_pdf
 
@@ -61,6 +62,11 @@ BOT_COMMANDS = [
     BotCommand("start", "Botni ishga tushirish / asosiy menyu"),
     BotCommand("tabrik", "🎁 Chiroyli tabrik xabari yuborish"),
     BotCommand("rasim", "🎨 Mini App orqali rasm chizish"),
+    BotCommand("vid", "🎬 Video yuklab olish (havola bilan)"),
+    # Eslatma: Telegram "/" buyruqlar ro'yxatida apostrofli nomlarga ruxsat
+    # bermaydi, shuning uchun shu yerda ASCII "qoshiq" ko'rsatiladi — lekin
+    # "/qo'shiq" (apostrof bilan) ham xuddi shunday ishlaydi (handlers/qoshiq.py).
+    BotCommand("qoshiq", "🎵 Qo'shiq qidirish va yuborish"),
     BotCommand("yoqish", "Guruhda Universal chatni yoqish"),
     BotCommand("ochirish", "Guruhda Universal chatni o'chirish"),
     BotCommand("cancel", "Joriy amalni bekor qilish"),
@@ -75,6 +81,17 @@ async def _post_init(application):
     boshqa hech kimga (oddiy foydalanuvchi yoki guruhlarga) ko'rinmaydi."""
     await application.bot.set_my_commands(BOT_COMMANDS, scope=BotCommandScopeDefault())
     await application.bot.set_my_commands(BOT_COMMANDS, scope=BotCommandScopeAllGroupChats())
+
+    # 🧭 "@Bot /vid ..." kabi mention orqali kelgan buyruqlarni aniqlash
+    # uchun HAQIQIY (Telegram tomonidan tasdiqlangan) bot username kerak —
+    # config.BOT_USERNAME_FALLBACK faqat shu so'rov muvaffaqiyatsiz bo'lsa
+    # ishlatiladi.
+    try:
+        me = await application.bot.get_me()
+        if me and me.username:
+            mention_dispatch.set_bot_username(me.username)
+    except Exception as e:
+        logger.warning(f"🧭 Bot username'ni get_me() orqali olishda xato (fallback ishlatiladi): {e}")
 
     if config.ADMIN_IDS:
         admin_commands = BOT_COMMANDS + [BotCommand("developer", "🔧 AI sozlamalari (faqat admin)")]
@@ -712,6 +729,16 @@ def main():
     app.add_handler(CallbackQueryHandler(tabrik.tabrik_claim_callback, pattern="^tabrik:claim:"))
     # 🎨 /rasim — Telegram Mini App orqali rasm chizish.
     app.add_handler(CommandHandler("rasim", rasim.rasim_cmd))
+    # 🎬 /vid — video yuklab olish (ASCII buyruq, Privacy Mode'dan qat'i
+    # nazar barcha chat turlarida ishlaydi).
+    app.add_handler(CommandHandler("vid", vid.vid_cmd))
+    # 🎵 /qoshiq — ASCII alias ("/qo'shiq" apostrof bilan HAM ishlaydi,
+    # lekin apostrof borligi uchun Telegram uni haqiqiy buyruq deb
+    # belgilamaydi — shuning uchun u universal_chat.handle_message orqali,
+    # handlers/mention_dispatch.py yordamida qayta ishlanadi, qarang:
+    # handlers/qoshiq.py boshidagi izoh).
+    app.add_handler(CommandHandler("qoshiq", qoshiq.qoshiq_cmd))
+    app.add_handler(CallbackQueryHandler(qoshiq.qoshiq_choice_callback, pattern="^song:"))
     # Bot biror guruhga QO'SHILGANDA avtomatik xush kelibsiz xabari va
     # standart FAOL holatni bildirish uchun (guruh holati doimiy
     # saqlanadi — batafsili storage.py > "Guruhlarda Universal chat holati").
