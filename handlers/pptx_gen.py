@@ -18,6 +18,7 @@ from config import PPTX_AI
 from ai_clients import ask_ai
 from pptx_tools import build_presentation
 from handlers.menu import main_menu_keyboard
+from handlers import wallet_ui
 import storage
 
 logger = logging.getLogger(__name__)
@@ -94,6 +95,8 @@ async def receive_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             "❌ Taqdimotni yaratib bo'lmadi — AI xizmati hozir javob bermayapti. Birozdan so'ng qayta urinib ko'ring."
         )
+        # 💰 Band qilingan summa ozod qilinadi (AI slaydlar tuzolmadi).
+        await wallet_ui.finalize_failure(context, update=update, reason="pptx_slides_generation_failed")
         context.user_data.clear()
         return ConversationHandler.END
 
@@ -102,16 +105,33 @@ async def receive_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"📊 PPTX faylini qurishda xato ('{topic}'): {type(e).__name__}: {e}", exc_info=True)
         await query.edit_message_text("❌ Taqdimot faylini qurishda xatolik yuz berdi.")
+        # 💰 Fayl qurishda xato — band qilingan summa ozod qilinadi.
+        await wallet_ui.finalize_failure(context, update=update, reason="pptx_file_build_failed")
         context.user_data.clear()
         return ConversationHandler.END
 
     filename = f"{topic[:40]}.pptx"
-    msg = await context.bot.send_document(
-        chat_id,
-        document=InputFile(pptx_buf, filename=filename),
-        caption=f"📊 {topic}\n📎 {len(slides)} slayd.",
-        reply_markup=main_menu_keyboard(),
-    )
+    try:
+        msg = await context.bot.send_document(
+            chat_id,
+            document=InputFile(pptx_buf, filename=filename),
+            caption=f"📊 {topic}\n📎 {len(slides)} slayd.",
+            reply_markup=main_menu_keyboard(),
+        )
+    except Exception as e:
+        # 🚨 Fayl TAYYOR bo'ldi, lekin Telegram'ga yuborishda xato chiqdi
+        # (masalan tarmoq/Telegram API xatosi). Xizmat aslida bajarilmagan
+        # hisoblanadi (foydalanuvchi natijani OLMADI) — shuning uchun pul
+        # yechilmasligi kerak: band qilingan summa ozod qilinadi.
+        logger.error(f"📊 PPTX faylini yuborishda xato (chat_id={chat_id}, '{topic}'): {type(e).__name__}: {e}", exc_info=True)
+        try:
+            await context.bot.send_message(chat_id, "❌ Taqdimotni yuborishda xatolik yuz berdi. Birozdan so'ng qayta urinib ko'ring.")
+        except Exception:
+            pass
+        await wallet_ui.finalize_failure(context, update=update, chat_id=chat_id, reason="pptx_telegram_send_failed")
+        context.user_data.clear()
+        return ConversationHandler.END
+
     logger.info(f"📊 Taqdimot muvaffaqiyatli yuborildi: chat_id={chat_id}, {len(slides)} slayd.")
     if user_id and msg.document:
         storage.record_file(user_id, "pptx", topic, msg.document.file_id)
@@ -121,6 +141,10 @@ async def receive_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.delete_message()
     except Exception:
         pass
+
+    # 💰 Xizmat MUVAFFAQIYATLI yakunlandi — band qilingan summa endi
+    # HAQIQATAN balansdan yechiladi (avval emas!).
+    await wallet_ui.finalize_success(context, update=update, chat_id=chat_id)
 
     context.user_data.clear()
     return ConversationHandler.END
