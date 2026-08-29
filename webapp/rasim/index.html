@@ -8,21 +8,93 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div id="toolbar">
-    <div id="colors"></div>
-    <input type="range" id="brushSize" min="1" max="40" value="6" title="Qalam qalinligi">
-    <button id="eraserBtn" class="tool-btn" title="O'chirg'ich">🧽</button>
-    <button id="undoBtn" class="tool-btn" title="Ortga">↩️</button>
-    <button id="redoBtn" class="tool-btn" title="Oldinga">↪️</button>
-    <button id="clearBtn" class="tool-btn" title="Tozalash">🗑</button>
+
+  <!-- ==================================================
+       YUQORI PANEL: shablon tanlash + asbob tablari + tarix
+       ================================================== -->
+  <div id="topBar">
+    <button id="templateBtn" class="icon-btn" title="Shablon tanlash">
+      <span class="icon-btn__glyph">🖼</span>
+      <span class="icon-btn__label">Shablon</span>
+    </button>
+
+    <div id="toolTabs" role="tablist">
+      <button class="tool-tab active" data-tool="pen" title="Qalam">✏️</button>
+      <button class="tool-tab" data-tool="shape" title="Shakllar">▱</button>
+      <button class="tool-tab" data-tool="sticker" title="Stiker">✨</button>
+    </div>
+
+    <div id="historyBtns">
+      <button id="undoBtn" class="icon-btn icon-btn--ghost" title="Ortga">↩️</button>
+      <button id="redoBtn" class="icon-btn icon-btn--ghost" title="Oldinga">↪️</button>
+      <button id="clearBtn" class="icon-btn icon-btn--ghost" title="Tozalash">🗑</button>
+    </div>
+  </div>
+
+  <!-- ==================================================
+       PASTKI ASBOBLAR PANELI: aktiv tabga qarab o'zgaradi
+       ================================================== -->
+  <div id="subBar">
+
+    <div id="panel-pen" class="tool-panel active">
+      <div class="swatches" id="penColors"></div>
+      <label class="custom-color" title="O'zingiz tanlang">
+        <input type="color" id="customColor" value="#111111">
+      </label>
+      <div class="size-control">
+        <span class="size-dot" id="penSizeDot"></span>
+        <input type="range" id="penSize" min="2" max="40" value="6">
+      </div>
+      <button id="eraserBtn" class="icon-btn icon-btn--toggle" title="O'chirg'ich">🧽</button>
+    </div>
+
+    <div id="panel-shape" class="tool-panel">
+      <div class="shape-types" id="shapeTypes">
+        <button class="chip active" data-shape="line">╱ Chiziq</button>
+        <button class="chip" data-shape="rect">▭ To'rtburchak</button>
+        <button class="chip" data-shape="circle">◯ Doira</button>
+      </div>
+      <div class="swatches" id="shapeColors"></div>
+      <div class="size-control">
+        <span class="size-dot" id="shapeSizeDot"></span>
+        <input type="range" id="shapeSize" min="2" max="24" value="5">
+      </div>
+    </div>
+
+    <div id="panel-sticker" class="tool-panel">
+      <div class="stickers" id="stickerList"></div>
+      <div class="size-control">
+        <span class="size-dot-emoji">A</span>
+        <input type="range" id="stickerSize" min="24" max="96" value="48">
+        <span class="size-dot-emoji size-dot-emoji--big">A</span>
+      </div>
+    </div>
+
   </div>
 
   <div id="canvasWrap">
+    <canvas id="bgCanvas"></canvas>
     <canvas id="canvas"></canvas>
+    <div id="emptyHint">
+      <span>Barmog'ingiz yoki sichqoncha bilan chizishni boshlang</span>
+    </div>
   </div>
 
-  <button id="sendBtn">📤 Uzatish</button>
+  <button id="sendBtn">📤 Chizmani yuborish</button>
   <div id="statusMsg"></div>
+
+  <!-- ==================================================
+       SHABLON TANLASH VARAG'I (bottom sheet)
+       ================================================== -->
+  <div id="templateSheet" class="sheet">
+    <div class="sheet__backdrop"></div>
+    <div class="sheet__panel">
+      <div class="sheet__handle"></div>
+      <h2 class="sheet__title">Shablon tanlang</h2>
+      <p class="sheet__hint">Fon sifatida tanlang — undan keyin ustiga chizasiz</p>
+      <div class="template-grid" id="templateGrid"></div>
+    </div>
+  </div>
 
   <script src="app.js"></script>
 </body>
