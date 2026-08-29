@@ -15,6 +15,7 @@ from config import EDIT_PDF_AI
 from ai_clients import ask_ai
 from pdf_tools import make_pdf, extract_pdf_text
 from handlers.menu import main_menu_keyboard
+from handlers import wallet_ui
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +99,7 @@ async def receive_instruction(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not edited:
         logger.error(f"📝 Tahrirlash ISHLAMADI: chat_id={chat_id}, provider={EDIT_PDF_AI.get('provider')} — AI javob bermadi (sababi yuqoridagi ai_clients loglarida).")
         await status.edit_text("❌ Tahrirlab bo'lmadi. Qayta urinib ko'ring.")
+        await wallet_ui.finalize_failure(context, update=update, reason="edit_pdf_ai_failed")
         context.user_data.clear()
         return ConversationHandler.END
 
@@ -114,5 +116,6 @@ async def receive_instruction(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception:
         pass
 
+    await wallet_ui.finalize_success(context, update=update)
     context.user_data.clear()
     return ConversationHandler.END
