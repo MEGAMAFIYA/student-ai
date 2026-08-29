@@ -28,7 +28,11 @@ from config import UNIVERSAL_CHAT_AI, TRANSLATE_AI
 from ai_clients import ask_ai
 from pdf_tools import build_course_work_pdf, count_pdf_pages
 from handlers.menu import main_menu_keyboard, MENU_CALLBACKS
-from handlers import course_work
+from handlers import course_work, mention_dispatch
+from handlers.tabrik import tabrik_cmd
+from handlers.rasim import rasim_cmd
+from handlers.vid import vid_cmd
+from handlers.qoshiq import qoshiq_cmd
 import storage
 
 logger = logging.getLogger(__name__)
@@ -56,6 +60,18 @@ TRIGGER_RE = re.compile(r"\bdase\b", re.IGNORECASE)
 
 MAX_HISTORY_TURNS = 8  # nechta so'rov-javob juftligi saqlanadi (chatga qarab)
 
+# 🧭 handlers/mention_dispatch.py orqali aniqlangan maxsus buyruq (masalan
+# "@Bot /vid URL" yoki apostrofli "/qo'shiq ...") — CommandHandler
+# ushlamagan holatlar uchun — shu yerda mos ASOSIY handler funksiyasiga
+# yo'naltiriladi (duplicate mantiq yo'q, xuddi shu funksiyalar
+# CommandHandler orqali ham chaqiriladi, qarang: bot.py).
+SPECIAL_COMMAND_HANDLERS = {
+    "tabrik": tabrik_cmd,
+    "rasim": rasim_cmd,
+    "vid": vid_cmd,
+    "qoshiq": qoshiq_cmd,
+}
+
 
 def detect_intent(text: str) -> str:
     t = text.lower()
@@ -73,6 +89,33 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_group = chat.type in ("group", "supergroup")
     user_text = update.message.text.strip()
 
+    # 🧭 AVVAL: bot mention qilingan maxsus buyruqmi ("@Bot /vid URL",
+    # "@Bot /qo'shiq ...") yoki apostrofli "/qo'shiq ..." (Telegram buni
+    # haqiqiy buyruq deb belgilamagani uchun oddiy MessageHandler orqali
+    # shu yerga kelgan) — bo'lsa, mos handlerga TO'G'RIDAN-TO'G'RI
+    # yo'naltiramiz. Bu tekshiruv guruh "dase"/faollik holatidan MUSTAQIL
+    # ishlaydi — xuddi /tabrik va /rasim (alohida CommandHandler) kabi,
+    # bu 4 ta funksiya universal chatning yoqilgan/o'chirilganiga bog'liq
+    # emas.
+    status, payload = mention_dispatch.resolve(user_text)
+    if status == "command":
+        handler_fn = SPECIAL_COMMAND_HANDLERS.get(payload.command)
+        if handler_fn:
+            logger.info(
+                f"🧭 Maxsus buyruq mention/matn orqali aniqlandi: chat_id={chat.id}, "
+                f"command='{payload.command}', mention={payload.had_mention}."
+            )
+            await handler_fn(update, context, override_text=payload.remainder_text)
+            return
+
+    # Agar bot mention qilingan bo'lsa-yu, undan keyingi matn maxsus buyruq
+    # bo'lmasa (masalan "@Bot 4+3=?") — mention qismini olib tashlab, AI
+    # chatga yuboramiz. Mavjud AI-mention xatti-harakati BUZILMAYDI, faqat
+    # endi mention qismi aniq (tozalab) olib tashlanadi.
+    force_ai_mention = status == "mention_ai"
+    if force_ai_mention:
+        user_text = payload.strip() or user_text
+
     if is_group:
         # Doimiy saqlashdan o'qiladi (Upstash/app_data.json) — deploy/restart
         # bo'lsa ham yo'qolmaydi. Standart holat: FAOL (True). Guruh /ochirish
@@ -87,8 +130,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         trigger_match = TRIGGER_RE.search(user_text)
 
-        if not (trigger_match or is_reply_to_bot):
-            return  # "dase" yo'q va bot xabariga reply ham emas
+        if not (trigger_match or is_reply_to_bot or force_ai_mention):
+            return  # "dase" yo'q, bot xabariga reply ham emas, mention ham emas
 
         if trigger_match:
             stripped = TRIGGER_RE.sub("", user_text, count=1).strip(" ,:.!-")
