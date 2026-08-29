@@ -46,6 +46,36 @@ GROQ_FALLBACK_MODEL = os.getenv("GROQ_FALLBACK_MODEL", "openai/gpt-oss-120b")
 # (oddiy savol-javob) baribir ishlayveradi.
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 
+# ============================================================
+# 🤖 Bot mention orqali kelgan buyruqlarni aniqlash uchun username.
+# ============================================================
+# Ishga tushganda bot.py (_post_init) `application.bot.get_me()` orqali
+# HAQIQIY (Telegram'dan tasdiqlangan) usernameni oladi va
+# handlers/mention_dispatch.py ichiga yozadi — bu yerdagi qiymat FAQAT
+# o'sha so'rov biror sababga ko'ra muvaffaqiyatsiz bo'lsa ishlatiladigan
+# zaxira (fallback) qiymat.
+BOT_USERNAME_FALLBACK = os.getenv("BOT_USERNAME", "Student_ai_uz_bot").lstrip("@")
+
+# ============================================================
+# 🎬 /vid — video yuklab olish (yt-dlp)
+# ============================================================
+# Telegram Bot API oddiy (local bot API server'siz) botlar uchun ~50MB
+# fayl yuklash chegarasini qo'yadi — shuning uchun undan xavfsiz pastroq
+# chegara bilan cheklaymiz, aks holda yuklab olingandan keyin yuborishda
+# xato chiqadi (vaqt va trafik behuda ketadi).
+VID_MAX_MB = int(os.getenv("VID_MAX_MB", "45"))
+VID_DOWNLOAD_TIMEOUT_SEC = int(os.getenv("VID_DOWNLOAD_TIMEOUT_SEC", "180"))
+
+# ============================================================
+# 🎵 /qo'shiq — musiqa qidirish va audio yuborish (yt-dlp, ytsearch)
+# ============================================================
+QOSHIQ_MAX_MB = int(os.getenv("QOSHIQ_MAX_MB", "45"))
+QOSHIQ_SEARCH_COUNT = int(os.getenv("QOSHIQ_SEARCH_COUNT", "4"))
+QOSHIQ_DOWNLOAD_TIMEOUT_SEC = int(os.getenv("QOSHIQ_DOWNLOAD_TIMEOUT_SEC", "120"))
+# Qidiruv natijalari xotirada shuncha soniya saqlanadi (tugmalar shundan
+# keyin "muddati o'tgan" bo'lib qoladi) — xotira cheksiz o'sib ketmasligi uchun.
+QOSHIQ_SESSION_TTL_SEC = int(os.getenv("QOSHIQ_SESSION_TTL_SEC", "600"))
+
 
 def _cfg(prefix: str, default_model: str, default_provider: str = "gemini") -> dict:
     """
