@@ -17,6 +17,7 @@ from config import CITATION_AI, MAX_TELEGRAM_TEXT
 from ai_clients import ask_ai
 from pdf_tools import make_pdf
 from handlers.menu import main_menu_keyboard
+from handlers import wallet_ui
 import storage
 
 logger = logging.getLogger(__name__)
@@ -151,6 +152,9 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not cite_list:
         await query.edit_message_text("⚠️ Ro'yxat bo'sh.")
+        # 💰 Hech qanday iqtibos yaratilmadi — xizmat aslida bajarilmagan,
+        # shuning uchun band qilingan summa (agar bo'lsa) ozod qilinadi.
+        await wallet_ui.finalize_failure(context, update=update, chat_id=chat_id, reason="citation_list_empty")
         context.user_data.clear()
         return ConversationHandler.END
 
@@ -174,5 +178,8 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
+    # 💰 Kamida bitta iqtibos muvaffaqiyatli tuzildi va foydalanuvchiga
+    # yuborildi — xizmat MUVAFFAQIYATLI yakunlandi.
+    await wallet_ui.finalize_success(context, update=update, chat_id=chat_id)
     context.user_data.clear()
     return ConversationHandler.END
