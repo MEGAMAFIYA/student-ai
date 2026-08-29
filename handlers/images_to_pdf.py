@@ -12,6 +12,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 
 from pdf_tools import images_to_pdf
 from handlers.menu import main_menu_keyboard
+from handlers import wallet_ui
 
 logger = logging.getLogger(__name__)
 
@@ -80,9 +81,11 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=main_menu_keyboard(),
         )
         logger.info(f"🖼 PDF muvaffaqiyatli yuborildi: chat_id={update.effective_chat.id}.")
+        await wallet_ui.finalize_success(context, update=update)
     except Exception as e:
         logger.error(f"🖼 Images->PDF ISHLAMADI (chat_id={update.effective_chat.id}): {type(e).__name__}: {e}", exc_info=True)
         await context.bot.send_message(update.effective_chat.id, "❌ PDF yaratishda xatolik yuz berdi.", reply_markup=main_menu_keyboard())
+        await wallet_ui.finalize_failure(context, update=update, reason="images_to_pdf_failed")
 
     context.user_data.clear()
     return ConversationHandler.END
