@@ -81,6 +81,7 @@ def _reset_wallet_state():
         "receipt_fingerprints": {},
         "features": {k: dict(v) for k, v in wallet._DEFAULT_FEATURES.items()},
         "audit_log": [],
+        "reservations": {},
     }
     _FAKE_STORE.clear()
 
@@ -370,6 +371,323 @@ class PaymentProviderTests(unittest.TestCase):
     def test_webhook_signature_rejected_without_secret(self):
         provider = payment_providers.KapitalbankPaymentProvider()
         self.assertFalse(provider.verify_webhook_signature({}, b"{}"))
+
+
+class ReservationBasicTests(unittest.TestCase):
+    """💰 Reservation (hold) tizimining asosiy senariylari."""
+
+    def setUp(self):
+        _reset_wallet_state()
+
+    def test_successful_reservation_then_completion_debits_once(self):
+        wallet.credit_balance(1, 20000, "boshlang'ich")
+        result = wallet.reserve_for_feature(1, "course_work")  # narx 10000
+        self.assertTrue(result.ok)
+        self.assertEqual(result.reason, "reserved")
+        self.assertIsNotNone(result.reservation_id)
+
+        # Reservation paytida BALANS o'zgarmaydi, faqat "available" kamayadi.
+        self.assertEqual(wallet.get_balance(1), 20000)
+        self.assertEqual(wallet.get_available_balance(1), 10000)
+        self.assertEqual(wallet.get_reserved_amount(1), 10000)
+
+        ok = wallet.complete_reservation(result.reservation_id)
+        self.assertTrue(ok)
+        self.assertEqual(wallet.get_balance(1), 10000)
+        self.assertEqual(wallet.get_available_balance(1), 10000)
+        self.assertEqual(wallet.get_reserved_amount(1), 0)
+        self.assertEqual(wallet.get_reservation(result.reservation_id)["status"], wallet.RES_STATUS_COMPLETED)
+
+    def test_failed_service_triggers_automatic_release(self):
+        wallet.credit_balance(1, 20000, "boshlang'ich")
+        result = wallet.reserve_for_feature(1, "course_work")
+        self.assertTrue(result.ok)
+
+        ok = wallet.release_reservation(result.reservation_id, reason="AI xato qildi")
+        self.assertTrue(ok)
+        # Balans BUTUNLAY tegilmagan (hech qachon yechilmagan edi) — "qaytarish" shart emas.
+        self.assertEqual(wallet.get_balance(1), 20000)
+        self.assertEqual(wallet.get_available_balance(1), 20000)
+        self.assertEqual(wallet.get_reservation(result.reservation_id)["status"], wallet.RES_STATUS_RELEASED)
+
+    def test_insufficient_available_balance_blocks_reservation(self):
+        wallet.credit_balance(1, 5000, "boshlang'ich")
+        result = wallet.reserve_for_feature(1, "course_work")  # narx 10000
+        self.assertFalse(result.ok)
+        self.assertEqual(result.reason, "insufficient")
+        self.assertEqual(result.available, 5000)
+        self.assertEqual(wallet.get_balance(1), 5000)  # tegilmagan
+
+    def test_free_feature_does_not_create_reservation(self):
+        result = wallet.reserve_for_feature(1, "translate")  # narx 0
+        self.assertTrue(result.ok)
+        self.assertEqual(result.reason, "free")
+        self.assertIsNone(result.reservation_id)
+        self.assertEqual(len(wallet.list_reservations(user_id=1)), 0)
+
+    def test_expired_reservation_is_auto_released_and_frees_balance(self):
+        wallet.credit_balance(1, 20000, "boshlang'ich")
+        result = wallet.reserve_for_feature(1, "course_work")
+        # Muddatini sun'iy ravishda o'tkazib yuboramiz (orphaned/crash simulyatsiyasi).
+        wallet._data["reservations"][result.reservation_id]["expires_at"] = "2000-01-01T00:00:00+00:00"
+
+        # get_available_balance chaqirilganda LAZY tarzda eskirgan reservation avtomatik tozalanadi.
+        self.assertEqual(wallet.get_available_balance(1), 20000)
+        self.assertEqual(wallet.get_reservation(result.reservation_id)["status"], wallet.RES_STATUS_EXPIRED)
+        self.assertEqual(wallet.get_balance(1), 20000)  # balans hech qachon kamaymagan
+
+    def test_duplicate_release_is_idempotent(self):
+        wallet.credit_balance(1, 20000, "boshlang'ich")
+        result = wallet.reserve_for_feature(1, "course_work")
+        first = wallet.release_reservation(result.reservation_id, reason="xato")
+        second = wallet.release_reservation(result.reservation_id, reason="qayta urinish")
+        third = wallet.release_reservation(result.reservation_id, reason="yana")
+        self.assertTrue(first)
+        self.assertFalse(second)
+        self.assertFalse(third)
+        self.assertEqual(wallet.get_balance(1), 20000)
+
+    def test_duplicate_completion_does_not_double_debit(self):
+        wallet.credit_balance(1, 20000, "boshlang'ich")
+        result = wallet.reserve_for_feature(1, "course_work")
+        first = wallet.complete_reservation(result.reservation_id)
+        second = wallet.complete_reservation(result.reservation_id)
+        third = wallet.complete_reservation(result.reservation_id)
+        self.assertTrue(first)
+        self.assertFalse(second)
+        self.assertFalse(third)
+        self.assertEqual(wallet.get_balance(1), 10000)  # FAQAT bir marta yechilgan
+
+    def test_cannot_release_already_completed_reservation(self):
+        wallet.credit_balance(1, 20000, "boshlang'ich")
+        result = wallet.reserve_for_feature(1, "course_work")
+        wallet.complete_reservation(result.reservation_id)
+        ok = wallet.release_reservation(result.reservation_id, reason="kech qoldi")
+        self.assertFalse(ok)
+        self.assertEqual(wallet.get_balance(1), 10000)  # o'zgarmagan (ikkinchi marta qaytarilmagan)
+
+    def test_cannot_complete_already_released_reservation(self):
+        wallet.credit_balance(1, 20000, "boshlang'ich")
+        result = wallet.reserve_for_feature(1, "course_work")
+        wallet.release_reservation(result.reservation_id, reason="xato")
+        ok = wallet.complete_reservation(result.reservation_id)
+        self.assertFalse(ok)
+        self.assertEqual(wallet.get_balance(1), 20000)  # yechilmagan
+
+
+class ReservationConcurrencyTests(unittest.TestCase):
+    """🔀 Reservation tizimidagi race condition/crash-recovery himoyasi."""
+
+    def setUp(self):
+        _reset_wallet_state()
+
+    def test_concurrent_reservations_respect_available_balance(self):
+        wallet.credit_balance(1, 10000, "boshlang'ich")  # course_work narxi = 10000
+        results = []
+        lock = threading.Lock()
+
+        def worker():
+            try:
+                r = wallet.reserve_for_feature(1, "course_work")
+                with lock:
+                    results.append(r.ok)
+            except wallet.WalletError:
+                with lock:
+                    results.append(False)
+
+        threads = [threading.Thread(target=worker) for _ in range(20)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertEqual(sum(1 for r in results if r), 1)  # faqat BITTASI band qila oladi
+        self.assertEqual(wallet.get_available_balance(1), 0)
+        self.assertEqual(wallet.get_balance(1), 10000)  # hali HECH narsa yechilmagan (faqat band)
+
+    def test_reservation_then_concurrent_debit_never_goes_negative(self):
+        """Reservation band qilib turgan summani boshqa (parallel) debit_balance
+        chaqiruvi "ko'rmaydi" (chunki debit_balance faqat balance'ga qaraydi) —
+        LEKIN balans baribir hech qachon manfiy bo'lib qolmasligi kerak."""
+        wallet.credit_balance(1, 10000, "boshlang'ich")
+        result = wallet.reserve_for_feature(1, "course_work")  # 10000 band qilindi, available=0
+        self.assertTrue(result.ok)
+
+        # Parallel ravishda balansdan to'g'ridan-to'g'ri yechishga urinamiz.
+        results = []
+        lock = threading.Lock()
+
+        def worker():
+            try:
+                wallet.debit_balance(1, 5000, "parallel debit")
+                with lock:
+                    results.append(True)
+            except wallet.InsufficientBalanceError:
+                with lock:
+                    results.append(False)
+
+        threads = [threading.Thread(target=worker) for _ in range(5)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertGreaterEqual(wallet.get_balance(1), 0)  # HECH QACHON manfiy emas
+        # Endi reservation'ni completed qilishga harakat qilamiz — agar balans
+        # reservation yaratilgandan keyin boshqa yo'l bilan kamaytirilgan bo'lsa,
+        # complete_reservation faqat MAVJUD summani yechadi (manfiyga tushmaydi).
+        wallet.complete_reservation(result.reservation_id)
+        self.assertGreaterEqual(wallet.get_balance(1), 0)
+
+    def test_crash_recovery_orphaned_reservation_does_not_lock_funds_forever(self):
+        """Process reservation yaratgandan keyin 'crash' bo'lgan (complete/
+        release HECH QACHON chaqirilmagan) holatni simulyatsiya qiladi —
+        muddat o'tgach reservation avtomatik ozod bo'lishi SHART."""
+        wallet.credit_balance(1, 10000, "boshlang'ich")
+        result = wallet.reserve_for_feature(1, "course_work")
+        self.assertEqual(wallet.get_available_balance(1), 0)
+
+        # "Crash" simulyatsiyasi: process hech qachon complete/release chaqirmadi,
+        # lekin vaqt o'tdi (expires_at allaqachon o'tgan holatga o'tkazamiz).
+        wallet._data["reservations"][result.reservation_id]["expires_at"] = "2000-01-01T00:00:00+00:00"
+
+        freed = wallet.expire_stale_reservations()
+        self.assertEqual(freed, 1)
+        self.assertEqual(wallet.get_available_balance(1), 10000)  # pul qaytadan ishlatish uchun ochildi
+        self.assertEqual(wallet.get_balance(1), 10000)  # va hech qachon yo'qolmagan edi
+
+
+class DuplicatePaymentApprovalRefundAndConcurrencyTests(unittest.TestCase):
+    """💳 Admin tomonidan qo'lda tasdiqlash/refund dublikat himoyasi +
+    reservation tizimidagi qo'shimcha race-condition stsenariylari (7-band)."""
+
+    def setUp(self):
+        _reset_wallet_state()
+
+    def test_duplicate_manual_payment_approval_credits_once(self):
+        payment = wallet.create_payment(5, 20000, provider="manual", method=wallet.METHOD_MANUAL_RECEIPT)
+        wallet.mark_manual_review(payment["payment_id"])
+        first = wallet.approve_manual_payment(payment["payment_id"], actor_id=999)
+        second = wallet.approve_manual_payment(payment["payment_id"], actor_id=999)  # admin ikki marta bossa
+        third = wallet.approve_manual_payment(payment["payment_id"], actor_id=1000)  # boshqa admin ham bossa
+        self.assertTrue(first)
+        self.assertFalse(second)
+        self.assertFalse(third)
+        self.assertEqual(wallet.get_balance(5), 20000)  # FAQAT bir marta kredit qilingan
+
+    def test_duplicate_refund_via_reservation_release_credits_once(self):
+        """Reservation orqali refund/release ikki marta chaqirilsa ham,
+        foydalanuvchiga faqat BIR MARTA 'pul qaytariladi' (aslida hech qachon
+        yechilmagani uchun balans bir marta ham o'zgarmaydi, lekin muhimi —
+        ikkinchi chaqiruv HECH NARSA qilmaydi)."""
+        wallet.credit_balance(7, 20000, "boshlang'ich")
+        result = wallet.reserve_for_feature(7, "course_work")
+        balance_before = wallet.get_balance(7)
+        first = wallet.release_reservation(result.reservation_id, reason="AI xato")
+        second = wallet.release_reservation(result.reservation_id, reason="qayta urinish")
+        self.assertTrue(first)
+        self.assertFalse(second)
+        self.assertEqual(wallet.get_balance(7), balance_before)
+
+
+    def test_two_concurrent_requests_one_balance_only_one_succeeds(self):
+        """Aniq 7-band stsenariysi: balance=10000, narx=10000 — ikkita
+        BARAVAR so'rov kelsa, FAQAT BITTASI band qila oladi, ikkinchisi
+        'insufficient' oladi."""
+        wallet.credit_balance(42, 10000, "boshlang'ich")
+        outcomes = []
+        lock = threading.Lock()
+        barrier = threading.Barrier(2)
+
+        def worker():
+            barrier.wait()  # ikkalasi ham AYNAN bir vaqtda urinsin
+            r = wallet.reserve_for_feature(42, "course_work")
+            with lock:
+                outcomes.append(r.reason)
+
+        threads = [threading.Thread(target=worker) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertEqual(sorted(outcomes), ["insufficient", "reserved"])
+        self.assertEqual(wallet.get_available_balance(42), 0)
+        self.assertEqual(wallet.get_balance(42), 10000)  # hali yechilmagan
+
+    def test_concurrent_reservation_and_payment_credit(self):
+        """Reservation band qilib turgan paytda balansga PARALLEL kredit
+        (masalan admin to'lovni tasdiqlashi) kelsa — ikkalasi ham xavfsiz
+        birgalikda ishlashi kerak (balans hech qachon buzilmasin)."""
+        wallet.credit_balance(50, 10000, "boshlang'ich")
+        result = wallet.reserve_for_feature(50, "course_work")  # available=0
+        self.assertTrue(result.ok)
+
+        def credit_worker():
+            wallet.credit_balance(50, 5000, "admin to'lov tasdiqladi")
+
+        threads = [threading.Thread(target=credit_worker) for _ in range(3)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # 3 marta +5000 = balans 25000 bo'lishi kerak, reservation hali 10000 band.
+        self.assertEqual(wallet.get_balance(50), 25000)
+        self.assertEqual(wallet.get_reserved_amount(50), 10000)
+        self.assertEqual(wallet.get_available_balance(50), 15000)
+
+        wallet.complete_reservation(result.reservation_id)
+        self.assertEqual(wallet.get_balance(50), 15000)
+
+    def test_concurrent_release_only_credits_once(self):
+        """Bitta reservation'ni bir nechta thread PARALLEL ravishda release
+        qilishga urinsa — faqat BITTASI muvaffaqiyatli bo'lishi kerak."""
+        wallet.credit_balance(60, 10000, "boshlang'ich")
+        result = wallet.reserve_for_feature(60, "course_work")
+        outcomes = []
+        lock = threading.Lock()
+        barrier = threading.Barrier(10)
+
+        def worker():
+            barrier.wait()
+            ok = wallet.release_reservation(result.reservation_id, reason="parallel release")
+            with lock:
+                outcomes.append(ok)
+
+        threads = [threading.Thread(target=worker) for _ in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertEqual(sum(1 for o in outcomes if o), 1)
+        self.assertEqual(wallet.get_balance(60), 10000)
+
+    def test_concurrent_double_finalization_only_debits_once(self):
+        """Bitta reservation'ni bir nechta thread PARALLEL ravishda
+        complete (finalize) qilishga urinsa — balans FAQAT BIR MARTA
+        kamayishi kerak (double debit himoyasi race condition ostida ham)."""
+        wallet.credit_balance(70, 10000, "boshlang'ich")
+        result = wallet.reserve_for_feature(70, "course_work")
+        outcomes = []
+        lock = threading.Lock()
+        barrier = threading.Barrier(10)
+
+        def worker():
+            barrier.wait()
+            ok = wallet.complete_reservation(result.reservation_id)
+            with lock:
+                outcomes.append(ok)
+
+        threads = [threading.Thread(target=worker) for _ in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertEqual(sum(1 for o in outcomes if o), 1)
+        self.assertEqual(wallet.get_balance(70), 0)  # FAQAT bir marta 10000 yechilgan
 
 
 if __name__ == "__main__":
