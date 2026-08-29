@@ -20,6 +20,7 @@ from config import QUIZ_AI
 from ai_clients import ask_ai
 from pdf_tools import build_quiz_result_pdf
 from handlers.menu import main_menu_keyboard
+from handlers import wallet_ui
 import storage
 
 logger = logging.getLogger(__name__)
@@ -102,6 +103,8 @@ async def receive_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not questions:
         logger.error(f"📋 Test YARATILMADI: chat_id={chat_id}, mavzu='{topic}' — AI JSON javob bermadi (sababi yuqoridagi ai_clients loglarida).")
         await query.edit_message_text("❌ Testni yaratib bo'lmadi — AI xizmati hozir javob bermayapti. Birozdan so'ng qayta urinib ko'ring.")
+        # 💰 AI test tuzolmadi — band qilingan summa ozod qilinadi.
+        await wallet_ui.finalize_failure(context, update=update, reason="quiz_generation_failed")
         context.user_data.clear()
         return ConversationHandler.END
 
@@ -109,6 +112,11 @@ async def receive_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["quiz_answers"] = []
     context.user_data["quiz_idx"] = 0
     logger.info(f"📋 Test tayyor: chat_id={chat_id}, {len(questions)} ta savol. Boshlanmoqda...")
+    # 💰 Test MUVAFFAQIYATLI tuzildi — xizmat aslida shu yerda bajarildi
+    # (foydalanuvchi keyin javob berish-bermasligidan qat'iy nazar, test
+    # tuzish xizmati yetkazib berildi), shuning uchun band qilingan summa
+    # ENDI HAQIQATAN yechiladi.
+    await wallet_ui.finalize_success(context, update=update, chat_id=chat_id)
     await _show_question(query, context)
     return QZ_ACTIVE
 
