@@ -44,10 +44,15 @@ COUNTDOWN_DELAY = 1.0     # soniya — 5→1 orasidagi kutish
 FRAME_DELAY = 0.45        # soniya — doira freym'lari orasidagi kutish
 
 
-async def tabrik_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def tabrik_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE, override_text: str | None = None):
+    """`override_text` — handlers/mention_dispatch.py orqali (masalan
+    "@Bot /tabrik Salom..." xabaridan mention qismi olib tashlangandan
+    keyin) chaqirilganda beriladi. Berilmasa (oddiy "/tabrik ..." buyrug'i
+    CommandHandler orqali kelganda) xabar matnining o'zi ishlatiladi."""
     if not update.message:
         return
-    text = tabrik_logic.parse_tabrik_text(update.message.text or "")
+    raw_text = override_text if override_text is not None else (update.message.text or "")
+    text = tabrik_logic.parse_tabrik_text(raw_text)
     if not text:
         await update.message.reply_text(
             "🎁 Tabrik matnini ham yozing, masalan:\n\n"
