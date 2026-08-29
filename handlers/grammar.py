@@ -15,6 +15,7 @@ from config import GRAMMAR_AI, MAX_TELEGRAM_TEXT
 from ai_clients import ask_ai
 from pdf_tools import make_pdf
 from handlers.menu import main_menu_keyboard
+from handlers import wallet_ui
 import storage
 
 logger = logging.getLogger(__name__)
@@ -64,6 +65,7 @@ async def receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not result:
         logger.error(f"✅ Imlo tekshiruvi BAJARILMADI: chat_id={chat_id} — sababi yuqoridagi ai_clients loglarida.")
         await status.edit_text("❌ Matnni tekshirib bo'lmadi. Qayta urinib ko'ring.")
+        await wallet_ui.finalize_failure(context, update=update, reason="grammar_ai_failed")
         context.user_data.clear()
         return ConversationHandler.END
 
@@ -88,5 +90,6 @@ async def receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_id and msg.document:
             storage.record_file(user_id, "grammar", "Imlo tekshiruvi", msg.document.file_id)
 
+    await wallet_ui.finalize_success(context, update=update, chat_id=chat_id)
     context.user_data.clear()
     return ConversationHandler.END
