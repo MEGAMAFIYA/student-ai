@@ -141,6 +141,59 @@ def apply_payment_action(payment_id: str, action: str, actor_id: int) -> tuple[b
 
 
 # ============================================================
+# 💰 Moliyaviy statistika (developer panel > 💰 Moliyaviy statistika)
+# ============================================================
+# wallet.get_admin_financial_stats() — ko'rilsin (wallet.py) — barcha
+# raqamlarni BITTA atomik o'qishda (lock ichida) hisoblab qaytaradi.
+
+def financial_stats_text() -> str:
+    s = wallet.get_admin_financial_stats()
+    return (
+        "💰 <b>Moliyaviy statistika</b>\n\n"
+        f"💵 Jami depozitlar (tasdiqlangan to'lovlar): {_fmt_sum(s['total_deposits'])}\n"
+        f"💸 Jami sarflangan (yechilgan): {_fmt_sum(s['total_spending'])}\n"
+        f"💳 Foydalanuvchilar joriy balanslari (jami): {_fmt_sum(s['total_balance'])}\n"
+        f"🔒 Band qilingan (reserved) balanslar: {_fmt_sum(s['reserved_balance'])}\n"
+        f"🕐 Kutilayotgan to'lovlar: {s['pending_payments']} ta\n"
+        f"🧾 Qo'lda ko'rib chiqish (manual review): {s['manual_reviews']} ta\n"
+        f"↩️ Qaytarilgan/bekor qilingan operatsiyalar: {s['failed_refunded_ops']} ta\n"
+        f"❌ Muvaffaqiyatsiz/qaytarilgan: {_fmt_sum(s['total_refunded'])}\n\n"
+        "<i>Raqamlar real vaqtda hisoblanadi (eskirgan reservation'lar avtomatik "
+        "tozalangandan keyin).</i>"
+    )
+
+
+def financial_stats_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 Yangilash", callback_data="dev:finstats")],
+        [InlineKeyboardButton("🔒 Faol reservationlar", callback_data="dev:resactive")],
+        [InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:menu")],
+    ])
+
+
+def active_reservations_text() -> str:
+    rows = wallet.list_reservations(status=wallet.RES_STATUS_RESERVED)[:25]
+    if not rows:
+        return "🔒 <b>Faol (band qilingan) reservationlar</b>\n\n<i>Hozircha yo'q.</i>"
+    lines = [f"🔒 <b>Faol reservationlar</b> ({len(rows)} ta, eng yuqori 25 tasi):\n"]
+    for r in rows:
+        feature = wallet.get_feature(r["feature_id"])
+        fname = feature["name"] if feature else r["feature_id"]
+        lines.append(
+            f"• 🆔 <code>{r['user_id']}</code> — {_fmt_sum(r['amount'])} — {_esc(fname)}\n"
+            f"  ⏰ {r['created_at'][:16]} → muddati: {r['expires_at'][:16]}"
+        )
+    return "\n".join(lines)
+
+
+def active_reservations_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 Yangilash", callback_data="dev:resactive")],
+        [InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:finstats")],
+    ])
+
+
+# ============================================================
 # 💳 Balanslar
 # ============================================================
 
