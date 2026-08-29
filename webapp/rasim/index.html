@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>🎨 Rasm chizish</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="toolbar">
+    <div id="colors"></div>
+    <input type="range" id="brushSize" min="1" max="40" value="6" title="Qalam qalinligi">
+    <button id="eraserBtn" class="tool-btn" title="O'chirg'ich">🧽</button>
+    <button id="undoBtn" class="tool-btn" title="Ortga">↩️</button>
+    <button id="redoBtn" class="tool-btn" title="Oldinga">↪️</button>
+    <button id="clearBtn" class="tool-btn" title="Tozalash">🗑</button>
+  </div>
+
+  <div id="canvasWrap">
+    <canvas id="canvas"></canvas>
+  </div>
+
+  <button id="sendBtn">📤 Uzatish</button>
+  <div id="statusMsg"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
