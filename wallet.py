@@ -41,7 +41,7 @@ import logging
 import threading
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import config
 
@@ -79,6 +79,31 @@ TX_FEATURE_CHARGE = "feature_charge"  # pullik funksiya (debet)
 TX_REFUND = "refund"              # qaytarish (kredit)
 TX_ADMIN_ADJUST = "admin_adjust"  # admin qo'lda tuzatishi (kredit yoki debet)
 
+# ------------------------------------------------------------------
+# 🔒 Reservation (hold) statuslari — pullik funksiya ISHGA TUSHIRILGANDA
+# pul DARHOL yechilmaydi, buning o'rniga "band qilinadi" (reserved).
+# Xizmat MUVAFFAQIYATLI tugasagina reservation -> COMPLETED (shu paytda
+# balansdan HAQIQIY yechiladi). Xizmat xato qilsa yoki bekor qilinsa
+# -> RELEASED. Foydalanuvchi/process javob bermay qolsa (masalan process
+# crash bo'lsa) -> muddati o'tgach avtomatik EXPIRED (orphaned reservation
+# BALANSGA umuman ta'sir qilmasdan turadi, chunki balans reservation
+# yaratilganda emas, faqat COMPLETED bo'lganda kamayadi — shuning uchun
+# "band qilib qo'yilgan pul yo'qolib qolishi" fizik jihatdan mumkin emas).
+# ------------------------------------------------------------------
+RES_STATUS_RESERVED = "reserved"
+RES_STATUS_COMPLETED = "completed"
+RES_STATUS_RELEASED = "released"
+RES_STATUS_EXPIRED = "expired"
+
+RESERVATION_ACTIVE_STATUSES = (RES_STATUS_RESERVED,)
+RESERVATION_TERMINAL_STATUSES = (RES_STATUS_COMPLETED, RES_STATUS_RELEASED, RES_STATUS_EXPIRED)
+
+# Reservation necha soniyadan keyin "orphaned" deb hisoblanib avtomatik
+# bekor qilinadi (crash recovery). Oddiy funksiyalar bir necha daqiqada
+# tugaydi — 20 daqiqa katta xavfsizlik zahirasi (uzoq davom etuvchi kurs
+# ishi generatsiyasi ham shu ichiga sig'adi).
+RESERVATION_TTL_SECONDS = 20 * 60
+
 
 # ------------------------------------------------------------------
 # Xatolar
@@ -109,6 +134,10 @@ class DuplicateReceiptError(WalletError):
         super().__init__(f"Bu chek allaqachon ishlatilgan (payment_id={existing_payment_id}).")
 
 
+class ReservationError(WalletError):
+    pass
+
+
 # ------------------------------------------------------------------
 # Standart pullik funksiyalar ro'yxati (birinchi ishga tushirilganda
 # yaraladi — keyin /developer panelidan o'zgartiriladi va shu holicha
@@ -137,11 +166,13 @@ _DEFAULT_DATA = {
     "receipt_fingerprints": {}, # {"<fingerprint>": "<payment_id>"}
     "features": dict(_DEFAULT_FEATURES),
     "audit_log": [],
+    "reservations": {},         # {"<reservation_id>": {...}} — ko'rilsin: reserve_balance()
 }
 
 MAX_TRANSACTIONS_PER_USER_SHOWN = 30   # "🧾 To'lovlar tarixi"da ko'rsatiladigan maksimal son
 MAX_AUDIT_LOG_ENTRIES = 2000           # umumiy audit log chegarasi (eskilari siqiladi)
 MAX_TRANSACTIONS_TOTAL = 5000          # umumiy transactions chegarasi (eskilari siqiladi)
+MAX_RESERVATIONS_TOTAL = 5000          # umumiy reservations chegarasi (eskilari — faqat TERMINAL holatdagilar — siqiladi)
 
 
 def _now_iso() -> str:
@@ -150,6 +181,11 @@ def _now_iso() -> str:
 
 def _new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:16]}"
+
+
+def _iso_plus_seconds(iso_str: str, seconds: int) -> str:
+    dt = datetime.fromisoformat(iso_str)
+    return (dt + timedelta(seconds=seconds)).isoformat(timespec="seconds")
 
 
 def _load() -> dict:
@@ -408,13 +444,386 @@ def charge_for_feature(user_id: int, feature_id: str) -> ChargeResult:
 
 def refund(user_id: int, amount: int, description: str, related_payment_id: str | None = None, actor_id=None) -> dict:
     """Foydalanuvchiga pulni qaytaradi (masalan xizmat muvaffaqiyatsiz
-    yakunlansa, admin panelidan qo'lda, yoki noto'g'ri yechilgan holatda)."""
+    yakunlansa, admin panelidan qo'lda, yoki noto'g'ri yechilgan holatda).
+
+    MUHIM: agar to'lov ALLAQACHON reservation (hold) orqali amalga
+    oshirilgan bo'lsa (ya'ni pul HALI balansdan yechilmagan holatda —
+    status='reserved'), bu funksiya EMAS, balki release_reservation()
+    ishlatilishi kerak (chunki reserved pul balansdan умуман
+    kamaytirilmagan — uni "qaytarish" DUBLIKAT kredit bo'lib qoladi).
+    refund() faqat HAQIQATAN balansdan yechilgan (completed reservation
+    yoki eski to'g'ridan-to'g'ri debit_balance) pul uchun ishlatiladi."""
     tx = credit_balance(user_id, amount, description, tx_type=TX_REFUND,
                          related_payment_id=related_payment_id, actor_id=actor_id)
     log_audit("PAYMENT_REFUNDED" if related_payment_id else "BALANCE_CREDIT",
               actor_id=actor_id, payment_id=related_payment_id, user_id=user_id,
               amount=amount, details=description)
     return tx
+
+
+# ============================================================
+# 🔒 Reservation (hold) tizimi — pullik funksiya ISHGA TUSHIRILGANDA
+# ============================================================
+# ARXITEKTURA: `debit_balance()`/`charge_for_feature()` YUQORIDA hamon
+# mavjud (eski, orqaga-mos/test uchun saqlangan) — LEKIN endi
+# `handlers/wallet_ui.py`dagi "to'lov devori" (`require_payment`) ULARNI
+# EMAS, balki quyidagi `reserve_for_feature()` funksiyasini chaqiradi.
+#
+# G'OYA: balans (`wallet["balance"]`) reservation yaratilganda UMUMAN
+# o'zgarmaydi — faqat "band qilingan" (reserved) summa alohida
+# hisoblanadi (barcha 'reserved' holatidagi reservation'lar yig'indisi).
+# "Mavjud (available) balans" = balance - band_qilingan. Shu tufayli:
+#   - reservation orphan (crash) bo'lib qolsa ham, balans HECH QACHON
+#     yo'qolmaydi/buzilmaydi — u faqat vaqtinchalik "band" edi.
+#   - reservation COMPLETED bo'lgandagina balans HAQIQATAN kamayadi
+#     (debit_balance bilan bir xil atomik/manfiy-bo'lmaslik kafolati).
+#   - reservation RELEASED/EXPIRED bo'lsa — balansga hech narsa
+#     "qaytarilmaydi", chunki u hech qachon olinmagan edi.
+
+
+class ReservationResult:
+    """reserve_for_feature() natijasi — handler shu orqali foydalanuvchiga
+    aniq xabar chiqaradi. `reason`: "free" | "reserved" | "insufficient" |
+    "disabled" | "unknown_feature"."""
+    def __init__(self, ok: bool, reason: str, price: int = 0, balance: int = 0,
+                 available: int = 0, reservation_id: str | None = None, feature_id: str = ""):
+        self.ok = ok
+        self.reason = reason
+        self.price = price
+        self.balance = balance
+        self.available = available
+        self.reservation_id = reservation_id
+        self.feature_id = feature_id
+
+
+def _expire_stale_reservations_locked() -> int:
+    """`_lock` ALLAQACHON ushlangan holatda chaqirilishi kerak. Muddati
+    o'tgan ('reserved' holatida turgan, lekin expires_at o'tib ketgan)
+    barcha reservation'larni 'expired'ga o'tkazadi (CRASH RECOVERY —
+    process qayerdadir to'xtab qolgan/crash bo'lgan taqdirda ham,
+    orphaned reservation abadiy "band" bo'lib qolmaydi). Nechta yozuv
+    o'zgartirilganini qaytaradi (0 bo'lsa chaqiruvchi _save() qilmasligi
+    mumkin — keraksiz yozishning oldini olish uchun)."""
+    now = _now_iso()
+    changed = 0
+    for r in _data["reservations"].values():
+        if r["status"] == RES_STATUS_RESERVED and r.get("expires_at") and r["expires_at"] < now:
+            r["status"] = RES_STATUS_EXPIRED
+            r["completed_at"] = now
+            _log_audit_locked(
+                "RESERVATION_EXPIRED", user_id=r["user_id"], amount=r["amount"],
+                details=f"reservation_id={r['reservation_id']}, feature_id={r['feature_id']} "
+                        f"(orphaned/crash — avtomatik bekor qilindi, balansga ta'sir qilmadi)",
+            )
+            changed += 1
+    if changed and len(_data["reservations"]) > MAX_RESERVATIONS_TOTAL:
+        # Faqat TERMINAL holatdagi (endi kerak bo'lmaydigan) eng eski
+        # yozuvlarni siqamiz — hech qachon 'reserved' (faol) yozuvni EMAS.
+        terminal_ids_sorted = sorted(
+            (rid for rid, r in _data["reservations"].items() if r["status"] in RESERVATION_TERMINAL_STATUSES),
+            key=lambda rid: _data["reservations"][rid]["created_at"],
+        )
+        overflow = len(_data["reservations"]) - MAX_RESERVATIONS_TOTAL
+        for rid in terminal_ids_sorted[:max(overflow, 0)]:
+            del _data["reservations"][rid]
+    return changed
+
+
+def expire_stale_reservations() -> int:
+    """Tashqi (masalan developer panelidan qo'lda, yoki davriy job orqali)
+    chaqirilishi mumkin bo'lgan ochiq funksiya — orphaned reservation'larni
+    tozalaydi. Odatiy holatda buni qo'lda chaqirish SHART emas, chunki
+    barcha o'qish funksiyalari (get_available_balance, list_reservations,
+    reserve_balance...) buni ICHKARIDA avtomatik (lazy) bajaradi."""
+    with _lock:
+        changed = _expire_stale_reservations_locked()
+        if changed:
+            _save()
+    return changed
+
+
+def get_reserved_amount(user_id: int) -> int:
+    """Foydalanuvchining HOZIR 'reserved' (band) holatidagi barcha
+    reservation'lari yig'indisi."""
+    uid = int(user_id)
+    with _lock:
+        if _expire_stale_reservations_locked():
+            _save()
+        return sum(
+            r["amount"] for r in _data["reservations"].values()
+            if r["user_id"] == uid and r["status"] == RES_STATUS_RESERVED
+        )
+
+
+def get_available_balance(user_id: int) -> int:
+    """Foydalanuvchi HOZIR ishlata oladigan balans (umumiy balans MINUS
+    band qilingan summalar). Yangi reservation shu summadan oshib
+    ketolmaydi — bu 'available balance = 10000' misolidagi aniq
+    tushuncha."""
+    return get_balance(user_id) - get_reserved_amount(user_id)
+
+
+def get_reservation(reservation_id: str) -> dict | None:
+    r = _data["reservations"].get(reservation_id)
+    return dict(r) if r else None
+
+
+def list_reservations(status: str | tuple | None = None, user_id: int | None = None) -> list[dict]:
+    with _lock:
+        if _expire_stale_reservations_locked():
+            _save()
+        rows = list(_data["reservations"].values())
+    if status:
+        statuses = (status,) if isinstance(status, str) else tuple(status)
+        rows = [r for r in rows if r["status"] in statuses]
+    if user_id is not None:
+        rows = [r for r in rows if r["user_id"] == int(user_id)]
+    rows.sort(key=lambda r: r["created_at"], reverse=True)
+    return [dict(r) for r in rows]
+
+
+def reserve_balance(user_id: int, feature_id: str, amount: int,
+                     ttl_seconds: int = RESERVATION_TTL_SECONDS) -> dict:
+    """Foydalanuvchi balansidan `amount`ni ATOMIK ravishda "band qiladi"
+    (hali yechmaydi). Balans YETARLI (available >= amount) bo'lmasa
+    InsufficientBalanceError ko'taradi — bu tekshiruv va yozish BITTA
+    `_lock` ichida bo'lgani uchun, bir nechta parallel so'rov kelsa ham
+    (race condition) umumiy band qilingan summa hech qachon balansdan
+    oshib ketmaydi (ya'ni "available" hech qachon manfiy bo'lmaydi)."""
+    amount = int(amount)
+    if amount <= 0:
+        raise WalletError("Reservation summasi musbat butun son bo'lishi kerak.")
+
+    with _lock:
+        _expire_stale_reservations_locked()  # har doim quyidagi hisobdan OLDIN — eskirganlar hisobga kirmasin
+
+        uid = int(user_id)
+        balance = int(_data["wallets"].get(str(uid), {}).get("balance", 0))
+        reserved = sum(
+            r["amount"] for r in _data["reservations"].values()
+            if r["user_id"] == uid and r["status"] == RES_STATUS_RESERVED
+        )
+        available = balance - reserved
+        if available < amount:
+            _save()  # yuqoridagi expire natijasi bo'lsa ham saqlanib qolsin
+            raise InsufficientBalanceError(required=amount, available=available)
+
+        reservation_id = _new_id("res")
+        now = _now_iso()
+        reservation = {
+            "reservation_id": reservation_id,
+            "user_id": uid,
+            "feature_id": feature_id,
+            "amount": amount,
+            "status": RES_STATUS_RESERVED,
+            "created_at": now,
+            "expires_at": _iso_plus_seconds(now, ttl_seconds),
+            "completed_at": None,
+        }
+        _data["reservations"][reservation_id] = reservation
+        _log_audit_locked(
+            "RESERVATION_CREATED", user_id=uid, amount=amount,
+            details=f"reservation_id={reservation_id}, feature_id={feature_id}",
+        )
+        _save()
+    logger.info(f"🔒 Reservation yaratildi: reservation_id={reservation_id}, user_id={uid}, "
+                f"feature={feature_id}, amount={amount}.")
+    return dict(reservation)
+
+
+def complete_reservation(reservation_id: str, actor_id=None) -> bool:
+    """💚 Xizmat MUVAFFAQIYATLI yakunlanganda chaqiriladi — band qilingan
+    summa endi HAQIQATAN balansdan yechiladi (bir marta, atomik).
+    TO'LIQ IDEMPOTENT: reservation allaqachon 'completed' bo'lsa —
+    hech narsa qilmaydi (ikkinchi marta debit QILINMAYDI), False qaytaradi.
+    'released'/'expired' (o'lik) reservationni ham completed qilib
+    bo'lmaydi (False)."""
+    with _lock:
+        r = _data["reservations"].get(reservation_id)
+        if not r:
+            logger.warning(f"🔒 complete_reservation: topilmadi, reservation_id={reservation_id}.")
+            return False
+
+        if r["status"] == RES_STATUS_COMPLETED:
+            logger.info(f"🔒 complete_reservation: ALLAQACHON completed (idempotent no-op), reservation_id={reservation_id}.")
+            _log_audit_locked(
+                "RESERVATION_COMPLETE_DUPLICATE_IGNORED", actor_id=actor_id,
+                user_id=r["user_id"], amount=r["amount"], details=f"reservation_id={reservation_id}",
+            )
+            _save()
+            return False
+
+        if r["status"] in (RES_STATUS_RELEASED, RES_STATUS_EXPIRED):
+            logger.warning(
+                f"🔒 complete_reservation: o'lik holatdagi ({r['status']}) reservationni "
+                f"tugatib bo'lmaydi, reservation_id={reservation_id}."
+            )
+            return False
+
+        user_id = r["user_id"]
+        amount = r["amount"]
+        wallet_row = _data["wallets"].setdefault(str(user_id), {"balance": 0})
+        before = int(wallet_row["balance"])
+
+        if before < amount:
+            # ANOMALIYA: nazariy jihatdan bo'lmasligi kerak (chunki
+            # reserve_balance() available'ni oldindan tekshirgan edi) —
+            # lekin masalan admin reservation yaratilgandan KEYIN balansni
+            # qo'lda kamaytirgan bo'lishi mumkin. Balans HECH QACHON
+            # manfiy bo'lmasligi (spetsifikatsiya talabi) ustuvor bo'lgani
+            # uchun faqat MAVJUD summa yechiladi va bu holat AUDITga aniq
+            # yoziladi (moliyaviy nomuvofiqlikni keyin ko'rish uchun).
+            logger.error(
+                f"🔒⚠️ ANOMALIYA: reservation_id={reservation_id} uchun band qilingan summa "
+                f"({amount}) joriy balansdan ({before}) katta — faqat mavjud qism yechiladi. "
+                f"Buning sababi tashqi/qo'lda balans o'zgarishi bo'lishi mumkin."
+            )
+            actual_charge = before
+            after = 0
+            _log_audit_locked(
+                "RESERVATION_COMPLETE_BALANCE_ANOMALY", actor_id=actor_id, user_id=user_id,
+                amount=amount, details=f"reservation_id={reservation_id}: kerak={amount}, mavjud={before}",
+            )
+        else:
+            actual_charge = amount
+            after = before - amount
+
+        wallet_row["balance"] = after
+        r["status"] = RES_STATUS_COMPLETED
+        r["completed_at"] = _now_iso()
+        feature = _data["features"].get(r["feature_id"])
+        feature_name = feature["name"] if feature else r["feature_id"]
+        _new_tx_locked(
+            user_id, TX_FEATURE_CHARGE, -actual_charge, before, after,
+            description=f"Funksiya: {feature_name}", related_payment_id=None,
+        )
+        _log_audit_locked(
+            "RESERVATION_COMPLETED", actor_id=actor_id, user_id=user_id, amount=actual_charge,
+            details=f"reservation_id={reservation_id}, feature_id={r['feature_id']}",
+        )
+        _save()
+    logger.info(f"🔒✅ Reservation COMPLETED: reservation_id={reservation_id}, user_id={user_id}, "
+                f"amount={amount}, yangi balans={after}.")
+    return True
+
+
+def release_reservation(reservation_id: str, reason: str = "", actor_id=None) -> bool:
+    """❌ Xizmat MUVAFFAQIYATSIZ bo'lganda (yoki bekor qilinganda) chaqiriladi
+    — band qilingan summa foydalanuvchiga "qaytariladi" (aslida balansga
+    HECH QACHON tegilmagani uchun, shunchaki bandlik OLIB TASHLANADI).
+    TO'LIQ IDEMPOTENT: allaqachon released/expired bo'lsa — hech narsa
+    qilmaydi (ikkinchi marta "qaytarish" YO'Q — duplicate release himoyasi),
+    False qaytaradi. Allaqachon 'completed' (pul allaqachon yechilgan)
+    reservationni "release" qilib bo'lmaydi — bunday holatda `refund()`
+    ishlatilishi kerak."""
+    with _lock:
+        r = _data["reservations"].get(reservation_id)
+        if not r:
+            logger.warning(f"🔒 release_reservation: topilmadi, reservation_id={reservation_id}.")
+            return False
+
+        if r["status"] in (RES_STATUS_RELEASED, RES_STATUS_EXPIRED):
+            logger.info(f"🔒 release_reservation: ALLAQACHON {r['status']} (idempotent no-op), reservation_id={reservation_id}.")
+            _log_audit_locked(
+                "RESERVATION_RELEASE_DUPLICATE_IGNORED", actor_id=actor_id,
+                user_id=r["user_id"], amount=r["amount"], details=f"reservation_id={reservation_id}",
+            )
+            _save()
+            return False
+
+        if r["status"] == RES_STATUS_COMPLETED:
+            logger.warning(
+                f"🔒 release_reservation: allaqachon COMPLETED (pul yechilgan) reservationni "
+                f"release qilib bo'lmaydi — refund() kerak. reservation_id={reservation_id}."
+            )
+            return False
+
+        r["status"] = RES_STATUS_RELEASED
+        r["completed_at"] = _now_iso()
+        _log_audit_locked(
+            "RESERVATION_RELEASED", actor_id=actor_id, user_id=r["user_id"], amount=r["amount"],
+            details=f"reservation_id={reservation_id}, feature_id={r['feature_id']}. {reason}",
+        )
+        _save()
+    logger.info(f"🔒↩️ Reservation RELEASED: reservation_id={reservation_id}, user_id={r['user_id']}, "
+                f"amount={r['amount']}, sabab={reason}.")
+    return True
+
+
+def reserve_for_feature(user_id: int, feature_id: str) -> ReservationResult:
+    """Pullik funksiya ISHGA TUSHIRILGANDA (menyu tugmasi bosilganda)
+    chaqiriladigan YAGONA kirish nuqtasi (`charge_for_feature()`ning
+    reservation-asosidagi vorisi — `handlers/wallet_ui.py > require_payment`
+    endi shuni chaqiradi). Bepul funksiya (price<=0) uchun reservation
+    UMUMAN yaratilmaydi (spetsifikatsiya: 6-band)."""
+    feature = _data["features"].get(feature_id)
+    if not feature:
+        logger.warning(f"⚙️ Noma'lum feature_id uchun reservation so'raldi: '{feature_id}' — bepul deb hisoblanadi.")
+        bal = get_balance(user_id)
+        return ReservationResult(ok=True, reason="unknown_feature", price=0, balance=bal, available=bal, feature_id=feature_id)
+
+    if not feature.get("enabled", True):
+        bal = get_balance(user_id)
+        return ReservationResult(ok=False, reason="disabled", price=feature.get("price", 0),
+                                  balance=bal, available=get_available_balance(user_id), feature_id=feature_id)
+
+    price = int(feature.get("price", 0))
+    if price <= 0:
+        bal = get_balance(user_id)
+        return ReservationResult(ok=True, reason="free", price=0, balance=bal, available=bal, feature_id=feature_id)
+
+    try:
+        reservation = reserve_balance(user_id, feature_id, price)
+    except InsufficientBalanceError as e:
+        return ReservationResult(ok=False, reason="insufficient", price=price,
+                                  balance=get_balance(user_id), available=e.available, feature_id=feature_id)
+
+    return ReservationResult(
+        ok=True, reason="reserved", price=price, balance=get_balance(user_id),
+        available=get_available_balance(user_id), reservation_id=reservation["reservation_id"],
+        feature_id=feature_id,
+    )
+
+
+# ============================================================
+# 📊 Admin panel uchun agregatsiya (developer.py > 📊/💳 bo'limlari)
+# ============================================================
+
+def get_admin_financial_stats() -> dict:
+    """Developer panelida ko'rsatiladigan umumiy moliyaviy ko'rsatkichlar:
+    - total_balance: barcha foydalanuvchilar balansi yig'indisi
+    - total_deposits: barcha tasdiqlangan to'lovlar (topup) yig'indisi
+    - total_spending: barcha haqiqiy yechilgan (feature_charge) summa
+    - total_refunded: barcha qaytarilgan (refund) summa
+    - reserved_balance: hozir 'reserved' holatidagi umumiy summa
+    - pending_payments: hali ko'rilmagan to'lovlar soni (pending+manual_review)
+    - manual_reviews: faqat manual_review holatidagi to'lovlar soni
+    - failed_refunded_ops: released/expired reservation + refund tx soni
+    """
+    with _lock:
+        if _expire_stale_reservations_locked():
+            _save()
+        total_balance = sum(int(w.get("balance", 0)) for w in _data["wallets"].values())
+        total_deposits = sum(t["amount"] for t in _data["transactions"] if t["type"] == TX_TOPUP)
+        total_spending = sum(-t["amount"] for t in _data["transactions"] if t["type"] == TX_FEATURE_CHARGE)
+        total_refunded = sum(t["amount"] for t in _data["transactions"] if t["type"] == TX_REFUND)
+        reserved_balance = sum(r["amount"] for r in _data["reservations"].values() if r["status"] == RES_STATUS_RESERVED)
+        pending_payments = sum(1 for p in _data["payments"].values() if p["status"] in STATUS_GROUP_UNCHECKED)
+        manual_reviews = sum(1 for p in _data["payments"].values() if p["status"] == STATUS_MANUAL_REVIEW)
+        refund_tx_count = sum(1 for t in _data["transactions"] if t["type"] == TX_REFUND)
+        released_or_expired = sum(
+            1 for r in _data["reservations"].values() if r["status"] in (RES_STATUS_RELEASED, RES_STATUS_EXPIRED)
+        )
+    return {
+        "total_balance": total_balance,
+        "total_deposits": total_deposits,
+        "total_spending": total_spending,
+        "total_refunded": total_refunded,
+        "reserved_balance": reserved_balance,
+        "pending_payments": pending_payments,
+        "manual_reviews": manual_reviews,
+        "failed_refunded_ops": refund_tx_count + released_or_expired,
+    }
 
 
 # ============================================================
