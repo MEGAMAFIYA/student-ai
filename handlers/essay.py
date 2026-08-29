@@ -20,6 +20,7 @@ from ai_clients import ask_ai
 from pdf_tools import build_essay_pdf, count_pdf_pages
 from handlers.menu import main_menu_keyboard
 from handlers.course_work import clean_topic, _is_refusal, _clean_ai_text, _strip_duplicate_heading
+from handlers import wallet_ui
 import storage
 
 logger = logging.getLogger(__name__)
@@ -119,6 +120,8 @@ async def receive_topic_and_generate(update: Update, context: ContextTypes.DEFAU
     if not result:
         logger.error(f"🗒 {label} YAKUNLANMADI ('{topic}') — sababi yuqoridagi loglarda.")
         await status.edit_text("❌ Yaratib bo'lmadi — AI xizmatlari hozir javob bermayapti. Birozdan so'ng qayta urinib ko'ring.")
+        # 💰 Band qilingan summa ozod qilinadi (hech qachon yechilmagan edi).
+        await wallet_ui.finalize_failure(context, update=update, reason="essay_generation_failed")
         context.user_data.clear()
         return ConversationHandler.END
 
@@ -138,6 +141,10 @@ async def receive_topic_and_generate(update: Update, context: ContextTypes.DEFAU
         await status.delete()
     except Exception:
         pass
+
+    # 💰 Xizmat MUVAFFAQIYATLI yakunlandi — band qilingan summa endi
+    # HAQIQATAN balansdan yechiladi (avval emas!).
+    await wallet_ui.finalize_success(context, update=update)
 
     context.user_data.clear()
     return ConversationHandler.END
