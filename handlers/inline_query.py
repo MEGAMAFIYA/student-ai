@@ -316,21 +316,25 @@ async def on_inline_query(
         return
 
     # --------------------------------------------------------
-    # 🎁 OG'IR (faqat matn): /tabrik
+    # 🎁 /tabrik — GURUH bilan BIR XIL tartibda: avval FAQAT
+    # "🎁 Tabriknomani qabul qilish" tugmasi chiqadi (matn ko'rinmaydi),
+    # animatsiya FAQAT tugma bosilgandan keyin (inline_tabrik_claim_callback)
+    # boshlanadi — chosen_inline_result'da AVTOMATIK boshlanmaydi.
     # --------------------------------------------------------
 
     if query[:7].lower().startswith("/tabrik") and not TABRIK_BARE_RE.match(query):
         text = tabrik_logic.parse_tabrik_text(query)
         if text:
-            result_id = str(uuid.uuid4())
-            cache[result_id] = {"type": "tabrik", "text": text}
+            short_id = tabrik_logic.store_greeting(text)
             results = [
                 InlineQueryResultArticle(
-                    id=result_id,
+                    id=str(uuid.uuid4()),
                     title="🎁 Tabrik yuborish",
                     description=text[:120],
-                    input_message_content=InputTextMessageContent("🎁 Tabrik tayyorlanmoqda..."),
-                    reply_markup=INLINE_MESSAGE_MARKUP,
+                    input_message_content=InputTextMessageContent(tabrik_logic.build_ready_card()),
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🎁 Tabriknomani qabul qilish", callback_data=f"itabrik:claim:{short_id}")
+                    ]]),
                 )
             ]
             await update.inline_query.answer(results, cache_time=0, is_personal=True)
@@ -577,13 +581,9 @@ async def on_chosen_inline_result(
         await _handle_qoshiq(context, inline_message_id, entry["url"], entry["title"], entry.get("uploader"))
         return
 
-    # --------------------------------------------------------
-    # 🎁 /tabrik
-    # --------------------------------------------------------
-
-    if entry and entry.get("type") == "tabrik":
-        await _handle_tabrik(context, inline_message_id, entry["text"])
-        return
+    # 🎁 /tabrik uchun bu yerda ATAYLAB hech narsa yo'q — animatsiya endi
+    # xabar TANLANGANDA emas, faqat "🎁 Tabriknomani qabul qilish" tugmasi
+    # bosilganda (inline_tabrik_claim_callback) boshlanadi.
 
     # --------------------------------------------------------
     # ODDIY AI SAVOL
@@ -1014,18 +1014,58 @@ async def _handle_qoshiq(
 
 
 # ============================================================
-# 🎁 OG'IR OQIM: /tabrik (matn animatsiyasi)
+# 🎁 OG'IR OQIM: /tabrik (matn animatsiyasi) — GURUH bilan BIR XIL
+# tartibda: on_inline_query FAQAT tugmani ko'rsatadi (yuqoriga qarang),
+# animatsiya FAQAT quyidagi `inline_tabrik_claim_callback` orqali,
+# "🎁 Tabriknomani qabul qilish" bosilganda boshlanadi.
 # ============================================================
 
 TABRIK_COUNTDOWN_DELAY = 1.0
 TABRIK_FRAME_DELAY = 0.45
+TABRIK_REVERT_DELAY_SEC = 120  # 2 daqiqa — handlers/tabrik.py'dagi bilan bir xil
+
+# inline_message_id -> True — hozir shu xabar uchun animatsiya ketmoqda.
+_ACTIVE_INLINE_TABRIK: set[str] = set()
+# inline_message_id -> rejalashtirilgan "asl holatga qaytarish" vazifasi.
+_INLINE_TABRIK_REVERT_TASKS: dict[str, asyncio.Task] = {}
 
 
-async def _handle_tabrik(
-    context: ContextTypes.DEFAULT_TYPE,
-    inline_message_id: str,
-    text: str,
-):
+def _tabrik_ready_markup(short_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("🎁 Tabriknomani qabul qilish", callback_data=f"itabrik:claim:{short_id}")
+    ]])
+
+
+async def inline_tabrik_claim_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """"🎁 Tabriknomani qabul qilish" tugmasi INLINE xabarda bosilganda
+    (do'st bilan chatda) chaqiriladi. Guruhdagi `tabrik_claim_callback`ga
+    juda o'xshaydi, lekin `query.message` o'rniga `inline_message_id`
+    bilan ishlaydi — inline xabarlar oddiy Message obyekti sifatida
+    qaytarilmaydi."""
+    query = update.callback_query
+    inline_message_id = query.inline_message_id
+    if not inline_message_id:
+        await query.answer("⚠️ Bu tugma faqat inline xabarlar uchun.", show_alert=True)
+        return
+
+    short_id = query.data.split(":", 2)[2]
+    greeting = tabrik_logic.get_greeting(short_id)
+    if not greeting:
+        await query.answer("⚠️ Bu tabrikning muddati o'tgan.", show_alert=True)
+        return
+
+    if inline_message_id in _ACTIVE_INLINE_TABRIK:
+        await query.answer("⏳ Animatsiya allaqachon ketmoqda...", show_alert=False)
+        return
+
+    pending_revert = _INLINE_TABRIK_REVERT_TASKS.pop(inline_message_id, None)
+    if pending_revert:
+        pending_revert.cancel()
+
+    tabrik_logic.touch_greeting(short_id)
+    _ACTIVE_INLINE_TABRIK.add(inline_message_id)
+    await query.answer("🎁 Ochilmoqda...")
+
     try:
         for n in (5, 4, 3, 2, 1):
             await _safe_edit_text(context, inline_message_id, tabrik_logic.build_countdown_frame(n), parse_mode=ParseMode.MARKDOWN)
@@ -1035,15 +1075,39 @@ async def _handle_tabrik(
             await _safe_edit_text(context, inline_message_id, tabrik_logic.build_circle_frame(step), parse_mode=ParseMode.MARKDOWN)
             await asyncio.sleep(TABRIK_FRAME_DELAY)
 
-        final_text = f"{tabrik_logic.build_final_card(escape_markdown(text, version=1))}\n\n🤖 Talaba AI — @{BOT_USERNAME}"
+        final_text = f"{tabrik_logic.build_final_card(escape_markdown(greeting, version=1))}\n\n🤖 Talaba AI — @{BOT_USERNAME}"
         await _safe_edit_text(context, inline_message_id, final_text, parse_mode=ParseMode.MARKDOWN, reply_markup=INLINE_MESSAGE_MARKUP)
-        logger.info("🔍 Inline /tabrik animatsiyasi muvaffaqiyatli yakunlandi.")
+        logger.info(f"🔍 Inline /tabrik animatsiyasi muvaffaqiyatli yakunlandi (inline_message_id={inline_message_id}).")
+
+        task = asyncio.create_task(_schedule_inline_tabrik_revert(context, inline_message_id, short_id))
+        _INLINE_TABRIK_REVERT_TASKS[inline_message_id] = task
     except Exception as e:
         logger.error(f"🔍 Inline /tabrik animatsiyasida kutilmagan xato: {type(e).__name__}: {e}", exc_info=True)
         try:
             await _safe_edit_text(
-                context, inline_message_id, f"🎁 {text}\n\n🤖 Talaba AI — @{BOT_USERNAME}",
-                reply_markup=INLINE_MESSAGE_MARKUP,
+                context, inline_message_id, f"🎁 {escape_markdown(greeting, version=1)}\n\n🤖 Talaba AI — @{BOT_USERNAME}",
+                parse_mode=ParseMode.MARKDOWN, reply_markup=INLINE_MESSAGE_MARKUP,
             )
         except Exception:
             pass
+    finally:
+        _ACTIVE_INLINE_TABRIK.discard(inline_message_id)
+
+
+async def _schedule_inline_tabrik_revert(context: ContextTypes.DEFAULT_TYPE, inline_message_id: str, short_id: str) -> None:
+    """`TABRIK_REVERT_DELAY_SEC` soniyadan keyin inline xabarni yana
+    "🎁 Tabriknomani qabul qilish" tugmasi holatiga qaytaradi — xuddi
+    handlers/tabrik.py'dagi `_schedule_revert` kabi."""
+    try:
+        await asyncio.sleep(TABRIK_REVERT_DELAY_SEC)
+        await _safe_edit_text(
+            context, inline_message_id, tabrik_logic.build_ready_card(),
+            reply_markup=_tabrik_ready_markup(short_id),
+        )
+        logger.info(f"🔍 Inline /tabrik xabari asl (tugma) holatiga qaytarildi (inline_message_id={inline_message_id}).")
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        logger.warning(f"🔍 Inline /tabrik xabarini asl holatiga qaytarishda xato: {type(e).__name__}: {e}")
+    finally:
+        _INLINE_TABRIK_REVERT_TASKS.pop(inline_message_id, None)
