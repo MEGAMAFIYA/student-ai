@@ -39,9 +39,51 @@ if not FFMPEG_AVAILABLE:
         "Serverga (Render/VPS) ffmpeg o'rnating: apt-get install -y ffmpeg."
     )
 
+# ============================================================
+# 🍪 YouTube bot-tekshiruvi ("Sign in to confirm you're not a bot")
+# ============================================================
+# Bulutli serverlarning (Render va h.k.) IP manzillari YouTube tomonidan
+# tez-tez "shubhali" deb belgilanadi va so'rov rad etiladi. Ikkita
+# yordamchi choralar:
+#   1) "player_client" ro'yxatini kengaytirish — ba'zan android/ios
+#      client orqali so'rov bu tekshiruvni chetlab o'tadi (kafolat yo'q,
+#      YouTube tez-tez o'zgartiradi).
+#   2) COOKIES FAYLI (eng ishonchli, lekin qo'lda sozlash talab qiladi):
+#      agar YOUTUBE_COOKIES_FILE muhit o'zgaruvchisi (yoki config.py)
+#      orqali brauzeringizdan eksport qilingan cookies.txt fayli
+#      ko'rsatilsa, yt-dlp shu orqali "haqiqiy foydalanuvchi" sifatida
+#      so'rov yuboradi. Eksport qilish: brauzerga "Get cookies.txt"
+#      kengaytmasini o'rnatib, youtube.com'da tizimga kirgan holda
+#      eksport qiling, faylni serverga yuklang va shu faylga yo'lni
+#      YOUTUBE_COOKIES_FILE'ga yozing.
+YOUTUBE_COOKIES_FILE = os.getenv("YOUTUBE_COOKIES_FILE", "").strip()
+if YOUTUBE_COOKIES_FILE and not os.path.isfile(YOUTUBE_COOKIES_FILE):
+    logger.warning(f"⚠️ YOUTUBE_COOKIES_FILE ko'rsatilgan, lekin fayl topilmadi: {YOUTUBE_COOKIES_FILE}")
+    YOUTUBE_COOKIES_FILE = ""
+
+
+def _youtube_extra_opts() -> dict:
+    """download_video/download_audio/_search_one_source uchun YouTube
+    bot-tekshiruvini yumshatishga urinadigan qo'shimcha sozlamalar."""
+    opts = {
+        "extractor_args": {"youtube": {"player_client": ["android", "web_safari", "ios"]}},
+    }
+    if YOUTUBE_COOKIES_FILE:
+        opts["cookiefile"] = YOUTUBE_COOKIES_FILE
+    return opts
+
 
 class DownloadError(Exception):
     """Foydalanuvchiga ko'rsatsa bo'ladigan, tushunarli xabar bilan xato."""
+
+
+def _is_bot_check_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "sign in to confirm" in msg or "not a bot" in msg
+
+
+def _is_drm_error(exc: Exception) -> bool:
+    return "drm protected" in str(exc).lower()
 
 
 def _largest_file_in(dest_dir: str) -> str | None:
@@ -91,12 +133,19 @@ def download_video(url: str, dest_dir: str, max_mb: int, timeout_sec: int) -> st
         "restrictfilenames": True,
         "socket_timeout": timeout_sec,
         "merge_output_format": "mp4",
+        **_youtube_extra_opts(),
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
     except yt_dlp.utils.DownloadError as e:
         logger.warning(f"🎬 /vid yuklab olishda xato ({url}): {e}")
+        if _is_bot_check_error(e):
+            raise DownloadError(
+                "❌ YouTube bu so'rovni \"bot\" deb bloklamoqda (bulutli serverlarda tez-tez "
+                "uchraydigan holat). Boshqa havola bilan urinib ko'ring yoki birozdan so'ng "
+                "qayta urinib ko'ring."
+            ) from e
         raise DownloadError(
             "❌ Bu havoladan video yuklab bo'lmadi. Havola noto'g'ri, video "
             "o'chirilgan/yopiq (private) bo'lishi yoki manba hozircha "
@@ -142,6 +191,7 @@ def _search_one_source(prefix: str, query: str, count: int) -> list[dict]:
         "skip_download": True,
         "default_search": f"{prefix}{count}",
         "noplaylist": True,
+        **(_youtube_extra_opts() if prefix == "ytsearch" else {}),
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -230,12 +280,23 @@ def download_audio(url: str, dest_dir: str, max_mb: int, timeout_sec: int) -> st
             "preferredcodec": "mp3",
             "preferredquality": "192",
         }],
+        **(_youtube_extra_opts() if "youtube.com" in url or "youtu.be" in url else {}),
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
     except yt_dlp.utils.DownloadError as e:
         logger.warning(f"🎵 /qo'shiq audio yuklab olishda xato ({url}): {e}")
+        if _is_bot_check_error(e):
+            raise DownloadError(
+                "❌ YouTube bu so'rovni \"bot\" deb bloklamoqda (bulutli serverlarda tez-tez "
+                "uchraydigan holat). Boshqa qo'shiq/manba bilan urinib ko'ring."
+            ) from e
+        if _is_drm_error(e):
+            raise DownloadError(
+                "❌ Bu qo'shiq DRM (litsenziya) himoyasi bilan qulflangan — yuklab bo'lmaydi. "
+                "Boshqa natijani tanlab ko'ring."
+            ) from e
         raise DownloadError("❌ Bu qo'shiqni yuklab bo'lmadi. Birozdan so'ng qayta urinib ko'ring.") from e
     except Exception as e:
         logger.error(f"🎵 /qo'shiq audio yuklab olishda kutilmagan xato ({url}): {type(e).__name__}: {e}", exc_info=True)
