@@ -1,22 +1,32 @@
 """
-🎁 /tabrik — foydalanuvchi tabrik matnini yozadi, bot chiroyli xabar +
-"🎁 Tabrikni qabul qilish" tugmasini yuboradi. Tugma bosilganda: 5→1
-countdown, so'ng faqat ruxsat etilgan belgilardan (- _ ✓ « » ~ +) iborat
-"aylanayotgan doira" ASCII animatsiyasi, oxirida yakuniy tabrik kartasi.
+🎁 /tabrik — foydalanuvchi tabrik matnini yozadi, bot FAQAT
+"🎁 Tabrikni qabul qilish" tugmasi bilan xabar yuboradi (tabrik matni
+HALI ko'rsatilmaydi). Tugma bosilganda, AYNAN SHU xabar (yangisi emas)
+bosqichma-bosqich o'zgaradi:
+
+  1) 5→1 countdown — har bir raqam "katta ASCII-art raqam" sifatida
+     (5x7 nuqta-matritsa shrifti, faqat tabrik_logic.DECOR_CHARS
+     palitrasidan foydalanib chizilgan — oddiy "5, 4, 3..." matn EMAS).
+  2) "Aylanayotgan naqsh" animatsiyasi (bezak chizig'i + aylanuvchi
+     halqa, yana shu palitra bilan).
+  3) Yakuniy karta — foydalanuvchi yozgan tabrik matni shu YERDA birinchi
+     marta ko'rinadi.
+  4) 2 daqiqadan so'ng xabar avtomatik ravishda YANA faqat tugma
+     holatiga qaytadi — qayta bosilsa, animatsiya BOSHIDAN takrorlanadi.
 
 MUHIM ARXITEKTURA:
-- Sof mantiq (matn parsing, freym generatsiyasi, xotiradagi ombor)
-  tabrik_logic.py'da — bu yerda FAQAT Telegram bilan bog'liq kod.
-- Har bir tugma bosilishi ALOHIDA, YANGI xabar sifatida javob oladi
-  (asl /tabrik xabari — button joylashgan xabar — HECH QACHON edit
-  qilinmaydi). Shu tufayli bitta guruhda bir nechta foydalanuvchi bir xil
-  tugmani bossa ham, ularning animatsiyalari (turli xabarlarda ketayotgani
-  uchun) BIR-BIRIGA UMUMAN TA'SIR QILMAYDI.
-- Bitta foydalanuvchi bir vaqtning o'zida ikkinchi marta bossa (masalan
-  tez-tez bosaverib) — ikkinchi bosishga oddiy "⏳ allaqachon ketmoqda"
-  javobi beriladi (_ACTIVE dagi (chat_id, user_id) kaliti orqali),
-  shunda bitta foydalanuvchi uchun ikkita parallel animatsiya xabari
-  ustma-ust tushib ketmaydi.
+- Sof mantiq (matn parsing, ASCII-art freym generatsiyasi, xotiradagi
+  ombor) tabrik_logic.py'da — bu yerda FAQAT Telegram bilan bog'liq kod.
+- Endi bitta UMUMIY xabar (tugma joylashgan xabar) animatsiya qilinadi
+  (avvalgidek har bosishda yangi xabar yaratilmaydi) — shuning uchun
+  "faollik qulfi" endi (chat_id, user_id) emas, balki
+  (chat_id, message_id) bo'yicha: bitta vaqtda faqat BITTA odam shu
+  tugmani "band" qilishi mumkin (boshqasi bossa — "hozir band" javobi).
+- 2 daqiqalik "asl holatga qaytarish" `asyncio.create_task` orqali fonda
+  rejalashtiriladi; agar shu vaqt ichida tugma yana bosilsa, eski
+  rejalashtirilgan vazifa BEKOR qilinadi (shu orqali ikki marta orqama-
+  orqa qaytarib yuborish yoki animatsiya davomida qaytarib yuborish
+  kabi holatlar oldini olinadi).
 - Telegram flood-control (RetryAfter) va "message is not modified"
   xatolari xavfsiz tarzda ushlanadi — animatsiya Telegram limitlariga
   urilib bot butunlay yiqilib qolmaydi.
@@ -35,13 +45,23 @@ import tabrik_logic
 
 logger = logging.getLogger(__name__)
 
-# (chat_id, user_id) -> True — hozir shu foydalanuvchi uchun animatsiya
-# ketayotganini bildiradi (bir xil foydalanuvchi ikki marta bossa oldini
-# olish uchun). Jarayon tugagach albatta o'chiriladi (finally blokida).
+# (chat_id, message_id) -> True — hozir shu XABAR uchun animatsiya
+# ketayotganini bildiradi (bir vaqtda faqat bitta animatsiya). Jarayon
+# tugagach albatta o'chiriladi (finally blokida).
 _ACTIVE: set[tuple[int, int]] = set()
 
+# (chat_id, message_id) -> rejalashtirilgan "asl holatga qaytarish" vazifasi.
+_REVERT_TASKS: dict[tuple[int, int], asyncio.Task] = {}
+
 COUNTDOWN_DELAY = 1.0     # soniya — 5→1 orasidagi kutish
-FRAME_DELAY = 0.45        # soniya — doira freym'lari orasidagi kutish
+FRAME_DELAY = 0.45        # soniya — naqsh freym'lari orasidagi kutish
+REVERT_DELAY_SEC = 120    # 2 daqiqa — yakuniy kartadan keyin tugmaga qaytish
+
+
+def _ready_markup(short_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("🎁 Tabrikni qabul qilish", callback_data=f"tabrik:claim:{short_id}")
+    ]])
 
 
 async def tabrik_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE, override_text: str | None = None):
@@ -63,28 +83,26 @@ async def tabrik_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE, overrid
         return
 
     short_id = tabrik_logic.store_greeting(text)
-    escaped = escape_markdown(text, version=1)
+    # MUHIM: bu yerda tabrik matni HECH QACHON ko'rsatilmaydi — faqat
+    # tugma bosilgach, animatsiya oxirida ochiladi.
     await update.message.reply_text(
-        f"🎁 *Sizga tabrik bor!*\n\n{escaped}",
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("🎁 Tabrikni qabul qilish", callback_data=f"tabrik:claim:{short_id}")
-        ]]),
+        tabrik_logic.build_ready_card(),
+        reply_markup=_ready_markup(short_id),
     )
     logger.info(f"🎁 /tabrik yuborildi: chat_id={update.effective_chat.id}, short_id={short_id}.")
 
 
-async def _safe_edit(msg, text: str) -> None:
+async def _safe_edit(msg, text: str, reply_markup=None) -> None:
     """Xabarni edit qilishda Telegram flood-control (RetryAfter) va
     'message is not modified' xatolarini xavfsiz tarzda o'tkazib yuboradi
     — animatsiya shu sabablarga ko'ra to'xtab qolmasligi kerak."""
     try:
-        await msg.edit_text(text)
+        await msg.edit_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
     except RetryAfter as e:
         logger.warning(f"🎁 Telegram flood-control: {e.retry_after}s kutilmoqda.")
         await asyncio.sleep(e.retry_after + 0.1)
         try:
-            await msg.edit_text(text)
+            await msg.edit_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
         except Exception:
             pass
     except BadRequest as e:
@@ -96,9 +114,13 @@ async def _safe_edit(msg, text: str) -> None:
 
 async def tabrik_claim_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    user = update.effective_user
+    msg = query.message
+    if not msg:
+        await query.answer("⚠️ Xabar topilmadi.", show_alert=True)
+        return
+
     chat_id = update.effective_chat.id
-    key = (chat_id, user.id)
+    message_key = (chat_id, msg.message_id)
 
     short_id = query.data.split(":", 2)[2]
     greeting = tabrik_logic.get_greeting(short_id)
@@ -106,39 +128,68 @@ async def tabrik_claim_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer("⚠️ Bu tabrikning muddati o'tgan.", show_alert=True)
         return
 
-    if key in _ACTIVE:
+    if message_key in _ACTIVE:
         await query.answer("⏳ Animatsiya allaqachon ketmoqda...", show_alert=False)
         return
 
-    _ACTIVE.add(key)
+    # Foydalanuvchi tugmani qayta bossa (yakuniy karta hali 2 daqiqalik
+    # oynada turgan bo'lsa ham) — rejalashtirilgan "qaytarish"ni bekor
+    # qilib, animatsiyani BOSHIDAN qayta ishga tushiramiz.
+    pending_revert = _REVERT_TASKS.pop(message_key, None)
+    if pending_revert:
+        pending_revert.cancel()
+
+    tabrik_logic.touch_greeting(short_id)  # tugma faol ishlatilyapti — TTL yangilanadi
+    _ACTIVE.add(message_key)
     await query.answer("🎁 Ochilmoqda...")
 
     try:
-        # Asl /tabrik xabarini EMAS — shu bosishga tegishli YANGI xabarni
-        # animatsiya qilamiz, shunda boshqa foydalanuvchilarning holatiga
-        # (yoki ular hali bosmagan asl tugmaga) hech qanday ta'sir qilmaydi.
-        anim_msg = await context.bot.send_message(
-            chat_id,
-            tabrik_logic.build_countdown_frame(5),
-            reply_to_message_id=query.message.message_id if query.message else None,
-        )
-
-        for n in (4, 3, 2, 1):
+        for n in (5, 4, 3, 2, 1):
+            await _safe_edit(msg, tabrik_logic.build_countdown_frame(n))
             await asyncio.sleep(COUNTDOWN_DELAY)
-            await _safe_edit(anim_msg, tabrik_logic.build_countdown_frame(n))
 
-        await asyncio.sleep(COUNTDOWN_DELAY)
         for step in range(tabrik_logic.TOTAL_ROTATION_FRAMES):
-            await _safe_edit(anim_msg, tabrik_logic.build_circle_frame(step))
+            await _safe_edit(msg, tabrik_logic.build_circle_frame(step))
             await asyncio.sleep(FRAME_DELAY)
 
-        await _safe_edit(anim_msg, tabrik_logic.build_final_card(greeting))
-        logger.info(f"🎁 Animatsiya muvaffaqiyatli yakunlandi: chat_id={chat_id}, user_id={user.id}.")
+        escaped = escape_markdown(greeting, version=1)
+        await _safe_edit(msg, tabrik_logic.build_final_card(escaped))
+        logger.info(f"🎁 Animatsiya muvaffaqiyatli yakunlandi: chat_id={chat_id}, message_id={msg.message_id}.")
+
+        # 2 daqiqadan keyin xabarni yana "faqat tugma" holatiga qaytaramiz.
+        task = asyncio.create_task(_schedule_revert(context, chat_id, msg.message_id, short_id, message_key))
+        _REVERT_TASKS[message_key] = task
     except Exception as e:
-        logger.error(f"🎁 /tabrik animatsiyasida xato (chat_id={chat_id}, user_id={user.id}): {type(e).__name__}: {e}", exc_info=True)
+        logger.error(f"🎁 /tabrik animatsiyasida xato (chat_id={chat_id}, message_id={msg.message_id}): {type(e).__name__}: {e}", exc_info=True)
         try:
-            await context.bot.send_message(chat_id, "❌ Animatsiyada xatolik yuz berdi, lekin tabrigingiz shu yerda: \n\n" + greeting)
+            escaped = escape_markdown(greeting, version=1)
+            await _safe_edit(msg, f"❌ Animatsiyada xatolik yuz berdi, lekin tabrigingiz shu yerda:\n\n{escaped}")
         except Exception:
             pass
     finally:
-        _ACTIVE.discard(key)
+        _ACTIVE.discard(message_key)
+
+
+async def _schedule_revert(context, chat_id: int, message_id: int, short_id: str, message_key: tuple[int, int]) -> None:
+    """`REVERT_DELAY_SEC` soniyadan keyin xabarni yana "🎁 Tabrikni qabul
+    qilish" tugmasi holatiga qaytaradi. Shu vaqt ichida tugma qayta
+    bosilsa, `tabrik_claim_callback` bu vazifani bekor qiladi (yuqoriga
+    qarang) — shuning uchun `CancelledError` kutilgan holat, xato emas."""
+    try:
+        await asyncio.sleep(REVERT_DELAY_SEC)
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=tabrik_logic.build_ready_card(),
+            reply_markup=_ready_markup(short_id),
+        )
+        logger.info(f"🎁 Xabar asl (tugma) holatiga qaytarildi: chat_id={chat_id}, message_id={message_id}.")
+    except asyncio.CancelledError:
+        raise
+    except BadRequest as e:
+        if "message is not modified" not in str(e).lower():
+            logger.warning(f"🎁 Xabarni asl holatiga qaytarishda xato: {e}")
+    except Exception as e:
+        logger.warning(f"🎁 Xabarni asl holatiga qaytarishda kutilmagan xato: {type(e).__name__}: {e}")
+    finally:
+        _REVERT_TASKS.pop(message_key, None)
