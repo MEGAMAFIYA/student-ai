@@ -850,6 +850,9 @@ def main():
     # "/tabrik@Student_ai_uz_bot ..." formatida ham).
     app.add_handler(CommandHandler("tabrik", tabrik.tabrik_cmd))
     app.add_handler(CallbackQueryHandler(tabrik.tabrik_claim_callback, pattern="^tabrik:claim:"))
+    # 🔍 Xuddi shu, lekin do'st bilan chatda inline rejimda kelgan /tabrik
+    # uchun (inline_message_id bilan ishlaydi, oddiy Message emas).
+    app.add_handler(CallbackQueryHandler(inline_query.inline_tabrik_claim_callback, pattern="^itabrik:claim:"))
     # 🎨 /rasim — Telegram Mini App orqali rasm chizish.
     app.add_handler(CommandHandler("rasim", rasim.rasim_cmd))
     # 🎬 /vid — video yuklab olish (ASCII buyruq, Privacy Mode'dan qat'i
