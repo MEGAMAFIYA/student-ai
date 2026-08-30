@@ -70,52 +70,67 @@ class GreetingStoreTests(unittest.TestCase):
 
 
 class CircleAnimationTests(unittest.TestCase):
-    _ALLOWED = set("-_✓«»~+ \n🎁.🎉!:0123456789«»qwertyuiopasdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM'\"")
+    def _art_block(self, frame: str) -> str:
+        """Freym matnidan ```...``` kod bloki ichidagi "shakl" qismini
+        ajratib oladi (sarlavha va Markdown belgilari hisobga olinmaydi)."""
+        m = re.search(r"```\n(.*?)\n```", frame, re.DOTALL)
+        self.assertIsNotNone(m, f"kod bloki topilmadi: {frame!r}")
+        return m.group(1)
 
-    def _only_allowed_shape_chars(self, frame: str) -> bool:
-        # Faqat SPETSIFIKATSIYADA ruxsat etilgan "shakl" belgilari:
-        allowed_shape_chars = set("-_✓«»~+")
-        # Freym ichidagi shaklni ifodalovchi qatorlarni ajratib olamiz
-        # (sarlavha matn qatorlarini emas) — build_circle_frame 2-4-qatorlar shakl.
-        shape_lines = frame.split("\n")[2:]
-        shape_text = "".join(shape_lines)
-        non_shape_chars = set(shape_text) - allowed_shape_chars - {" "}
-        return len(non_shape_chars) == 0
-
-    def test_all_frames_use_only_allowed_characters(self):
+    def test_circle_frames_use_only_palette_characters(self):
+        allowed = set(tabrik_logic.DECOR_CHARS) | {" ", "\n"}
         for step in range(tabrik_logic.TOTAL_ROTATION_FRAMES):
-            frame = tabrik_logic.build_circle_frame(step)
-            self.assertTrue(
-                self._only_allowed_shape_chars(frame),
-                f"step={step} freymda ruxsat etilmagan belgi bor: {frame!r}",
-            )
+            art = self._art_block(tabrik_logic.build_circle_frame(step))
+            extra = set(art) - allowed
+            self.assertEqual(extra, set(), f"step={step}: ruxsat etilmagan belgi: {extra}")
 
-    def test_frames_are_distinct_across_a_rotation(self):
-        frames = {tabrik_logic.build_circle_frame(s) for s in range(len(tabrik_logic._POSITIONS))}
-        # 8 ta pozitsiyaning har biri boshqacha ko'rinishga ega bo'lishi kerak
-        # (aks holda Telegram "message is not modified" xatosi beradi).
-        self.assertEqual(len(frames), len(tabrik_logic._POSITIONS))
+    def test_circle_frames_are_distinct_across_a_rotation(self):
+        frames = {tabrik_logic.build_circle_frame(s) for s in range(tabrik_logic._RING_POSITIONS)}
+        self.assertEqual(len(frames), tabrik_logic._RING_POSITIONS)
 
-    def test_rotation_wraps_around(self):
-        # step va step+8 (bitta to'liq aylanish) bir xil freymni berishi kerak.
-        f0 = tabrik_logic.build_circle_frame(0)
-        f8 = tabrik_logic.build_circle_frame(8)
-        self.assertEqual(f0, f8)
+    def test_circle_frames_vary_across_full_animation(self):
+        # Bezak chizig'i offset sifatida to'liq `step`ni ishlatgani uchun
+        # (faqat halqa pozitsiyasi emas), 16 freym HAMMASI bir-biridan farq
+        # qilishi kerak — bu qat'iy 8-davrli qaytish emas, balki Telegram
+        # "message is not modified" xatosiga tushib qolmaslik uchun ataylab
+        # shunday: har bir freym oldingisidan farqli.
+        frames = [tabrik_logic.build_circle_frame(s) for s in range(tabrik_logic.TOTAL_ROTATION_FRAMES)]
+        self.assertEqual(len(set(frames)), tabrik_logic.TOTAL_ROTATION_FRAMES)
 
-    def test_countdown_frames_use_only_allowed_characters(self):
-        allowed = set("-_✓«»~+ \n0123456789")
+    def test_countdown_frames_use_only_palette_characters(self):
+        allowed = set(tabrik_logic.DECOR_CHARS) | {" ", "\n"}
         for n in range(1, 6):
-            frame = tabrik_logic.build_countdown_frame(n)
-            extra = set(frame) - allowed - set("Tabrikoydansng.!ariqolganidTBRK'")
-            # Harflar/so'zlar (lotin matni) bo'lishi tabiiy — biz faqat
-            # "shakl chizig'i" qatoridagi belgilarni tekshiramiz.
-            shape_line = frame.split("\n")[2]
-            non_shape = set(shape_line) - set("-_✓«» ")
-            self.assertEqual(non_shape, set(), f"n={n}: {shape_line!r}")
+            art = self._art_block(tabrik_logic.build_countdown_frame(n))
+            extra = set(art) - allowed
+            self.assertEqual(extra, set(), f"n={n}: ruxsat etilmagan belgi: {extra}")
+
+    def test_countdown_frames_are_distinct_per_digit(self):
+        frames = {tabrik_logic.build_countdown_frame(n) for n in range(1, 6)}
+        self.assertEqual(len(frames), 5)
 
     def test_final_card_contains_greeting_text_verbatim(self):
         card = tabrik_logic.build_final_card("Mening tabrigim!")
         self.assertIn("Mening tabrigim!", card)
+
+    def test_ready_card_does_not_contain_greeting(self):
+        # /tabrik yozilgan zahoti tabrik matni ko'rsatilmasligi kerak —
+        # faqat tugma bosilgach ochiladi.
+        ready = tabrik_logic.build_ready_card()
+        self.assertNotIn("Mening tabrigim", ready)
+
+
+class TouchGreetingTests(unittest.TestCase):
+    def setUp(self):
+        tabrik_logic._STORE.clear()
+
+    def test_touch_refreshes_created_at(self):
+        sid = tabrik_logic.store_greeting("Salom")
+        tabrik_logic._STORE[sid]["created_at"] = time.time() - 1000
+        tabrik_logic.touch_greeting(sid)
+        self.assertGreater(tabrik_logic._STORE[sid]["created_at"], time.time() - 5)
+
+    def test_touch_unknown_id_does_not_raise(self):
+        tabrik_logic.touch_greeting("doesnotexist")  # xato ko'tarmasligi kerak
 
 
 if __name__ == "__main__":
