@@ -8,8 +8,13 @@ Bu yerda:
 - Har bir /tabrik chaqiruvi uchun matnni vaqtinchalik (xotirada) saqlash —
   callback_data 64 baytdan oshmasligi kerak bo'lgani uchun, to'liq matnni
   emas, faqat qisqa ID'ni tugmaga yozamiz.
-- Faqat ruxsat etilgan belgilardan (- _ ✓ « » ~ +) foydalangan holda
-  "aylanayotgan doira" ASCII animatsiyasi freym'larini generatsiya qilish.
+- FAQAT quyidagi belgilardan foydalangan holda ("naqsh" palitrasi):
+  • ~ ✓ « » - _ — + ×
+  1) "Katta raqam" ASCII-art countdown (5→1) — har bir raqam 5x7
+     nuqta-matritsa shaklida, shu palitradagi belgilar bilan chiziladi
+     (oddiy "5, 4, 3..." matn EMAS).
+  2) Undan keyingi "aylanayotgan naqsh" animatsiyasi — bezak chizig'i +
+     aylanuvchi halqa, yana shu palitra bilan.
 """
 
 import re
@@ -43,9 +48,14 @@ def parse_tabrik_text(raw_message_text: str) -> str | None:
 # ID saqlaymiz. Xotira cheksiz o'smasligi uchun: eskirgan (TTL o'tgan)
 # yozuvlar har safar yangisi qo'shilganda avtomatik tozalanadi, shuningdek
 # umumiy hajm MAX_ENTRIES'dan oshsa eng eskilari o'chiriladi.
+#
+# MUHIM: tugma cheksiz marta qayta bosilishi mumkin bo'lgani uchun (2
+# daqiqada bir marta "🎁 Tabrikni qabul qilish" holatiga qaytadi), TTL
+# yetarlicha uzun (1 kun) qilib belgilangan — aks holda uzoq vaqt osilib
+# turgan tabrik tugmasi "muddati o'tgan" bo'lib qolar edi.
 _STORE: dict[str, dict] = {}
-ENTRY_TTL_SECONDS = 60 * 60      # 1 soat — shuncha vaqtdan keyin tugma endi ishlamaydi
-MAX_ENTRIES = 2000               # xotira portlab ketmasligi uchun yuqori chegara
+ENTRY_TTL_SECONDS = 60 * 60 * 24  # 1 kun
+MAX_ENTRIES = 2000                # xotira portlab ketmasligi uchun yuqori chegara
 
 
 def _purge_expired(now: float | None = None) -> None:
@@ -75,46 +85,89 @@ def get_greeting(short_id: str) -> str | None:
     return entry["text"] if entry else None
 
 
+def touch_greeting(short_id: str) -> None:
+    """Tugma qayta bosilganda TTL'ni yangilaydi — faol ishlatilayotgan
+    tabrik hech qachon "muddati o'tgan" bo'lib qolmasligi uchun."""
+    entry = _STORE.get(short_id)
+    if entry:
+        entry["created_at"] = time.time()
+
+
 # ------------------------------------------------------------------
-# 3) "Aylanayotgan doira" ASCII animatsiyasi
+# 3) NAQSH PALITRASI — barcha animatsiya freym'lari FAQAT shu
+#    belgilardan foydalanadi.
 # ------------------------------------------------------------------
-# FAQAT quyidagi belgilar ishlatiladi: - _ ✓ « » ~ +  (bo'sh joy va
-# qator ko'chirish — sof formatlash, "kontent belgisi" emas).
-#
-# G'oya: doira shaklidagi 8 ta pozitsiya (soat 12, 1:30, 3, 4:30, 6,
-# 7:30, 9, 10:30) bor. Har bir freym'da FAQAT bitta pozitsiya "yonadi"
-# (✓ bilan almashtiriladi), qolganlari o'zining "passiv" belgisida
-# turadi — pozitsiya freym'dan freym'ga siljiganda, ko'zga xuddi bitta
-# nuqta doira bo'ylab aylanayotgandek ko'rinadi.
-_POSITIONS = ["~", "»", "+", "»", "_", "«", "+", "«"]  # passiv holatdagi belgilar (soat yo'nalishida)
+DECOR_CHARS = ["•", "~", "✓", "«", "»", "-", "_", "—", "+", "×"]
+
+
+def _ornament_line(offset: int, length: int = 21) -> str:
+    """Har bir freym'da bir necha belgiga siljiydigan bezak chizig'i —
+    "aylanish"/"naqsh" hissi beradi (palitradagi HAMMA belgi ishtirok
+    etadi, faqat ketma-ketlik freym'dan freym'ga siljiydi)."""
+    return "".join(DECOR_CHARS[(i + offset) % len(DECOR_CHARS)] for i in range(length))
+
+
+# ------------------------------------------------------------------
+# 4) "KATTA RAQAM" — 5x7 nuqta-matritsa shaklidagi ASCII-art raqamlar
+#    (klassik dot-matrix displey shrifti), FAQAT DECOR_CHARS bilan
+#    chiziladi — oddiy "5, 4, 3..." matn EMAS.
+# ------------------------------------------------------------------
+_DIGIT_BITMAPS: dict[int, list[str]] = {
+    1: ["00100", "01100", "00100", "00100", "00100", "00100", "01110"],
+    2: ["01110", "10001", "00001", "00010", "00100", "01000", "11111"],
+    3: ["11110", "00001", "00001", "01110", "00001", "00001", "11110"],
+    4: ["00010", "00110", "01010", "10010", "11111", "00010", "00010"],
+    5: ["11111", "10000", "11110", "00001", "00001", "10001", "01110"],
+}
+
+
+def _render_big_digit(n: int) -> str:
+    bitmap = _DIGIT_BITMAPS[n]
+    rows = []
+    for r, row in enumerate(bitmap):
+        cells = []
+        for c, cell in enumerate(row):
+            if cell == "1":
+                cells.append(DECOR_CHARS[(r * 5 + c + n) % len(DECOR_CHARS)])
+            else:
+                cells.append(" ")
+        rows.append(" ".join(cells))
+    return "\n".join(rows)
+
+
+def build_countdown_frame(n: int) -> str:
+    """Countdown freym (5→1) — raqam katta ASCII-art shaklida, FAQAT
+    DECOR_CHARS palitrasi bilan chizilgan, monospace uchun kod blokida."""
+    art = _render_big_digit(n)
+    return f"🎁 Tabrik ochilmoqda...\n```\n{art}\n```"
+
+
+# ------------------------------------------------------------------
+# 5) "AYLANAYOTGAN NAQSH" — countdown tugagach ko'rsatiladigan bezak
+#    animatsiyasi.
+# ------------------------------------------------------------------
+_RING_POSITIONS = 8
 TOTAL_ROTATION_FRAMES = 16  # 8 pozitsiya x 2 to'liq aylanish — silliqroq ko'rinish uchun
 
 
 def build_circle_frame(step: int) -> str:
-    """`step` (0 dan TOTAL_ROTATION_FRAMES-1 gacha) bo'yicha doira
-    freym matnini qaytaradi. Faqat ruxsat etilgan belgilar ishlatiladi."""
-    active_pos = step % len(_POSITIONS)
-    cells = list(_POSITIONS)
-    cells[active_pos] = "✓"
-    # 8 pozitsiyani doira shaklida joylashtiramiz (3x3 panjara,
-    # o'rtasi bo'sh — "aylana" hissi uchun):
-    #   [0]   [1]   [2]
-    #   [7]   ' '   [3]
-    #   [6]   [5]   [4]
-    top = f" {cells[0]} {cells[1]} {cells[2]} "
-    mid = f" {cells[7]}   {cells[3]} "
-    bot = f" {cells[6]} {cells[5]} {cells[4]} "
-    return f"🎁 Tabrik tayyorlanmoqda...\n\n{top}\n{mid}\n{bot}"
-
-
-def build_countdown_frame(n: int) -> str:
-    """Countdown freym (5→1). Ruxsat etilgan belgilardan iborat oddiy
-    "progress" chizig'i bilan: n soniya qolganda, (5-n) ta '✓' (o'tgan)
-    va n ta '-' (qolgan) ko'rsatiladi — vizual jihatdan doira sekin
-    "yig'ilib" boryotgandek taassurot beradi."""
-    passed = "✓" * (5 - n)
-    remaining = "-" * n
-    return f"🎁 Tabrik {n} soniyadan so'ng ochiladi...\n\n« {passed}{remaining} »\n\n{n}"
+    """`step` (0 dan TOTAL_ROTATION_FRAMES-1 gacha) bo'yicha "aylanayotgan
+    naqsh" freym matnini qaytaradi. Faol pozitsiya ✓ bilan, qolganlari esa
+    HAR SAFAR palitradan turli belgi bilan (statik takrorlanish emas, har
+    freym'da yangilanadi) — shu orqali haqiqiy "naqsh" taassuroti beriladi."""
+    active = step % _RING_POSITIONS
+    ring = []
+    for i in range(_RING_POSITIONS):
+        if i == active:
+            ring.append("✓")
+        else:
+            ring.append(DECOR_CHARS[(i + step) % len(DECOR_CHARS)])
+    top = f" {ring[0]} {ring[1]} {ring[2]} "
+    mid = f" {ring[7]}   {ring[3]} "
+    bot = f" {ring[6]} {ring[5]} {ring[4]} "
+    border = _ornament_line(step)
+    art = f"{border}\n\n{top}\n{mid}\n{bot}\n\n{border}"
+    return f"🎁 Tabrik tayyorlanmoqda...\n```\n{art}\n```"
 
 
 def build_final_card(greeting_text: str) -> str:
@@ -122,5 +175,11 @@ def build_final_card(greeting_text: str) -> str:
     yozgan matn HTML/Markdown maxsus belgilaridan xoli deb hisoblanmaydi —
     shuning uchun handler bu matnni albatta escape qilib yuborishi kerak
     (parse_mode ishlatilsa)."""
-    frame = "+ ~ « ✓ » ~ +"
-    return f"{frame}\n🎉 TABRIK! 🎉\n{frame}\n\n{greeting_text}\n\n{frame}"
+    border = _ornament_line(0, 25)
+    return f"```\n{border}\n```\n🎉 *TABRIK!* 🎉\n\n{greeting_text}\n\n```\n{border}\n```"
+
+
+def build_ready_card() -> str:
+    """Tugma hali bosilmagan (yoki 2 daqiqadan keyin qayta o'rniga
+    qaytarilgan) holatdagi minimal matn — tabrik matni ko'rsatilmaydi."""
+    return "🎁 Sizga tabrik bor!"
