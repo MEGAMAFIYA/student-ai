@@ -1,6 +1,6 @@
 """
 🎁 /tabrik — foydalanuvchi tabrik matnini yozadi, bot FAQAT
-"🎁 Tabrikni qabul qilish" tugmasi bilan xabar yuboradi (tabrik matni
+"🎁 Tabriknomani qabul qilish" tugmasi bilan xabar yuboradi (tabrik matni
 HALI ko'rsatilmaydi). Tugma bosilganda, AYNAN SHU xabar (yangisi emas)
 bosqichma-bosqich o'zgaradi:
 
@@ -60,7 +60,7 @@ REVERT_DELAY_SEC = 120    # 2 daqiqa — yakuniy kartadan keyin tugmaga qaytish
 
 def _ready_markup(short_id: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[
-        InlineKeyboardButton("🎁 Tabrikni qabul qilish", callback_data=f"tabrik:claim:{short_id}")
+        InlineKeyboardButton("🎁 Tabriknomani qabul qilish", callback_data=f"tabrik:claim:{short_id}")
     ]])
 
 
