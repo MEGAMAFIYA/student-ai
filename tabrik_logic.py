@@ -50,7 +50,7 @@ def parse_tabrik_text(raw_message_text: str) -> str | None:
 # umumiy hajm MAX_ENTRIES'dan oshsa eng eskilari o'chiriladi.
 #
 # MUHIM: tugma cheksiz marta qayta bosilishi mumkin bo'lgani uchun (2
-# daqiqada bir marta "🎁 Tabrikni qabul qilish" holatiga qaytadi), TTL
+# daqiqada bir marta "🎁 Tabriknomani qabul qilish" holatiga qaytadi), TTL
 # yetarlicha uzun (1 kun) qilib belgilangan — aks holda uzoq vaqt osilib
 # turgan tabrik tugmasi "muddati o'tgan" bo'lib qolar edi.
 _STORE: dict[str, dict] = {}
