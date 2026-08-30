@@ -4,7 +4,7 @@ hatto ikki oddiy foydalanuvchi orasidagi shaxsiy chatda ham) "@BotUsername
 savol" deb yozib, botning javobini o'sha chatga to'g'ridan-to'g'ri yuborishi
 uchun handlerlar.
 
-Ikki xil oqim qo'llab-quvvatlanadi:
+To'rtta xil oqim qo'llab-quvvatlanadi:
 
   A) YENGIL (oddiy savol-javob) — TEZKOR:
      1. `on_inline_query` bitta "matn" natijasi (placeholder) qaytaradi.
@@ -29,6 +29,26 @@ Ikki xil oqim qo'llab-quvvatlanadi:
         BIR MARTA almashtiriladi (`edit_message_media`) — shu bosqichda
         fayl to'g'ridan-to'g'ri (URL orqali emas) yuklanadi.
 
+  C) OG'IR (video/audio yuklab olish — /vid, /qo'shiq) — B bilan BIR XIL
+     naqsh, faqat PDF o'rniga video/audio:
+     1. "/vid <havola>" — bitta HUJJAT-turidagi placeholder natija.
+        Tanlangach, `_handle_vid` video_tools.download_video() bilan
+        yuklaydi va `InputMediaVideo` bilan almashtiradi.
+     2. "/qo'shiq <so'rov>" — video_tools.search_tracks() orqali topilgan
+        HAR BIR qo'shiq uchun ALOHIDA placeholder natija qaytariladi
+        (Telegram bularni gorizontal ro'yxat sifatida ko'rsatadi — shu
+        orqali foydalanuvchi "qaysi qo'shiqni xohlaysiz" deb TANLAYDI,
+        aynan shu tanlov orqali qaysi biri yuklanishi aniqlanadi). Tanlangan
+        BITTASI uchun `_handle_qoshiq` yuklab, `InputMediaAudio` bilan
+        almashtiradi.
+     Ikkalasi ham PUBLIC_BASE_URL talab qiladi (B oqimidagi kabi sabab).
+
+  D) OG'IR (/tabrik) — matn animatsiyasi, A bilan BIR XIL mexanizm (matnni
+     matn bilan almashtirish), faqat bitta emas bir nechta bosqichma-bosqich
+     `edit_message_text` chaqiruvi bilan (countdown + aylanuvchi doira,
+     xuddi handlers/tabrik.py'dagi kabi — mantiq tabrik_logic.py'da umumiy).
+     PUBLIC_BASE_URL talab qilinmaydi (fayl emas, faqat matn).
+
 MUHIM SOZLASH (BotFather orqali, kod bilan bog'liq emas):
   /setinline           -> inline rejimni yoqish (placeholder matn so'raladi)
   /setinlinefeedback   -> "Enabled" qilib qo'yish SHART, aks holda 2-3
@@ -36,13 +56,18 @@ MUHIM SOZLASH (BotFather orqali, kod bilan bog'liq emas):
 
 MUHIM SOZLASH (config.py / .env orqali):
   PUBLIC_BASE_URL       -> botning ochiq https manzili (Render URL'i).
-                           Bo'sh bo'lsa, OG'IR oqim (B) o'chiriladi va
+                           Bo'sh bo'lsa, OG'IR oqimlar (B, C) o'chiriladi va
                            foydalanuvchi botning shaxsiy chatiga yo'naltiriladi
-                           — YENGIL oqim (A) baribir to'liq ishlayveradi.
+                           — YENGIL oqim (A) va /tabrik (D) baribir to'liq
+                           ishlayveradi.
+  ffmpeg (serverda)     -> /qo'shiq uchun MP3'ga o'tkazish SHART (video_tools.py).
 """
 
+import asyncio
 import logging
 import re
+import shutil
+import tempfile
 import time
 import uuid
 
@@ -52,6 +77,8 @@ from telegram import (
     InlineQueryResultDocument,
     InputTextMessageContent,
     InputMediaDocument,
+    InputMediaVideo,
+    InputMediaAudio,
     InputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -60,9 +87,12 @@ from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 from telegram.error import BadRequest
 
+import config
 from config import UNIVERSAL_CHAT_AI, PUBLIC_BASE_URL
 from ai_clients import ask_ai
 from handlers import course_work
+import tabrik_logic
+import video_tools
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +149,25 @@ OTHER_HEAVY_HINTS = re.compile(
     re.IGNORECASE,
 )
 
+# ------------------------------------------------------------------
+# 🎬🎵🎁 /vid, /qo'shiq, /tabrik — inline matnda ("@Bot ..." qismi Telegram
+# tomonidan avtomatik olib tashlanadi, `query`da FAQAT shundan keyingi matn
+# keladi) shu buyruqlar bilan boshlanishini aniqlash uchun.
+# ------------------------------------------------------------------
+VID_BARE_RE = re.compile(r"^/vid(?:@\w+)?\s*$", re.IGNORECASE)
+VID_WITH_URL_RE = re.compile(r"^/vid(?:@\w+)?\s+(https?://\S+)", re.IGNORECASE)
+
+# Apostrofning barcha variantlari — handlers/qoshiq.py'dagi bilan bir xil.
+QOSHIQ_BARE_RE = re.compile(r"^/(?:qo[`'\u00b4\u2018\u2019\u02bb\u02bc]shiq|qoshiq)(?:@\w+)?\s*$", re.IGNORECASE)
+QOSHIQ_WITH_QUERY_RE = re.compile(r"^/(?:qo[`'\u00b4\u2018\u2019\u02bb\u02bc]shiq|qoshiq)(?:@\w+)?\s+(.+)$", re.IGNORECASE)
+
+TABRIK_BARE_RE = re.compile(r"^/tabrik(?:@\w+)?\s*$", re.IGNORECASE)
+
+# /vid, /qo'shiq uchun placeholder — inline "hujjat" natijasi shu manzildan
+# xizmat qilinadi (bot.py > HealthHandler), keyin haqiqiy video/audio bilan
+# almashtiriladi.
+_PLACEHOLDER_TXT_PATH = "/placeholder.txt"
+
 
 # ============================================================
 # 1-BOSQICH: inline so'rovga TEZKOR javob
@@ -135,6 +184,116 @@ async def on_inline_query(
 
     cache = context.bot_data.setdefault("inline_queries", {})
     _trim_cache(cache)
+
+    # --------------------------------------------------------
+    # 🎬 OG'IR: /vid
+    # --------------------------------------------------------
+
+    if VID_WITH_URL_RE.match(query):
+        if not PUBLIC_BASE_URL:
+            await _answer_redirect(update, query)
+            return
+
+        url = VID_WITH_URL_RE.match(query).group(1)
+        result_id = str(uuid.uuid4())
+        cache[result_id] = {"type": "vid", "url": url}
+
+        results = [
+            InlineQueryResultDocument(
+                id=result_id,
+                title="🎬 Video yuklab olinadi",
+                description=url[:120],
+                document_url=f"{PUBLIC_BASE_URL}{_PLACEHOLDER_TXT_PATH}",
+                mime_type="text/plain",
+                caption=f"⏳ Video yuklab olinmoqda...\n{url}",
+                reply_markup=INLINE_MESSAGE_MARKUP,
+            )
+        ]
+        await update.inline_query.answer(results, cache_time=0, is_personal=True)
+        return
+
+    if VID_BARE_RE.match(query):
+        await _answer_instruction(
+            update, "🎬 /vid — video havolasini ham yozing",
+            "Masalan: /vid https://www.youtube.com/watch?v=...",
+        )
+        return
+
+    # --------------------------------------------------------
+    # 🎵 OG'IR: /qo'shiq — har bir natija ALOHIDA tanlanadigan qilib
+    # qaytariladi (Telegram ularni ro'yxat sifatida ko'rsatadi, foydalanuvchi
+    # birini TANLAYDI — aynan shu orqali "qaysi qo'shiqni xohlaysiz" savolига
+    # javob beriladi, alohida tugmalar shart emas).
+    # --------------------------------------------------------
+
+    if QOSHIQ_WITH_QUERY_RE.match(query):
+        if not PUBLIC_BASE_URL:
+            await _answer_redirect(update, query)
+            return
+
+        search_text = QOSHIQ_WITH_QUERY_RE.match(query).group(1).strip()
+        try:
+            tracks = await asyncio.to_thread(video_tools.search_tracks, search_text, config.QOSHIQ_SEARCH_COUNT)
+        except video_tools.DownloadError as e:
+            await _answer_instruction(update, "🎵 Qidiruvda xatolik", str(e))
+            return
+        except Exception as e:
+            logger.error(f"🔍 Inline /qo'shiq qidiruvida kutilmagan xato ('{search_text}'): {type(e).__name__}: {e}", exc_info=True)
+            await _answer_instruction(update, "🎵 Qidiruvda xatolik", "Birozdan so'ng qayta urinib ko'ring.")
+            return
+
+        results = []
+        for t in tracks:
+            result_id = str(uuid.uuid4())
+            cache[result_id] = {"type": "qoshiq", "url": t["webpage_url"], "title": t["title"], "uploader": t.get("uploader")}
+            results.append(
+                InlineQueryResultDocument(
+                    id=result_id,
+                    title=f"{t['source_emoji']} {t['title'][:60]}",
+                    description=t.get("uploader") or t["source_label"],
+                    document_url=f"{PUBLIC_BASE_URL}{_PLACEHOLDER_TXT_PATH}",
+                    mime_type="text/plain",
+                    caption=f"⏳ \"{t['title']}\" yuklab olinmoqda...",
+                    reply_markup=INLINE_MESSAGE_MARKUP,
+                )
+            )
+        await update.inline_query.answer(results, cache_time=0, is_personal=True)
+        return
+
+    if QOSHIQ_BARE_RE.match(query):
+        await _answer_instruction(
+            update, "🎵 /qo'shiq — ijrochi yoki qo'shiq nomini ham yozing",
+            "Masalan: /qo'shiq Ozodbek Nazarbekov",
+        )
+        return
+
+    # --------------------------------------------------------
+    # 🎁 OG'IR (faqat matn): /tabrik
+    # --------------------------------------------------------
+
+    if query[:7].lower().startswith("/tabrik") and not TABRIK_BARE_RE.match(query):
+        text = tabrik_logic.parse_tabrik_text(query)
+        if text:
+            result_id = str(uuid.uuid4())
+            cache[result_id] = {"type": "tabrik", "text": text}
+            results = [
+                InlineQueryResultArticle(
+                    id=result_id,
+                    title="🎁 Tabrik yuborish",
+                    description=text[:120],
+                    input_message_content=InputTextMessageContent("🎁 Tabrik tayyorlanmoqda..."),
+                    reply_markup=INLINE_MESSAGE_MARKUP,
+                )
+            ]
+            await update.inline_query.answer(results, cache_time=0, is_personal=True)
+            return
+
+    if TABRIK_BARE_RE.match(query):
+        await _answer_instruction(
+            update, "🎁 /tabrik — tabrik matnini ham yozing",
+            "Masalan: /tabrik Salom mening qadrli insonim...",
+        )
+        return
 
     # --------------------------------------------------------
     # OG'IR: kurs ishi
@@ -266,6 +425,22 @@ async def _answer_redirect(
     )
 
 
+async def _answer_instruction(update: Update, title: str, description: str):
+    """Foydalanuvchi buyruqni to'liq yozmagan (masalan faqat "/vid",
+    havolasiz) holatlarda ko'rsatiladigan, keshlanmaydigan ko'rsatma
+    natijasi — tanlansa ham hech qanday og'ir ish boshlanmaydi, faqat
+    o'sha ko'rsatma matni chatga joylanadi."""
+    results = [
+        InlineQueryResultArticle(
+            id=str(uuid.uuid4()),
+            title=title,
+            description=description,
+            input_message_content=InputTextMessageContent(f"{title}\n{description}"),
+        )
+    ]
+    await update.inline_query.answer(results, cache_time=0, is_personal=True)
+
+
 def _trim_cache(cache: dict):
     if len(cache) > _MAX_CACHE:
         for old_key in list(cache.keys())[
@@ -311,6 +486,30 @@ async def on_chosen_inline_result(
             entry["topic"],
             entry["pages"]
         )
+        return
+
+    # --------------------------------------------------------
+    # 🎬 /vid
+    # --------------------------------------------------------
+
+    if entry and entry.get("type") == "vid":
+        await _handle_vid(context, inline_message_id, entry["url"])
+        return
+
+    # --------------------------------------------------------
+    # 🎵 /qo'shiq
+    # --------------------------------------------------------
+
+    if entry and entry.get("type") == "qoshiq":
+        await _handle_qoshiq(context, inline_message_id, entry["url"], entry["title"], entry.get("uploader"))
+        return
+
+    # --------------------------------------------------------
+    # 🎁 /tabrik
+    # --------------------------------------------------------
+
+    if entry and entry.get("type") == "tabrik":
+        await _handle_tabrik(context, inline_message_id, entry["text"])
         return
 
     # --------------------------------------------------------
@@ -643,5 +842,135 @@ async def _handle_course_work(
                 reply_markup=INLINE_MESSAGE_MARKUP,
             )
 
+        except Exception:
+            pass
+
+
+# ============================================================
+# 🎬 OG'IR OQIM: /vid
+# ============================================================
+
+async def _handle_vid(
+    context: ContextTypes.DEFAULT_TYPE,
+    inline_message_id: str,
+    url: str,
+):
+    dest_dir = tempfile.mkdtemp(prefix="inline_vid_")
+    try:
+        filepath = await asyncio.to_thread(
+            video_tools.download_video, url, dest_dir, config.VID_MAX_MB, config.VID_DOWNLOAD_TIMEOUT_SEC,
+        )
+        with open(filepath, "rb") as f:
+            await context.bot.edit_message_media(
+                inline_message_id=inline_message_id,
+                media=InputMediaVideo(
+                    media=InputFile(f),
+                    caption=f"✅ Video tayyor.\n\n🤖 Talaba AI — @{BOT_USERNAME}",
+                ),
+                reply_markup=INLINE_MESSAGE_MARKUP,
+            )
+        logger.info(f"🔍 Inline /vid muvaffaqiyatli: url={url}.")
+    except video_tools.DownloadError as e:
+        try:
+            await context.bot.edit_message_caption(
+                inline_message_id=inline_message_id, caption=str(e), reply_markup=INLINE_MESSAGE_MARKUP,
+            )
+        except Exception:
+            pass
+    except Exception as e:
+        logger.error(f"🔍 Inline /vid kutilmagan xato (url={url}): {type(e).__name__}: {e}", exc_info=True)
+        try:
+            await context.bot.edit_message_caption(
+                inline_message_id=inline_message_id,
+                caption="❌ Video yuborishda kutilmagan xatolik yuz berdi.",
+                reply_markup=INLINE_MESSAGE_MARKUP,
+            )
+        except Exception:
+            pass
+    finally:
+        shutil.rmtree(dest_dir, ignore_errors=True)
+
+
+# ============================================================
+# 🎵 OG'IR OQIM: /qo'shiq
+# ============================================================
+
+async def _handle_qoshiq(
+    context: ContextTypes.DEFAULT_TYPE,
+    inline_message_id: str,
+    url: str,
+    title: str,
+    uploader: str | None,
+):
+    dest_dir = tempfile.mkdtemp(prefix="inline_qoshiq_")
+    try:
+        filepath = await asyncio.to_thread(
+            video_tools.download_audio, url, dest_dir, config.QOSHIQ_MAX_MB, config.QOSHIQ_DOWNLOAD_TIMEOUT_SEC,
+        )
+        with open(filepath, "rb") as f:
+            await context.bot.edit_message_media(
+                inline_message_id=inline_message_id,
+                media=InputMediaAudio(
+                    media=InputFile(f),
+                    title=title[:64],
+                    performer=uploader or None,
+                    caption=f"✅ Tayyor.\n\n🤖 Talaba AI — @{BOT_USERNAME}",
+                ),
+                reply_markup=INLINE_MESSAGE_MARKUP,
+            )
+        logger.info(f"🔍 Inline /qo'shiq muvaffaqiyatli: track='{title}'.")
+    except video_tools.DownloadError as e:
+        try:
+            await context.bot.edit_message_caption(
+                inline_message_id=inline_message_id, caption=str(e), reply_markup=INLINE_MESSAGE_MARKUP,
+            )
+        except Exception:
+            pass
+    except Exception as e:
+        logger.error(f"🔍 Inline /qo'shiq kutilmagan xato (title='{title}'): {type(e).__name__}: {e}", exc_info=True)
+        try:
+            await context.bot.edit_message_caption(
+                inline_message_id=inline_message_id,
+                caption="❌ Qo'shiqni yuborishda kutilmagan xatolik yuz berdi.",
+                reply_markup=INLINE_MESSAGE_MARKUP,
+            )
+        except Exception:
+            pass
+    finally:
+        shutil.rmtree(dest_dir, ignore_errors=True)
+
+
+# ============================================================
+# 🎁 OG'IR OQIM: /tabrik (matn animatsiyasi)
+# ============================================================
+
+TABRIK_COUNTDOWN_DELAY = 1.0
+TABRIK_FRAME_DELAY = 0.45
+
+
+async def _handle_tabrik(
+    context: ContextTypes.DEFAULT_TYPE,
+    inline_message_id: str,
+    text: str,
+):
+    try:
+        for n in (5, 4, 3, 2, 1):
+            await _safe_edit_text(context, inline_message_id, tabrik_logic.build_countdown_frame(n))
+            await asyncio.sleep(TABRIK_COUNTDOWN_DELAY)
+
+        for step in range(tabrik_logic.TOTAL_ROTATION_FRAMES):
+            await _safe_edit_text(context, inline_message_id, tabrik_logic.build_circle_frame(step))
+            await asyncio.sleep(TABRIK_FRAME_DELAY)
+
+        final_text = f"{tabrik_logic.build_final_card(text)}\n\n🤖 Talaba AI — @{BOT_USERNAME}"
+        await _safe_edit_text(context, inline_message_id, final_text, reply_markup=INLINE_MESSAGE_MARKUP)
+        logger.info("🔍 Inline /tabrik animatsiyasi muvaffaqiyatli yakunlandi.")
+    except Exception as e:
+        logger.error(f"🔍 Inline /tabrik animatsiyasida kutilmagan xato: {type(e).__name__}: {e}", exc_info=True)
+        try:
+            await _safe_edit_text(
+                context, inline_message_id, f"🎁 {text}\n\n🤖 Talaba AI — @{BOT_USERNAME}",
+                reply_markup=INLINE_MESSAGE_MARKUP,
+            )
         except Exception:
             pass
