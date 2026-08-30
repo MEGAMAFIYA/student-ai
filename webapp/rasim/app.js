@@ -48,6 +48,32 @@
   const templateSheet = document.getElementById("templateSheet");
   const templateGrid = document.getElementById("templateGrid");
 
+  const promptText = document.getElementById("promptText");
+  const promptShuffleBtn = document.getElementById("promptShuffleBtn");
+
+  // ============================================================
+  // 🎯 CHIZISH TAKLIFI — bot tasodifiy buyum/hayvon aytadi, foydalanuvchi
+  // shuni chizadi ("Pictionary" uslubida). Sof ijodiy/o'yin xususiyati —
+  // tanlangan so'z serverga umuman yuborilmaydi, faqat ekranda ko'rsatiladi.
+  // ============================================================
+  const DRAW_PROMPTS = [
+    "🐱 Mushuk", "🐶 It", "🐰 Quyon", "🦁 Sher", "🐘 Fil", "🐢 Toshbaqa",
+    "🐟 Baliq", "🦋 Kapalak", "🐝 Ari", "🐔 Xo'roz", "🐄 Sigir", "🐴 Ot",
+    "🦒 Jirafa", "🐧 Pingvin", "🦉 Boyqush", "🐍 Ilon", "🐸 Qurbaqa",
+    "🏠 Uy", "🚗 Mashina", "✈️ Samolyot", "🌳 Daraxt", "🌸 Gul", "☀️ Quyosh",
+    "🌙 Oy", "⭐ Yulduz", "☂️ Soyabon", "📚 Kitob", "⌚ Soat", "🎈 Shar",
+    "🎂 Tort", "🍎 Olma", "🍉 Tarvuz", "⚽ Futbol to'pi", "🚲 Velosiped",
+    "⛰️ Tog'", "🌈 Kamalak", "❄️ Qorqop", "🎁 Sovg'a", "🎸 Gitara", "🚀 Raketa",
+  ];
+
+  function showRandomPrompt() {
+    const word = DRAW_PROMPTS[Math.floor(Math.random() * DRAW_PROMPTS.length)];
+    promptText.textContent = `🎯 Chizing: ${word}`;
+  }
+
+  promptShuffleBtn.addEventListener("click", showRandomPrompt);
+  showRandomPrompt();
+
   const PALETTE = [
     "#211F1C", "#D64545", "#E88C3D", "#E8C93D",
     "#3FA55B", "#1E9E90", "#2F6FE0", "#8B4FD6", "#ffffff",
