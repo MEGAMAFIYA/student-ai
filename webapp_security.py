@@ -75,6 +75,14 @@ def verify_telegram_init_data(init_data: str, bot_token: str, max_age_seconds: i
         return None
     if not isinstance(user, dict) or "id" not in user:
         return None
+    # 🧩 "query_id" — FAQAT Mini App inline rejimda (do'st bilan shaxsiy
+    # chatda "@Bot ..." orqali) ochilganda keladi. Bu Telegram'ning HAM
+    # imzolangan (initData ichida, shuning uchun HMAC bilan tekshirilgan)
+    # maydoni — keyinchalik `answer_web_app_query()` chaqirish uchun kerak
+    # bo'ladi. Oddiy user maydoniga aralashtirmaslik uchun "_" prefiksi bilan
+    # qo'shib qo'yamiz (haqiqiy Telegram user maydonlari orasida bunday nom
+    # yo'q, shuning uchun to'qnashuv xavfi yo'q).
+    user["_query_id"] = data.get("query_id")
     return user
 
 
@@ -135,3 +143,59 @@ def consume_request(rid: str, verified_user_id: int) -> int | None:
         return None
     entry["used"] = True
     return entry["chat_id"]
+
+
+# ------------------------------------------------------------------
+# 🎫🔍 INLINE REJIM uchun so'rov tokenlari — do'st bilan shaxsiy chatda
+# "@Bot /rasim" orqali ochilgan Mini App uchun. Bu yerda `chat_id`
+# UMUMAN YO'Q — Telegram inline rejimda maxfiylik sababli qaysi chatga
+# yuborilayotganini botga aytmaydi. Buning o'rniga, rasm tayyor bo'lgach
+# Telegram'ning maxsus `answer_web_app_query` mexanizmi ishlatiladi (bot.py),
+# u esa `query_id` orqali (initData ichida imzolangan) xabarni TO'G'RI
+# joyga o'zi yetkazadi — bizga chat_id bilishimiz shart emas.
+#
+# rid'lar oddiy (chatga bog'langan) so'rovlardan "in_" prefiksi bilan
+# FARQLANADI — shu orqali /miniapp/rasim/upload bitta rid qaysi turga
+# tegishli ekanini (qaysi ombordan qidirishni) darhol biladi.
+# ------------------------------------------------------------------
+_INLINE_REQUESTS: dict[str, dict] = {}
+INLINE_REQUEST_TTL_SECONDS = 15 * 60
+MAX_INLINE_REQUESTS = 5000
+
+
+def _purge_expired_inline_requests(now: float | None = None) -> None:
+    now = now if now is not None else time.time()
+    expired = [k for k, v in _INLINE_REQUESTS.items() if now - v["created_at"] > INLINE_REQUEST_TTL_SECONDS]
+    for k in expired:
+        del _INLINE_REQUESTS[k]
+
+
+def create_inline_request(user_id: int) -> str:
+    """Inline `/rasim` uchun yangi bitta martalik token yaratadi (rid
+    "in_" bilan boshlanadi — bot.py shu orqali inline turini aniqlaydi)."""
+    rid = "in_" + uuid.uuid4().hex
+    _INLINE_REQUESTS[rid] = {"user_id": user_id, "created_at": time.time(), "used": False}
+    _purge_expired_inline_requests()
+    if len(_INLINE_REQUESTS) > MAX_INLINE_REQUESTS:
+        oldest = sorted(_INLINE_REQUESTS.items(), key=lambda kv: kv[1]["created_at"])
+        for k, _ in oldest[: len(_INLINE_REQUESTS) - MAX_INLINE_REQUESTS]:
+            del _INLINE_REQUESTS[k]
+    return rid
+
+
+def consume_inline_request(rid: str, verified_user_id: int) -> bool:
+    """`consume_request`ga o'xshaydi, lekin chat_id emas, faqat
+    muvaffaqiyat/muvaffaqiyatsizlikni (bool) qaytaradi — chunki bu yerda
+    "qaysi chatga qaytarish" ma'lumoti umuman saqlanmaydi."""
+    entry = _INLINE_REQUESTS.get(rid)
+    if not entry:
+        return False
+    if entry["used"]:
+        return False
+    if time.time() - entry["created_at"] > INLINE_REQUEST_TTL_SECONDS:
+        del _INLINE_REQUESTS[rid]
+        return False
+    if int(entry["user_id"]) != int(verified_user_id):
+        return False
+    entry["used"] = True
+    return True
