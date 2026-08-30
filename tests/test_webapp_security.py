@@ -37,6 +37,14 @@ class VerifyInitDataTests(unittest.TestCase):
         self.assertEqual(user["id"], 555)
         self.assertEqual(user["username"], "davron")
 
+    def test_valid_init_data_exposes_query_id_for_inline_flow(self):
+        # query_id — inline rejimda ochilgan Mini App uchun kerak
+        # (answer_web_app_query chaqirish uchun), _build_valid_init_data
+        # buni har doim qo'shadi.
+        init_data = _build_valid_init_data(user_id=555)
+        user = ws.verify_telegram_init_data(init_data, BOT_TOKEN)
+        self.assertEqual(user["_query_id"], "AAFoobar123")
+
     def test_tampered_data_is_rejected(self):
         init_data = _build_valid_init_data(user_id=555)
         # Foydalanuvchi ID'sini imzolanmagan holda o'zgartirishga urinamiz.
@@ -130,6 +138,53 @@ class RequestTokenTests(unittest.TestCase):
             self.assertEqual(ws.consume_request(ids[-1], verified_user_id=9), 9)
         finally:
             ws.MAX_REQUESTS = old_max
+
+
+class InlineRequestTokenTests(unittest.TestCase):
+    """🔍 /rasim inline rejimda (chat_id'siz, faqat user_id bilan) — bular
+    do'st bilan shaxsiy chatda '@Bot /rasim' orqali ochilgan Mini App
+    uchun ishlatiladi (webapp_security.consume_inline_request)."""
+
+    def setUp(self):
+        ws._INLINE_REQUESTS.clear()
+
+    def test_rid_has_inline_prefix(self):
+        rid = ws.create_inline_request(user_id=42)
+        self.assertTrue(rid.startswith("in_"))
+
+    def test_create_and_consume(self):
+        rid = ws.create_inline_request(user_id=42)
+        self.assertTrue(ws.consume_inline_request(rid, verified_user_id=42))
+
+    def test_cannot_consume_twice(self):
+        rid = ws.create_inline_request(user_id=42)
+        self.assertTrue(ws.consume_inline_request(rid, verified_user_id=42))
+        self.assertFalse(ws.consume_inline_request(rid, verified_user_id=42))
+
+    def test_wrong_user_cannot_consume_someone_elses_request(self):
+        rid = ws.create_inline_request(user_id=42)
+        self.assertFalse(ws.consume_inline_request(rid, verified_user_id=999))
+        # Asl foydalanuvchi hali ham muvaffaqiyatli ishlata olishi kerak.
+        self.assertTrue(ws.consume_inline_request(rid, verified_user_id=42))
+
+    def test_unknown_rid_returns_false(self):
+        self.assertFalse(ws.consume_inline_request("in_doesnotexist", verified_user_id=42))
+
+    def test_expired_request_is_rejected(self):
+        rid = ws.create_inline_request(user_id=42)
+        ws._INLINE_REQUESTS[rid]["created_at"] = time.time() - ws.INLINE_REQUEST_TTL_SECONDS - 10
+        self.assertFalse(ws.consume_inline_request(rid, verified_user_id=42))
+
+    def test_max_inline_requests_evicts_oldest(self):
+        old_max = ws.MAX_INLINE_REQUESTS
+        ws.MAX_INLINE_REQUESTS = 5
+        try:
+            ids = [ws.create_inline_request(user_id=i) for i in range(10)]
+            self.assertLessEqual(len(ws._INLINE_REQUESTS), 5)
+            self.assertFalse(ws.consume_inline_request(ids[0], verified_user_id=0))
+            self.assertTrue(ws.consume_inline_request(ids[-1], verified_user_id=9))
+        finally:
+            ws.MAX_INLINE_REQUESTS = old_max
 
 
 if __name__ == "__main__":
