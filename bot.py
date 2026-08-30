@@ -142,6 +142,15 @@ async def _error_handler(update, context):
 _PLACEHOLDER_PDF_BYTES: bytes = b""
 _PLACEHOLDER_PDF_PATH = "/placeholder.pdf"
 
+# 🎬🎵🎁 /vid, /qo'shiq, /tabrik uchun inline placeholder — bularga alohida
+# PDF/rasm shart emas, shunchaki "hujjat sifatida boshlab, keyin video/audio
+# bilan almashtirish" naqshi uchun har qanday kichik fayl yetarli (yuqoridagi
+# PDF haqidagi izohdagi sabab bilan bir xil: Telegram matn xabarini
+# media'ga aylantirishga ruxsat bermaydi, lekin bitta media turini
+# BOSHQASIGA almashtirishga ruxsat beradi).
+_PLACEHOLDER_TXT_BYTES = "⏳ Tayyorlanmoqda...".encode("utf-8")
+_PLACEHOLDER_TXT_PATH = "/placeholder.txt"
+
 
 def _build_placeholder_pdf() -> bytes:
     try:
@@ -327,6 +336,14 @@ class HealthHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(_PLACEHOLDER_PDF_BYTES)))
             self.end_headers()
             self.wfile.write(_PLACEHOLDER_PDF_BYTES)
+            return
+
+        if self.path == _PLACEHOLDER_TXT_PATH:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(_PLACEHOLDER_TXT_BYTES)))
+            self.end_headers()
+            self.wfile.write(_PLACEHOLDER_TXT_BYTES)
             return
 
         if self.path.startswith("/miniapp/rasim"):
