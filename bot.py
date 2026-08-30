@@ -12,13 +12,14 @@ import json
 import logging
 import mimetypes
 import os
+import re
 import tempfile
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from threading import Thread
+from threading import Thread, Timer
 
-from telegram import BotCommand, BotCommandScopeDefault, BotCommandScopeAllGroupChats, BotCommandScopeChat
+from telegram import BotCommand, BotCommandScopeDefault, BotCommandScopeAllGroupChats, BotCommandScopeChat, InlineQueryResultPhoto
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -32,7 +33,7 @@ from telegram.ext import (
 )
 
 import config
-from config import TELEGRAM_TOKEN
+from config import TELEGRAM_TOKEN, PUBLIC_BASE_URL
 import wallet
 import payment_providers
 import webapp_security
@@ -142,15 +143,6 @@ async def _error_handler(update, context):
 _PLACEHOLDER_PDF_BYTES: bytes = b""
 _PLACEHOLDER_PDF_PATH = "/placeholder.pdf"
 
-# 🎬🎵🎁 /vid, /qo'shiq, /tabrik uchun inline placeholder — bularga alohida
-# PDF/rasm shart emas, shunchaki "hujjat sifatida boshlab, keyin video/audio
-# bilan almashtirish" naqshi uchun har qanday kichik fayl yetarli (yuqoridagi
-# PDF haqidagi izohdagi sabab bilan bir xil: Telegram matn xabarini
-# media'ga aylantirishga ruxsat bermaydi, lekin bitta media turini
-# BOSHQASIGA almashtirishga ruxsat beradi).
-_PLACEHOLDER_TXT_BYTES = "⏳ Tayyorlanmoqda...".encode("utf-8")
-_PLACEHOLDER_TXT_PATH = "/placeholder.txt"
-
 
 def _build_placeholder_pdf() -> bytes:
     try:
@@ -187,6 +179,16 @@ _WEBAPP_STATIC_FILES = {
 }
 _WEBAPP_MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MB — Mini App rasm yuklash chegarasi
 _WEBAPP_UPLOAD_TMP_DIR = os.path.join(tempfile.gettempdir(), "rasim_uploads")
+
+# 🔍 Inline rejim (/rasim do'st bilan chatda) uchun: Telegram'ning
+# `answer_web_app_query`/`InlineQueryResultPhoto` mexanizmi rasmni FAYL
+# sifatida emas, OCHIQ HTTPS URL orqali talab qiladi — shuning uchun
+# yuklangan PNG shu papkaga saqlanadi va pastdagi GET route orqali qisqa
+# muddat (bir necha daqiqa, Telegram uni yetib olib ulguradi) ochiq
+# turadi, so'ng threading.Timer bilan avtomatik o'chiriladi.
+_WEBAPP_GENERATED_DIR = os.path.join(tempfile.gettempdir(), "rasim_generated")
+_WEBAPP_GENERATED_URL_PREFIX = "/miniapp/rasim/generated/"
+_WEBAPP_GENERATED_TTL_SEC = 10 * 60  # 10 daqiqa
 
 
 def _serve_webapp_static(handler: "HealthHandler", path: str) -> bool:
@@ -238,14 +240,32 @@ def _decode_data_url_image(data_url: str) -> bytes | None:
 
 def _handle_rasim_upload(handler: "HealthHandler") -> None:
     """POST /miniapp/rasim/upload — Mini App'dan chizilgan rasmni qabul
-    qiladi, Telegram initData'ni tasdiqlaydi, bitta martalik `rid`
-    tokeni orqali TO'G'RI chatni aniqlaydi va rasmni o'sha chatga
-    yuboradi. Har bir qadam mustaqil ravishda rad etilishi mumkin —
-    hech qanday bosqichda boshqa foydalanuvchining fayli/chatiga
-    kirish imkoni yo'q."""
+    qiladi, Telegram initData'ni tasdiqlaydi va rasmni TO'G'RI joyga
+    yuboradi. `rid`ning turi (oddiy/"in_" prefiksli) qaysi yo'l
+    tanlanishini aniqlaydi:
+
+    - Oddiy rid (chatga bog'langan, /rasim guruh/shaxsiy chatda
+      chaqirilganda) -> rasm to'g'ridan-to'g'ri fayl sifatida o'sha
+      chatga yuboriladi (`send_photo`).
+    - "in_" prefiksli rid (do'st bilan chatda "@Bot /rasim" — inline
+      rejim) -> chat_id UMUMAN yo'q, shuning uchun rasm avval ochiq URL
+      orqali xizmat qilinadi, so'ng Telegram'ning `answer_web_app_query`
+      mexanizmi orqali (initData ichidagi `query_id`) TO'G'RI joyga
+      o'zi yetkaziladi.
+
+    Har bir qadam mustaqil ravishda rad etilishi mumkin — hech qanday
+    bosqichda boshqa foydalanuvchining fayli/chatiga kirish imkoni yo'q."""
     def _json_error(status: int, message: str) -> None:
         body = json.dumps({"ok": False, "error": message}).encode("utf-8")
         handler.send_response(status)
+        handler.send_header("Content-Type", "application/json; charset=utf-8")
+        handler.send_header("Content-Length", str(len(body)))
+        handler.end_headers()
+        handler.wfile.write(body)
+
+    def _json_ok() -> None:
+        body = json.dumps({"ok": True}).encode("utf-8")
+        handler.send_response(200)
         handler.send_header("Content-Type", "application/json; charset=utf-8")
         handler.send_header("Content-Length", str(len(body)))
         handler.end_headers()
@@ -279,12 +299,6 @@ def _handle_rasim_upload(handler: "HealthHandler") -> None:
         _json_error(403, "Tasdiqlashda xatolik. Mini App'ni qayta oching.")
         return
 
-    chat_id = webapp_security.consume_request(rid, verified_user_id=verified_user["id"])
-    if chat_id is None:
-        logger.warning(f"🎨 /rasim upload: rid yaroqsiz/eskirgan/ishlatilgan (user_id={verified_user['id']}).")
-        _json_error(410, "So'rov muddati o'tgan. /rasim buyrug'ini qayta yuboring.")
-        return
-
     image_bytes = _decode_data_url_image(image_data_url)
     if image_bytes is None:
         _json_error(400, "Rasm formati noto'g'ri yoki juda katta.")
@@ -293,6 +307,19 @@ def _handle_rasim_upload(handler: "HealthHandler") -> None:
     if _MAIN_LOOP is None or _BOT_INSTANCE is None:
         logger.error("🎨 /rasim upload: bot hali to'liq ishga tushmagan.")
         _json_error(503, "Server hali tayyor emas, birozdan so'ng urinib ko'ring.")
+        return
+
+    if rid.startswith("in_"):
+        _handle_rasim_upload_inline(handler, rid, verified_user, image_bytes, _json_error, _json_ok)
+    else:
+        _handle_rasim_upload_classic(handler, rid, verified_user, image_bytes, _json_error, _json_ok)
+
+
+def _handle_rasim_upload_classic(handler, rid, verified_user, image_bytes, _json_error, _json_ok) -> None:
+    chat_id = webapp_security.consume_request(rid, verified_user_id=verified_user["id"])
+    if chat_id is None:
+        logger.warning(f"🎨 /rasim upload: rid yaroqsiz/eskirgan/ishlatilgan (user_id={verified_user['id']}).")
+        _json_error(410, "So'rov muddati o'tgan. /rasim buyrug'ini qayta yuboring.")
         return
 
     os.makedirs(_WEBAPP_UPLOAD_TMP_DIR, exist_ok=True)
@@ -320,12 +347,70 @@ def _handle_rasim_upload(handler: "HealthHandler") -> None:
             pass
 
     logger.info(f"🎨 Mini App rasmi yuborildi: chat_id={chat_id}, user_id={verified_user['id']}.")
-    body = json.dumps({"ok": True}).encode("utf-8")
-    handler.send_response(200)
-    handler.send_header("Content-Type", "application/json; charset=utf-8")
-    handler.send_header("Content-Length", str(len(body)))
-    handler.end_headers()
-    handler.wfile.write(body)
+    _json_ok()
+
+
+def _handle_rasim_upload_inline(handler, rid, verified_user, image_bytes, _json_error, _json_ok) -> None:
+    if not webapp_security.consume_inline_request(rid, verified_user_id=verified_user["id"]):
+        logger.warning(f"🎨 /rasim inline upload: rid yaroqsiz/eskirgan/ishlatilgan (user_id={verified_user['id']}).")
+        _json_error(410, "So'rov muddati o'tgan. Mini App'ni qayta oching.")
+        return
+
+    query_id = verified_user.get("_query_id")
+    if not query_id:
+        logger.warning("🎨 /rasim inline upload: initData'da query_id yo'q (inline sessiya emas?).")
+        _json_error(400, "Bu so'rov inline sessiyaga tegishli emas.")
+        return
+
+    if not PUBLIC_BASE_URL:
+        _json_error(503, "Server hozircha bu funksiyani qo'llab-quvvatlamaydi.")
+        return
+
+    os.makedirs(_WEBAPP_GENERATED_DIR, exist_ok=True)
+    filename = f"{uuid.uuid4().hex}.png"
+    file_path = os.path.join(_WEBAPP_GENERATED_DIR, filename)
+    try:
+        with open(file_path, "wb") as f:
+            f.write(image_bytes)
+    except OSError as e:
+        logger.error(f"🎨 /rasim inline: faylni saqlab bo'lmadi: {e}")
+        _json_error(500, "Rasmni saqlashda xatolik yuz berdi.")
+        return
+
+    photo_url = f"{PUBLIC_BASE_URL}{_WEBAPP_GENERATED_URL_PREFIX}{filename}"
+
+    async def _answer():
+        result = InlineQueryResultPhoto(
+            id=uuid.uuid4().hex,
+            photo_url=photo_url,
+            thumbnail_url=photo_url,
+            caption="🎨 Mini App orqali chizilgan rasm.",
+        )
+        await _BOT_INSTANCE.answer_web_app_query(query_id, result)
+
+    try:
+        future = asyncio.run_coroutine_threadsafe(_answer(), _MAIN_LOOP)
+        future.result(timeout=30)
+    except Exception as e:
+        logger.error(f"🎨 /rasim inline: answer_web_app_query xato (user_id={verified_user['id']}): {type(e).__name__}: {e}", exc_info=True)
+        try:
+            os.remove(file_path)
+        except OSError:
+            pass
+        _json_error(502, "Rasmni yuborishda xatolik yuz berdi.")
+        return
+
+    # 🧹 Telegram fotoni yuklab olishi uchun bir necha daqiqa ochiq
+    # turishi kerak — shuning uchun DARHOL emas, KECHIKTIRIB o'chiramiz.
+    def _cleanup():
+        try:
+            os.remove(file_path)
+        except OSError:
+            pass
+    Timer(_WEBAPP_GENERATED_TTL_SEC, _cleanup).start()
+
+    logger.info(f"🎨 Mini App rasmi (inline) yuborildi: user_id={verified_user['id']}.")
+    _json_ok()
 
 
 class HealthHandler(BaseHTTPRequestHandler):
@@ -338,12 +423,8 @@ class HealthHandler(BaseHTTPRequestHandler):
             self.wfile.write(_PLACEHOLDER_PDF_BYTES)
             return
 
-        if self.path == _PLACEHOLDER_TXT_PATH:
-            self.send_response(200)
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
-            self.send_header("Content-Length", str(len(_PLACEHOLDER_TXT_BYTES)))
-            self.end_headers()
-            self.wfile.write(_PLACEHOLDER_TXT_BYTES)
+        if self.path.startswith(_WEBAPP_GENERATED_URL_PREFIX):
+            self._serve_generated_image()
             return
 
         if self.path.startswith("/miniapp/rasim"):
@@ -361,6 +442,31 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.end_headers()
         self.wfile.write(b"Talaba AI bot ishlamoqda!")
+
+    def _serve_generated_image(self) -> None:
+        """GET /miniapp/rasim/generated/<hex>.png — inline `/rasim` orqali
+        chizilgan, hali Telegram tomonidan yuklab olinmagan rasmni bir
+        martalik xizmat qiladi (qarang: _handle_rasim_upload_inline).
+        Fayl nomi QAT'IY tekshiriladi (faqat 32 xonali hex + \".png\") —
+        path traversal yoki boshqa papkalarga kirishning oldini olish uchun."""
+        filename = self.path[len(_WEBAPP_GENERATED_URL_PREFIX):]
+        if not re.fullmatch(r"[0-9a-f]{32}\.png", filename):
+            self.send_response(404)
+            self.end_headers()
+            return
+        file_path = os.path.join(_WEBAPP_GENERATED_DIR, filename)
+        try:
+            with open(file_path, "rb") as f:
+                body = f.read()
+        except OSError:
+            self.send_response(404)
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "image/png")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_HEAD(self):
         self.send_response(200)
