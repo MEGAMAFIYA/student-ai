@@ -49,6 +49,29 @@ To'rtta xil oqim qo'llab-quvvatlanadi:
      xuddi handlers/tabrik.py'dagi kabi — mantiq tabrik_logic.py'da umumiy).
      PUBLIC_BASE_URL talab qilinmaydi (fayl emas, faqat matn).
 
+  E) MINI APP (/rasim) — A/B/C/D'dan BUTUNLAY BOSHQACHA mexanizm, chunki
+     bu yerda "natija" oldindan noma'lum (foydalanuvchi Mini App'da nima
+     chizishini bot bilmaydi):
+     1. `on_inline_query` odatdagidek "natijalar" ro'yxati QAYTARMAYDI —
+        buning o'rniga `answer_inline_query`ning maxsus `button` parametri
+        orqali BITTA "🎨 Rasm chizish" tugmasini ko'rsatadi
+        (`InlineQueryResultsButton(web_app=WebAppInfo(...))`). Bu tugma
+        natijalar ro'yxatidan TASHQARIDA, alohida joylashadi.
+     2. Foydalanuvchi tugmani bosadi -> Mini App (webapp/rasim/) OCHILADI
+        (hech qanday xabar hali yuborilmaydi!). Telegram Mini App'ga
+        maxfiy `query_id` beradi (initData ichida, imzolangan holda).
+     3. Foydalanuvchi chizib "📤 Uzatish"ni bosadi -> rasm bizning
+        serverga (`/miniapp/rasim/upload`) yuboriladi — xuddi oddiy
+        /rasim kabi, lekin `rid` "in_" prefiksi bilan farqlanadi va
+        chat_id o'RNIGA `query_id` ishlatiladi.
+     4. Server rasmni vaqtincha OCHIQ URL orqali xizmat qiladi va
+        Telegram'ning `answer_web_app_query(query_id, InlineQueryResultPhoto)`
+        metodini chaqiradi — Telegram rasmni AVTOMATIK ravishda TO'G'RI
+        (do'st bilan) chatga, foydalanuvchi nomidan joylaydi. Chat_id
+        HECH QACHON bizga ma'lum bo'lmaydi va kerak ham emas.
+     Bu oqim `chosen_inline_result` orqali UMUMAN ishlamaydi (shuning
+     uchun on_chosen_inline_result'da /rasim uchun alohida branch YO'Q).
+
 MUHIM SOZLASH (BotFather orqali, kod bilan bog'liq emas):
   /setinline           -> inline rejimni yoqish (placeholder matn so'raladi)
   /setinlinefeedback   -> "Enabled" qilib qo'yish SHART, aks holda 2-3
@@ -56,7 +79,7 @@ MUHIM SOZLASH (BotFather orqali, kod bilan bog'liq emas):
 
 MUHIM SOZLASH (config.py / .env orqali):
   PUBLIC_BASE_URL       -> botning ochiq https manzili (Render URL'i).
-                           Bo'sh bo'lsa, OG'IR oqimlar (B, C) o'chiriladi va
+                           Bo'sh bo'lsa, OG'IR oqimlar (B, C, E) o'chiriladi va
                            foydalanuvchi botning shaxsiy chatiga yo'naltiriladi
                            — YENGIL oqim (A) va /tabrik (D) baribir to'liq
                            ishlayveradi.
@@ -75,6 +98,8 @@ from telegram import (
     Update,
     InlineQueryResultArticle,
     InlineQueryResultDocument,
+    InlineQueryResultsButton,
+    WebAppInfo,
     InputTextMessageContent,
     InputMediaDocument,
     InputMediaVideo,
@@ -86,6 +111,7 @@ from telegram import (
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 from telegram.error import BadRequest
+from telegram.helpers import escape_markdown
 
 import config
 from config import UNIVERSAL_CHAT_AI, PUBLIC_BASE_URL
@@ -93,6 +119,7 @@ from ai_clients import ask_ai
 from handlers import course_work
 import tabrik_logic
 import video_tools
+import webapp_security
 
 logger = logging.getLogger(__name__)
 
@@ -163,10 +190,12 @@ QOSHIQ_WITH_QUERY_RE = re.compile(r"^/(?:qo[`'\u00b4\u2018\u2019\u02bb\u02bc]shi
 
 TABRIK_BARE_RE = re.compile(r"^/tabrik(?:@\w+)?\s*$", re.IGNORECASE)
 
-# /vid, /qo'shiq uchun placeholder — inline "hujjat" natijasi shu manzildan
-# xizmat qilinadi (bot.py > HealthHandler), keyin haqiqiy video/audio bilan
-# almashtiriladi.
-_PLACEHOLDER_TXT_PATH = "/placeholder.txt"
+# 🎨 /rasim — ATAYLAB bo'sh query'ni ham qabul qiladi: do'st bilan chatda
+# shunchaki "@Student_ai_uz_bot" deb yozib to'xtash eng qulay/tabiiy
+# harakat (bo'sh inline so'rovning boshqa mazmunli natijasi yo'q — AI
+# chatga bo'sh matn yuborish foydasiz), shuning uchun buni ham "rasm
+# chizish" tugmasiga yo'naltiramiz. Aniq "/rasim" ham bir xil ishlaydi.
+RASIM_RE = re.compile(r"^$|^/rasim(?:@\w+)?\s*$", re.IGNORECASE)
 
 
 # ============================================================
@@ -178,6 +207,17 @@ async def on_inline_query(
     context: ContextTypes.DEFAULT_TYPE
 ):
     query = update.inline_query.query.strip()
+
+    # --------------------------------------------------------
+    # 🎨 MINI APP: /rasim (bo'sh query HAM shu yerga tushadi — yuqoridagi
+    # RASIM_RE'ga izohga qarang). Boshqa hamma tekshiruvdan OLDIN, chunki
+    # bo'sh query boshqa hech qanday regexga mos kelmaydi va aks holda
+    # pastdagi "if not query: return" uni jimgina e'tiborsiz qoldirar edi.
+    # --------------------------------------------------------
+
+    if RASIM_RE.match(query):
+        await _answer_rasim(update)
+        return
 
     if not query:
         return  # foydalanuvchi hali hech narsa yozmagan
@@ -203,8 +243,8 @@ async def on_inline_query(
                 id=result_id,
                 title="🎬 Video yuklab olinadi",
                 description=url[:120],
-                document_url=f"{PUBLIC_BASE_URL}{_PLACEHOLDER_TXT_PATH}",
-                mime_type="text/plain",
+                document_url=f"{PUBLIC_BASE_URL}/placeholder.pdf",
+                mime_type="application/pdf",
                 caption=f"⏳ Video yuklab olinmoqda...\n{url}",
                 reply_markup=INLINE_MESSAGE_MARKUP,
             )
@@ -232,6 +272,14 @@ async def on_inline_query(
             return
 
         search_text = QOSHIQ_WITH_QUERY_RE.match(query).group(1).strip()
+
+        if re.match(r"^https?://\S+$", search_text, re.IGNORECASE):
+            await _answer_instruction(
+                update, "🎵 Bu havolaga o'xshaydi",
+                "Video/audio havolasi uchun /qo'shiq emas, /vid dan foydalaning.",
+            )
+            return
+
         try:
             tracks = await asyncio.to_thread(video_tools.search_tracks, search_text, config.QOSHIQ_SEARCH_COUNT)
         except video_tools.DownloadError as e:
@@ -251,8 +299,8 @@ async def on_inline_query(
                     id=result_id,
                     title=f"{t['source_emoji']} {t['title'][:60]}",
                     description=t.get("uploader") or t["source_label"],
-                    document_url=f"{PUBLIC_BASE_URL}{_PLACEHOLDER_TXT_PATH}",
-                    mime_type="text/plain",
+                    document_url=f"{PUBLIC_BASE_URL}/placeholder.pdf",
+                    mime_type="application/pdf",
                     caption=f"⏳ \"{t['title']}\" yuklab olinmoqda...",
                     reply_markup=INLINE_MESSAGE_MARKUP,
                 )
@@ -439,6 +487,31 @@ async def _answer_instruction(update: Update, title: str, description: str):
         )
     ]
     await update.inline_query.answer(results, cache_time=0, is_personal=True)
+
+
+async def _answer_rasim(update: Update) -> None:
+    """/rasim (yoki bo'sh mention) — natijalar ro'yxati o'RNIGA, alohida
+    "🎨 Rasm chizish" TUGMASINI ko'rsatadi (qarang: fayl boshidagi E oqim
+    izohi). Bu tugma Mini App'ni ochadi; Mini App'dan qaytish
+    bot.py > _handle_rasim_upload_inline orqali `answer_web_app_query`
+    bilan yakunlanadi — shu funksiya faqat tugmani ko'rsatishga javobgar."""
+    if not PUBLIC_BASE_URL:
+        await _answer_redirect(update, "/rasim")
+        return
+
+    user_id = update.inline_query.from_user.id
+    rid = webapp_security.create_inline_request(user_id)
+    webapp_url = f"{PUBLIC_BASE_URL}/miniapp/rasim/?rid={rid}"
+
+    await update.inline_query.answer(
+        [],
+        button=InlineQueryResultsButton(
+            text="🎨 Rasm chizish",
+            web_app=WebAppInfo(url=webapp_url),
+        ),
+        cache_time=0,
+        is_personal=True,
+    )
 
 
 def _trim_cache(cache: dict):
@@ -955,15 +1028,15 @@ async def _handle_tabrik(
 ):
     try:
         for n in (5, 4, 3, 2, 1):
-            await _safe_edit_text(context, inline_message_id, tabrik_logic.build_countdown_frame(n))
+            await _safe_edit_text(context, inline_message_id, tabrik_logic.build_countdown_frame(n), parse_mode=ParseMode.MARKDOWN)
             await asyncio.sleep(TABRIK_COUNTDOWN_DELAY)
 
         for step in range(tabrik_logic.TOTAL_ROTATION_FRAMES):
-            await _safe_edit_text(context, inline_message_id, tabrik_logic.build_circle_frame(step))
+            await _safe_edit_text(context, inline_message_id, tabrik_logic.build_circle_frame(step), parse_mode=ParseMode.MARKDOWN)
             await asyncio.sleep(TABRIK_FRAME_DELAY)
 
-        final_text = f"{tabrik_logic.build_final_card(text)}\n\n🤖 Talaba AI — @{BOT_USERNAME}"
-        await _safe_edit_text(context, inline_message_id, final_text, reply_markup=INLINE_MESSAGE_MARKUP)
+        final_text = f"{tabrik_logic.build_final_card(escape_markdown(text, version=1))}\n\n🤖 Talaba AI — @{BOT_USERNAME}"
+        await _safe_edit_text(context, inline_message_id, final_text, parse_mode=ParseMode.MARKDOWN, reply_markup=INLINE_MESSAGE_MARKUP)
         logger.info("🔍 Inline /tabrik animatsiyasi muvaffaqiyatli yakunlandi.")
     except Exception as e:
         logger.error(f"🔍 Inline /tabrik animatsiyasida kutilmagan xato: {type(e).__name__}: {e}", exc_info=True)
