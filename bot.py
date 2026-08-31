@@ -41,7 +41,7 @@ from handlers import (
     menu, universal_chat, course_work, translate as translate_handler, images_to_pdf,
     edit_pdf, guide, inline_query, developer, pptx_gen, essay, quiz, solve, summarize,
     grammar, citation, my_files, reminders, voice, wallet_ui, tabrik, rasim,
-    vid, qoshiq, mention_dispatch,
+    vid, qoshiq, mention_dispatch, pro_tabrik, my_cabinet,
 )
 from pdf_tools import make_pdf
 
@@ -68,6 +68,8 @@ BOT_COMMANDS = [
     # bermaydi, shuning uchun shu yerda ASCII "qoshiq" ko'rsatiladi — lekin
     # "/qo'shiq" (apostrof bilan) ham xuddi shunday ishlaydi (handlers/qoshiq.py).
     BotCommand("qoshiq", "🎵 Qo'shiq qidirish va yuborish"),
+    BotCommand("pro", "💎 Shaxsiy rasmli tabriknoma (Pro)"),
+    BotCommand("my", "👤 Mening kabinetim"),
     BotCommand("yoqish", "Guruhda Universal chatni yoqish"),
     BotCommand("ochirish", "Guruhda Universal chatni o'chirish"),
     BotCommand("cancel", "Joriy amalni bekor qilish"),
@@ -865,6 +867,25 @@ def main():
     # handlers/qoshiq.py boshidagi izoh).
     app.add_handler(CommandHandler("qoshiq", qoshiq.qoshiq_cmd))
     app.add_handler(CallbackQueryHandler(qoshiq.qoshiq_choice_callback, pattern="^song:"))
+
+    # 💎 /pro — /tabrik'ning shaxsiy rasmli versiyasi.
+    app.add_handler(CommandHandler("pro", pro_tabrik.pro_cmd))
+    app.add_handler(CallbackQueryHandler(pro_tabrik.pro_claim_callback, pattern="^protabrik:claim:"))
+    app.add_handler(CallbackQueryHandler(inline_query.inline_pro_claim_callback, pattern="^iprotabrik:claim:"))
+
+    # 👤 /my — "Mening kabinetim" (rasim yuklash, Pro obuna).
+    app.add_handler(CommandHandler("my", my_cabinet.my_cabinet_cmd))
+    app.add_handler(CallbackQueryHandler(my_cabinet.my_cabinet_callback, pattern="^mycab:"))
+    # 💎 Admin: Pro obunani tasdiqlash/rad etish — DM tugmasi VA
+    # /developer > 💎 Pro obunalar bo'limi IKKALASI HAM shu bitta
+    # handlerni chaqiradi (callback_data bir xil).
+    app.add_handler(CallbackQueryHandler(my_cabinet.prosub_decision_callback, pattern="^prosub:"))
+    # 🖼 Kabinetga rasm yuklash — ALOHIDA guruhda (group=1), shunda
+    # boshqa (masalan "Suratlarni PDF qilish") conversation'lardagi rasm
+    # handlerlariga (asosiy guruh — group=0) XALAQIT bermaydi; ikkalasi
+    # mustaqil ishlaydi, on_kabinet_photo esa faqat foydalanuvchi "🖼 Rasim
+    # yuklash"ni bosgan bo'lsagina (user_data bayrog'i orqali) amal qiladi.
+    app.add_handler(MessageHandler(filters.PHOTO, my_cabinet.on_kabinet_photo), group=1)
     # Bot biror guruhga QO'SHILGANDA avtomatik xush kelibsiz xabari va
     # standart FAOL holatni bildirish uchun (guruh holati doimiy
     # saqlanadi — batafsili storage.py > "Guruhlarda Universal chat holati").
