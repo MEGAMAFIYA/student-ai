@@ -18,8 +18,14 @@ qilishi kerak bo'lgani uchun, claim-tugmali xabar BOSHIDANOQ RASM
 sifatida yuboriladi (bosh placeholder — sovg'a qutisi rasmi) — Telegram
 matn xabarini keyinchalik media'ga aylantirishga ruxsat BERMAYDI, lekin
 bitta media turini (rasm) BOSHQA rasmga almashtirishga har doim ruxsat
-beradi. Shu sabab countdown/naqsh freym'lari ham matn EMAS, balki shu
+beradi. Shu sabab countdown/emoji freym'lari ham matn EMAS, balki shu
 placeholder rasmning IZOHI (caption) sifatida ko'rsatiladi.
+
+Sanoqdan (5→1) keyin "aylanayotgan naqsh" o'rniga endi emoji animatsiyasi
+ishlatiladi — bir nechta emoji ketma-ket, har biri alohida, qo'shimcha
+matnsiz ko'rsatiladi. Foydalanuvchi /pro'dan keyin matndan OLDIN
+emoji(lar) yozgan bo'lsa (masalan "/pro 😊🥰😳🙄 tabriklayman...")
+o'shalar ishlatiladi, aks holda tabrik_logic.DEFAULT_EMOJIS.
 
 Rasmlar ro'yxati /pro YUBORILGAN PAYTDA "muzlatiladi" (pro_tabrik_logic.py)
 — shuning uchun sub'ekt keyinchalik rasmlarini o'zgartirsa ham, ALLAQACHON
@@ -111,9 +117,21 @@ async def pro_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE, override_t
         )
         return
 
+    # Matn boshida emoji(lar) yozilgan bo'lsa (masalan
+    # "/pro 😊🥰😳🙄 tabriklayman...") — o'shalar animatsiyada ishlatiladi,
+    # qolgan qism esa haqiqiy tabrik matni bo'ladi.
+    emojis, text = tabrik_logic.extract_emojis(text)
+    if not text:
+        await update.message.reply_text(
+            "💎 Tabrik matnini ham yozing, masalan:\n\n"
+            "`/pro Salom mening aziz do'stim, seni tavallud kuning bilan tabriklayman!`",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return
+
     sender_id = update.effective_user.id
     photos = github_storage.list_user_photos(sender_id) if github_storage.is_configured() else []
-    short_id = pro_tabrik_logic.store_pro_greeting(text, sender_id, photos)
+    short_id = pro_tabrik_logic.store_pro_greeting(text, sender_id, photos, emojis)
 
     await update.message.reply_photo(
         photo=InputFile(io.BytesIO(_gift_placeholder_bytes()), filename="gift.png"),
@@ -186,8 +204,9 @@ async def pro_claim_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await _safe_edit_caption(msg, tabrik_logic.build_countdown_frame(n))
             await asyncio.sleep(COUNTDOWN_DELAY)
 
-        for step in range(tabrik_logic.TOTAL_ROTATION_FRAMES):
-            await _safe_edit_caption(msg, tabrik_logic.build_circle_frame(step))
+        emojis = entry.get("emojis") or tabrik_logic.DEFAULT_EMOJIS
+        for emoji in emojis:
+            await _safe_edit_caption(msg, tabrik_logic.build_emoji_frame(emoji))
             await asyncio.sleep(FRAME_DELAY)
 
         if entry["photos"]:
