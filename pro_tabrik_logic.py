@@ -51,13 +51,19 @@ def _purge_expired(now: float | None = None) -> None:
             del _STORE[k]
 
 
-def store_pro_greeting(text: str, user_id: int, photos: list[str]) -> str:
+def store_pro_greeting(text: str, user_id: int, photos: list[str], emojis: list[str] | None = None) -> str:
     """`photos` — yuborilgan PAYTDAGI GitHub rasm URL'lari ro'yxati
     (chaqiruvchi handlers/pro_tabrik.py buni github_storage orqali oldindan
-    olib, shu yerga "muzlatilgan" holda beradi)."""
+    olib, shu yerga "muzlatilgan" holda beradi). `emojis` — foydalanuvchi
+    /pro'dan keyin matndan oldin yozgan emojilar (bo'lmasa
+    tabrik_logic.DEFAULT_EMOJIS ishlatiladi)."""
     short_id = uuid.uuid4().hex[:10]
     _STORE[short_id] = {
-        "text": text, "photos": list(photos), "user_id": int(user_id), "created_at": time.time(),
+        "text": text,
+        "photos": list(photos),
+        "emojis": list(emojis) if emojis else list(tabrik_logic.DEFAULT_EMOJIS),
+        "user_id": int(user_id),
+        "created_at": time.time(),
     }
     _purge_expired()
     return short_id
