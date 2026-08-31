@@ -62,15 +62,50 @@ if YOUTUBE_COOKIES_FILE and not os.path.isfile(YOUTUBE_COOKIES_FILE):
     YOUTUBE_COOKIES_FILE = ""
 
 
-def _youtube_extra_opts() -> dict:
+def _youtube_extra_opts(player_client: str | list[str] | None = None) -> dict:
     """download_video/download_audio/_search_one_source uchun YouTube
-    bot-tekshiruvini yumshatishga urinadigan qo'shimcha sozlamalar."""
+    bot-tekshiruvini yumshatishga urinadigan qo'shimcha sozlamalar.
+    `player_client` berilmasa standart ro'yxat ishlatiladi; retry
+    zanjirida esa har safar BITTA client beriladi (pastga qarang)."""
     opts = {
-        "extractor_args": {"youtube": {"player_client": ["android", "web_safari", "ios"]}},
+        "extractor_args": {"youtube": {"player_client": player_client or ["android", "web_safari", "ios"]}},
     }
     if YOUTUBE_COOKIES_FILE:
         opts["cookiefile"] = YOUTUBE_COOKIES_FILE
     return opts
+
+
+# Cookies fayli bo'lmaganda YouTube "bot" tekshiruvi ko'pincha faqat
+# BAZI client'larda uchraydi (barchasini bitta so'rovda birga ishlatish
+# ba'zan aksincha ko'proq shubha uyg'otadi). Shu sabab, bot-tekshiruv
+# xatosiga uchraganda, HAR BIR client'ni ALOHIDA-ALOHIDA sinab ko'ramiz —
+# birortasi o'tsa, shu yetarli.
+_YOUTUBE_RETRY_CLIENTS = ["android", "ios", "web_safari", "tv", "mweb", "web"]
+
+
+def _run_youtube_with_retries(build_opts_fn, url: str) -> None:
+    """`build_opts_fn(youtube_opts) -> ydl_opts` — chaqiruvchi o'z asosiy
+    ydl_opts'ini (`format`, `outtmpl` va h.k.) shu funksiya orqali
+    yig'adi, `youtube_opts` esa har urinishda boshqacha (bitta)
+    player_client bilan almashtiriladi. Bot-tekshiruv xatosiga
+    uchraganda keyingi client bilan qayta urinadi; bot-tekshiruv
+    bo'lmagan xato (masalan private video) darhol ko'tariladi —
+    urinishlarni behuda sarflamaslik uchun. Cookies fayli mavjud bo'lsa
+    birinchi urinishning o'zi odatda yetarli bo'ladi."""
+    last_exc: Exception | None = None
+    for client in _YOUTUBE_RETRY_CLIENTS:
+        ydl_opts = build_opts_fn(_youtube_extra_opts(player_client=[client]))
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+            return
+        except yt_dlp.utils.DownloadError as e:
+            last_exc = e
+            if not _is_bot_check_error(e):
+                raise  # bot-tekshiruv bo'lmagan xato — qayta urinish foydasiz
+            logger.warning(f"🎬 YouTube '{client}' client bilan bot-tekshiruvga uchradi, keyingisi sinaladi ({url}).")
+            continue
+    raise last_exc
 
 
 class DownloadError(Exception):
@@ -162,26 +197,36 @@ def download_video(url: str, dest_dir: str, max_mb: int, timeout_sec: int) -> st
     qaytaradi. Xatolikda `DownloadError` (foydalanuvchiga ko'rsatiladigan
     matn bilan) ko'taradi."""
     out_tmpl = os.path.join(dest_dir, "%(id)s.%(ext)s")
-    ydl_opts = {
-        "outtmpl": out_tmpl,
-        # max_mb'dan sal pastroq formatlarni afzal ko'ramiz — shunda katta
-        # fayl umuman yuklab olinmaydi (vaqt/trafik behuda ketmaydi),
-        # topilmasa eng past sifatli mavjud formatga tushamiz.
-        "format": (
-            f"best[filesize<{max_mb}M][ext=mp4]/best[filesize<{max_mb}M]/"
-            "best[ext=mp4]/best"
-        ),
-        "noplaylist": True,
-        "quiet": True,
-        "no_warnings": True,
-        "restrictfilenames": True,
-        "socket_timeout": timeout_sec,
-        "merge_output_format": "mp4",
-        **_youtube_extra_opts(),
-    }
+    is_youtube = "youtube.com" in url or "youtu.be" in url
+
+    def build_opts(youtube_opts: dict) -> dict:
+        return {
+            "outtmpl": out_tmpl,
+            # max_mb'dan sal pastroq formatlarni afzal ko'ramiz — shunda katta
+            # fayl umuman yuklab olinmaydi (vaqt/trafik behuda ketmaydi),
+            # topilmasa eng past sifatli mavjud formatga tushamiz.
+            "format": (
+                f"best[filesize<{max_mb}M][ext=mp4]/best[filesize<{max_mb}M]/"
+                "best[ext=mp4]/best"
+            ),
+            "noplaylist": True,
+            "quiet": True,
+            "no_warnings": True,
+            "restrictfilenames": True,
+            "socket_timeout": timeout_sec,
+            "merge_output_format": "mp4",
+            **(youtube_opts if is_youtube else {}),
+        }
+
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
+        if is_youtube:
+            # YouTube'ning "bot" tekshiruvi ko'pincha bitta-ikkita
+            # client'da uchraydi — HAR BIRINI alohida sinaymiz, biri
+            # o'tsa yetarli (pastga qarang: _run_youtube_with_retries).
+            _run_youtube_with_retries(build_opts, url)
+        else:
+            with yt_dlp.YoutubeDL(build_opts({})) as ydl:
+                ydl.download([url])
     except yt_dlp.utils.DownloadError as e:
         reason = _classify_ytdlp_error(e)
         logger.error(f"🎬 /vid yuklab olishda xato ({url}) — sabab: {reason} | asl xato: {e}")
@@ -223,23 +268,61 @@ def _search_one_source(prefix: str, query: str, count: int) -> tuple[list[dict],
     bo'lganda (natija topilmagani uchun emas) beriladi, shunda
     search_tracks() barcha manbalar muvaffaqiyatsiz bo'lsa foydalanuvchiga
     ANIQ sababni ko'rsata oladi."""
-    ydl_opts = {
+    base_opts = {
         "quiet": True,
         "no_warnings": True,
         "extract_flat": "in_playlist",
         "skip_download": True,
         "default_search": f"{prefix}{count}",
         "noplaylist": True,
-        **(_youtube_extra_opts() if prefix == "ytsearch" else {}),
     }
+    is_youtube = prefix == "ytsearch"
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(query, download=False)
+        if is_youtube:
+            info = None
+            last_exc: Exception | None = None
+            for client in _YOUTUBE_RETRY_CLIENTS:
+                opts = {**base_opts, **_youtube_extra_opts(player_client=[client])}
+                try:
+                    with yt_dlp.YoutubeDL(opts) as ydl:
+                        info = ydl.extract_info(query, download=False)
+                    break
+                except Exception as e:
+                    last_exc = e
+                    if not _is_bot_check_error(e):
+                        raise
+                    continue
+            if info is None and last_exc is not None:
+                raise last_exc
+        else:
+            with yt_dlp.YoutubeDL(base_opts) as ydl:
+                info = ydl.extract_info(query, download=False)
     except Exception as e:
         reason = _classify_ytdlp_error(e)
         logger.error(f"🎵 /qo'shiq: '{prefix}' manbasida qidiruv muvaffaqiyatsiz ('{query}') — sabab: {reason} | asl xato: {e}")
         return [], reason
     return [e for e in ((info or {}).get("entries") or []) if e], None
+
+
+def _soundcloud_track_blocked_reason(webpage_url: str) -> str | None:
+    """SoundCloud trekini YUKLAMASDAN, DRM/litsenziya sababli
+    bloklanganini oldindan tekshiradi (to'liq extract, lekin
+    skip_download=True — fayl yuklab olinmaydi, faqat metadata so'raladi).
+    Bloklangan bo'lsa sababni qaytaradi, aks holda `None` (ya'ni normal
+    yuklab bo'ladi)."""
+    ydl_opts = {"quiet": True, "no_warnings": True, "skip_download": True, "noplaylist": True}
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.extract_info(webpage_url, download=False)
+    except Exception as e:
+        if _is_drm_error(e):
+            return _classify_ytdlp_error(e)
+        # DRM'dan boshqa xato bo'lsa (masalan vaqtinchalik tarmoq xatosi) —
+        # bu yerda rad etmaymiz, chunki noto'g'ri (yolg'on) filtrlash
+        # yaxshi natijalarni ham ro'yxatdan olib tashlashi mumkin;
+        # haqiqiy yuklab olishda baribir aniq sabab bilan xato chiqadi.
+        return None
+    return None
 
 
 def search_tracks(query: str, count: int) -> list[dict]:
@@ -274,6 +357,17 @@ def search_tracks(query: str, count: int) -> list[dict]:
                 webpage_url = f"https://www.youtube.com/watch?v={raw_ref}"
             else:
                 continue  # boshqa manba uchun ID'dan ishonchli havola qura olmaymiz
+
+            if src["id"] == "soundcloud":
+                # DRM bilan qulflangan treklar YUKLASHGA umuman qo'yilmaydi
+                # — shuning uchun ularni ro'yxatga chiqarishdan OLDIN
+                # tekshirib, topilsa butunlay o'tkazib yuboramiz (foydalanuvchi
+                # keyin "yuklab bo'lmadi" xatosiga duch kelmasin).
+                blocked_reason = _soundcloud_track_blocked_reason(webpage_url)
+                if blocked_reason:
+                    logger.info(f"🎵 SoundCloud trek ro'yxatdan chiqarib tashlandi (bloklangan): {webpage_url} — {blocked_reason}")
+                    continue
+
             merged.append({
                 "source_id": src["id"],
                 "source_label": src["label"],
@@ -318,24 +412,31 @@ def download_audio(url: str, dest_dir: str, max_mb: int, timeout_sec: int) -> st
         )
 
     out_tmpl = os.path.join(dest_dir, "%(id)s.%(ext)s")
-    ydl_opts = {
-        "outtmpl": out_tmpl,
-        "format": f"bestaudio[filesize<{max_mb}M]/bestaudio/best",
-        "noplaylist": True,
-        "quiet": True,
-        "no_warnings": True,
-        "restrictfilenames": True,
-        "socket_timeout": timeout_sec,
-        "postprocessors": [{
-            "key": "FFmpegExtractAudio",
-            "preferredcodec": "mp3",
-            "preferredquality": "192",
-        }],
-        **(_youtube_extra_opts() if "youtube.com" in url or "youtu.be" in url else {}),
-    }
+    is_youtube = "youtube.com" in url or "youtu.be" in url
+
+    def build_opts(youtube_opts: dict) -> dict:
+        return {
+            "outtmpl": out_tmpl,
+            "format": f"bestaudio[filesize<{max_mb}M]/bestaudio/best",
+            "noplaylist": True,
+            "quiet": True,
+            "no_warnings": True,
+            "restrictfilenames": True,
+            "socket_timeout": timeout_sec,
+            "postprocessors": [{
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "192",
+            }],
+            **(youtube_opts if is_youtube else {}),
+        }
+
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
+        if is_youtube:
+            _run_youtube_with_retries(build_opts, url)
+        else:
+            with yt_dlp.YoutubeDL(build_opts({})) as ydl:
+                ydl.download([url])
     except yt_dlp.utils.DownloadError as e:
         reason = _classify_ytdlp_error(e)
         logger.error(f"🎵 /qo'shiq audio yuklab olishda xato ({url}) — sabab: {reason} | asl xato: {e}")
