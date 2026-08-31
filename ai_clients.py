@@ -327,6 +327,58 @@ async def ask_ai(
     return result
 
 
+async def ask_ai_with_source(
+    cfg: dict,
+    prompt: str,
+    system: str = "",
+    user_id: int | None = None,
+    history: list | None = None,
+) -> tuple[str | None, str, str]:
+    """`ask_ai()` bilan BIR XIL, lekin AVVAL (agar `user_id` berilgan
+    bo'lsa) foydalanuvchining SHAXSIY AI kalitlarini (/my > 🔑 Shaxsiy
+    kalitlarim, user_ai_keys.py) sinaydi — FAQAT ular ishlamasa (yoki
+    umuman qo'shilmagan bo'lsa) botning umumiy kaliti/zaxiralariga
+    (`ask_ai()`) o'tiladi.
+
+    Qaytaradi: (natija yoki None, source, tafsilot)
+      - source: "user_key" — foydalanuvchining shaxsiy kaliti ishladi.
+                "bot_key"  — bot kaliti (yoki zaxira) ishlatildi.
+      - tafsilot: FAQAT source="bot_key" bo'lganda va foydalanuvchining
+        shaxsiy kaliti/kalitlari BOR-U lekin ISHLAMAGAN holatda,
+        oxirgi urinishning nima uchun ishlamaganini tushuntiradigan
+        matn (masalan "Kalit yaroqsiz...") — chaqiruvchi shu orqali
+        foydalanuvchiga aniq sabab bilan xabar bera oladi. Foydalanuvchida
+        umuman shaxsiy kalit bo'lmasa — bo'sh string (bu ODATIY holat,
+        alohida xabar berish shart emas)."""
+    if user_id:
+        import user_ai_keys  # aylanma import'dan qochish uchun shu yerda
+        pools = user_ai_keys.get_pools(user_id)
+        last_detail = ""
+        for provider, pool in pools.items():
+            for idx, entry in enumerate(pool, start=1):
+                key, model = entry.get("key", ""), entry.get("model", "")
+                if not key or not model:
+                    continue
+                label = f"Shaxsiy kalit ({config.PROVIDER_LABELS.get(provider, provider.capitalize())} #{idx})"
+                result, status, detail = await _dispatch(provider, key, model, "", prompt, system, history, label)
+                if result:
+                    logger.info(f"🔑 {label}: ✅ ishladi (user_id={user_id}).")
+                    return result, "user_key", ""
+                logger.warning(f"🔑 {label}: ❌ ishlamadi ({_STATUS_LABELS.get(status, status)}) — user_id={user_id}.")
+                last_detail = detail or _STATUS_LABELS.get(status, status)
+
+        if any(pools.values()):
+            # Foydalanuvchida kalit(lar) BOR, lekin BIRORTASI ham
+            # ishlamadi — bot kalitiga o'tamiz, lekin SABABNI qaytaramiz.
+            result = await ask_ai(cfg, prompt, system, history=history)
+            return result, "bot_key", last_detail
+
+    # user_id berilmagan YOKI foydalanuvchida umuman shaxsiy kalit yo'q —
+    # bu ODATIY holat, hech qanday maxsus xabar kerak emas.
+    result = await ask_ai(cfg, prompt, system, history=history)
+    return result, "bot_key", ""
+
+
 async def test_key(provider: str, api_key: str, model: str, index: int | None = None) -> tuple[str, str]:
     """/developer > 🔑 AI kalitlari > 🩺 Kalitlarni tekshirish uchun — bitta
     kalit/model juftligini juda qisqa so'rov bilan sinaydi (narxni minimal
