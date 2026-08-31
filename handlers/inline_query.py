@@ -294,7 +294,7 @@ async def on_inline_query(
             return
         except Exception as e:
             logger.error(f"🔍 Inline /qo'shiq qidiruvida kutilmagan xato ('{search_text}'): {type(e).__name__}: {e}", exc_info=True)
-            await _answer_instruction(update, "🎵 Qidiruvda xatolik", "Birozdan so'ng qayta urinib ko'ring.")
+            await _answer_instruction(update, "🎵 Qidiruvda xatolik", f"Sabab: {type(e).__name__}: {e}")
             return
 
         results = []
