@@ -34,7 +34,7 @@ from handlers.rasim import rasim_cmd
 from handlers.vid import vid_cmd
 from handlers.qoshiq import qoshiq_cmd
 from handlers.pro_tabrik import pro_cmd
-from handlers.my_cabinet import my_cabinet_cmd
+from handlers.my_cabinet import my_cabinet_cmd, on_personal_key_text
 import storage
 
 logger = logging.getLogger(__name__)
@@ -92,6 +92,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     is_group = chat.type in ("group", "supergroup")
     user_text = update.message.text.strip()
+
+    # 🔑 AVVAL HAMMASIDAN OLDIN: foydalanuvchi "/my > 🔑 Shaxsiy
+    # kalitlarim"da kalit/model matnini kiritishini kutayotganmi? Bo'lsa,
+    # shu yerda "iste'mol qilinadi" — pastdagi mention/AI mantiqiga
+    # umuman kirmaydi (aks holda kalit matni tasodifan AI'ga savol
+    # sifatida yuborilib ketardi). Batafsil sabab uchun qarang:
+    # handlers/my_cabinet.py > on_personal_key_text() docstring'i.
+    if await on_personal_key_text(update, context):
+        return
 
     # 🧭 AVVAL: bot mention qilingan maxsus buyruqmi ("@Bot /vid URL",
     # "@Bot /qo'shiq ...") yoki apostrofli "/qo'shiq ..." (Telegram buni
