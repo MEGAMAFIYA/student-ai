@@ -31,13 +31,52 @@ import yt_dlp
 
 logger = logging.getLogger(__name__)
 
-# /qo'shiq MP3'ga o'tkazish uchun ffmpeg SHART — modul yuklanganda bir
-# marta tekshiramiz (har bir yuklab olishda qayta tekshirmaslik uchun).
-FFMPEG_AVAILABLE = shutil.which("ffmpeg") is not None
+
+# ============================================================
+# 🎞️ FFmpeg'ni topish (Render'da apt/root YO'Q!)
+# ============================================================
+# Render'ning standart Python muhitida (bu loyihada Dockerfile/apt.txt/
+# build.sh orqali hech qanday tizim paketi o'rnatilmagan) `ffmpeg` PATH'da
+# UMUMAN MAVJUD EMAS va uni apt-get bilan o'rnatib bo'lmaydi (root yo'q,
+# fayl tizimi ko'p joyda read-only). Shu sabab avvalgi
+# `shutil.which("ffmpeg")` productionda doim `None` qaytargan — bu esa
+# ikkita YASHIRIN muammoga olib kelgan:
+#   1) /vid — "bestvideo+bestaudio" birlashtirib bo'lmagani uchun faqat
+#      progressiv (video+audio bitta oqimda) "best" formatga tushib
+#      qolgan, YouTube esa (ayniqsa Shorts'larda) ko'pincha BUNDAY format
+#      umuman taklif qilmaydi -> "Requested format is not available".
+#   2) /qo'shiq — MP3'ga o'tkazib bo'lmagani uchun har doim xato qaytgan.
+#
+# YECHIM: `imageio-ffmpeg` pip paketi orqali STATIK ffmpeg binary'sini
+# ishlatamiz — bu oddiy `pip install` bilan o'rnatiladi, root/apt/tizim
+# ruxsati SHART EMAS, shu sabab Render'da ham ishlaydi. PATH'da tizim
+# ffmpeg'i topilsa ham (masalan lokal rivojlantirishda) shundan
+# foydalaniladi — imageio-ffmpeg faqat ZAXIRA sifatida ishlatiladi.
+def _detect_ffmpeg() -> str:
+    system_ffmpeg = shutil.which("ffmpeg")
+    if system_ffmpeg:
+        return system_ffmpeg
+    try:
+        import imageio_ffmpeg
+        bundled = imageio_ffmpeg.get_ffmpeg_exe()
+        if bundled and os.path.isfile(bundled):
+            return bundled
+    except Exception as e:
+        logger.warning(f"⚠️ imageio_ffmpeg orqali ham ffmpeg topilmadi: {e}")
+    return ""
+
+
+# /qo'shiq MP3'ga o'tkazish HAMDA /vid video+audio birlashtirish uchun
+# ffmpeg SHART — modul yuklanganda bir marta tekshiramiz (har bir yuklab
+# olishda qayta tekshirmaslik uchun).
+FFMPEG_PATH = _detect_ffmpeg()
+FFMPEG_AVAILABLE = bool(FFMPEG_PATH)
 if not FFMPEG_AVAILABLE:
     logger.warning(
-        "⚠️ ffmpeg topilmadi — /qo'shiq MP3'ga o'tkaza olmaydi. "
-        "Serverga (Render/VPS) ffmpeg o'rnating: apt-get install -y ffmpeg."
+        "⚠️ ffmpeg topilmadi (tizimda ham, imageio-ffmpeg orqali ham) — "
+        "/qo'shiq MP3'ga o'tkaza olmaydi va /vid faqat progressiv "
+        "formatlar bilan cheklanadi. `requirements.txt`ga "
+        "`imageio-ffmpeg` qo'shilganini va o'rnatilganini tekshiring."
     )
 
 # ============================================================
@@ -321,6 +360,12 @@ def download_video(url: str, dest_dir: str, max_mb: int, timeout_sec: int) -> st
             # Faqat ffmpeg mavjud bo'lgandagina video+audio'ni birlashtirib,
             # natijani mp4'ga sozlaymiz (loyiha MP4 kutmoqda).
             opts["merge_output_format"] = "mp4"
+            # yt-dlp'ga ANIQ qaysi ffmpeg binary'sini ishlatishni
+            # ko'rsatamiz — Render'da ffmpeg PATH'da emas (yuqoridagi
+            # `_detect_ffmpeg()` ga qarang), shu sabab buni bermasak
+            # yt-dlp ffmpeg'ni "topolmadi" deb hisoblab, birlashtirmasdan
+            # xato beradi.
+            opts["ffmpeg_location"] = FFMPEG_PATH
         return opts
 
     try:
@@ -533,6 +578,11 @@ def download_audio(url: str, dest_dir: str, max_mb: int, timeout_sec: int) -> st
                 "preferredcodec": "mp3",
                 "preferredquality": "192",
             }],
+            # Render'da ffmpeg PATH'da emas — aniq binary yo'lini
+            # ko'rsatmasak, FFmpegExtractAudio postprocessor uni
+            # "topolmadi" deb ishlamay qoladi (yuqoridagi
+            # `_detect_ffmpeg()` izohiga qarang).
+            "ffmpeg_location": FFMPEG_PATH,
             **(youtube_opts if is_youtube else {}),
         }
 
