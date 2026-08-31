@@ -83,7 +83,7 @@ async def vid_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE, override_t
         await update.message.reply_text(str(e))
     except Exception as e:
         logger.error(f"🎬 /vid kutilmagan xato (chat_id={chat_id}, url={url}): {type(e).__name__}: {e}", exc_info=True)
-        await update.message.reply_text("❌ Video yuborishda kutilmagan xatolik yuz berdi.")
+        await update.message.reply_text(f"❌ Video yuborishda kutilmagan xatolik yuz berdi.\n\nSabab: {type(e).__name__}: {e}")
     finally:
         # ⬇️ Vaqtinchalik fayllarni albatta tozalaymiz (diskni to'ldirmasligi
         # uchun) — muvaffaqiyatli yoki xato bo'lishidan qat'i nazar.
