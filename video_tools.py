@@ -25,6 +25,7 @@ QASDDAN qo'shilmagan.
 import logging
 import os
 import shutil
+import tempfile
 
 import yt_dlp
 
@@ -74,13 +75,43 @@ if not FFMPEG_AVAILABLE:
 # XAVFSIZLIK: cookies fayli HECH QACHON kodga hardcode qilinmaydi va
 # HECH QACHON logga (fayl mazmuni) yozilmaydi — faqat FAYL YO'LI
 # borligi/yo'qligi haqida xabar beriladi.
+def _copy_cookies_to_tmp(source_path: str) -> str:
+    """Topilgan cookies faylini `/tmp/cookies.txt`ga nusxalaydi va shu
+    YOZISH MUMKIN BO'LGAN nusxaning yo'lini qaytaradi.
+
+    NEGA SHART: yt-dlp `YoutubeDL` obyekti yopilganda (`with` blokidan
+    chiqishda) ichki `save_cookies()` chaqirib, cookiejar'ni **xuddi shu
+    `cookiefile` yo'liga qayta yozishga urinadi** — cookies o'zgarmagan
+    taqdirda ham. Render'da "Secret Files" (`/etc/secrets/...`) READ-ONLY
+    fayl tizimida joylashgan, shu sabab asl faylni to'g'ridan-to'g'ri
+    `cookiefile` sifatida bersak, HAR BIR yuklab olish oxirida
+    `OSError: [Errno 30] Read-only file system` bilan yiqiladi — hatto
+    yuklab olishning o'zi muvaffaqiyatli bo'lsa ham. Shu sabab asl fayl
+    FAQAT shu yerda BIR MARTA o'qiladi, yt-dlp'ga esa doim `/tmp/`
+    ichidagi (yoziladigan) nusxa beriladi."""
+    tmp_path = os.path.join(tempfile.gettempdir(), "cookies.txt")
+    try:
+        shutil.copyfile(source_path, tmp_path)
+        return tmp_path
+    except OSError as e:
+        logger.warning(
+            f"⚠️ Cookies faylini /tmp/ ga nusxalab bo'lmadi ({source_path} -> {tmp_path}): {e} "
+            "— cookies ISHLATILMAYDI (asl faylni to'g'ridan-to'g'ri berish "
+            "read-only xatoga olib kelishi mumkin)."
+        )
+        return ""
+
+
 def _resolve_cookies_file() -> str:
     explicit = os.getenv("YOUTUBE_COOKIES_FILE", "").strip()
     project_root_cookies = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies.txt")
     candidates = [explicit, "/etc/secrets/cookies.txt", project_root_cookies]
     for path in candidates:
         if path and os.path.isfile(path):
-            return path
+            # Asl faylni HECH QACHON to'g'ridan-to'g'ri yt-dlp'ga
+            # bermaymiz — faqat o'qish uchun ishlatib, yoziladigan
+            # nusxasini /tmp/ ichida tayyorlaymiz (pastga qarang).
+            return _copy_cookies_to_tmp(path)
     if explicit:
         logger.warning(f"⚠️ YOUTUBE_COOKIES_FILE ko'rsatilgan, lekin fayl topilmadi: {explicit}")
     return ""
@@ -190,6 +221,8 @@ def _classify_ytdlp_error(exc: Exception) -> str:
         return "Video mavjud emas (o'chirilgan yoki yopilgan)"
     if "unsupported url" in low or "no video formats found" in low or "unable to extract" in low:
         return "Bu havola/manba qo'llab-quvvatlanmaydi yoki sahifa tuzilishi o'zgargan"
+    if "requested format is not available" in low:
+        return "Bu video uchun mos video/audio format topilmadi (manba tomonidan cheklangan bo'lishi mumkin)"
     if "age" in low and "restrict" in low:
         return "Video yosh chegarasi (age-restricted) bilan himoyalangan"
     if "copyright" in low:
@@ -251,23 +284,44 @@ def download_video(url: str, dest_dir: str, max_mb: int, timeout_sec: int) -> st
     is_youtube = "youtube.com" in url or "youtu.be" in url
 
     def build_opts(youtube_opts: dict) -> dict:
-        return {
+        opts = {
             "outtmpl": out_tmpl,
-            # max_mb'dan sal pastroq formatlarni afzal ko'ramiz — shunda katta
-            # fayl umuman yuklab olinmaydi (vaqt/trafik behuda ketmaydi),
-            # topilmasa eng past sifatli mavjud formatga tushamiz.
+            # QATTIQ formatga ("best[ext=mp4]" kabi, faqat progressiv —
+            # video+audio bitta faylda birlashtirilgan — formatlarga)
+            # bog'lanmaymiz: YouTube ko'p videolarda BUNDAY progressiv
+            # mp4 formatni umuman taklif qilmaydi (faqat alohida video-only
+            # va audio-only oqimlar bor), shu sabab qattiq selector
+            # "Requested format is not available" bilan yiqilardi.
+            #
+            # O'rniga: avval max_mb'dan pastroq bestvideo+bestaudio'ni
+            # afzal ko'ramiz (ffmpeg orqali birlashtiriladi), keyin hajm
+            # cheklovisiz bestvideo+bestaudio'ga, keyin hajm bilan
+            # progressiv "best"ga, oxirida cheklovsiz "best"ga tushamiz —
+            # shu orqali YouTube'da MAVJUD bo'lgan eng yaxshi format
+            # AVTOMATIK topiladi.
             "format": (
-                f"best[filesize<{max_mb}M][ext=mp4]/best[filesize<{max_mb}M]/"
-                "best[ext=mp4]/best"
+                f"bestvideo*[filesize<{max_mb}M]+bestaudio[filesize<{max_mb}M]/"
+                "bestvideo*+bestaudio/"
+                f"best[filesize<{max_mb}M]/best"
+                if FFMPEG_AVAILABLE
+                # ffmpeg bo'lmasa video+audio'ni birlashtira olmaymiz —
+                # faqat allaqachon birlashtirilgan (progressiv) formatni
+                # so'raymiz, aks holda yuklab olingan fayl ovozsiz qolishi
+                # mumkin.
+                else f"best[filesize<{max_mb}M]/best"
             ),
             "noplaylist": True,
             "quiet": True,
             "no_warnings": True,
             "restrictfilenames": True,
             "socket_timeout": timeout_sec,
-            "merge_output_format": "mp4",
             **(youtube_opts if is_youtube else {}),
         }
+        if FFMPEG_AVAILABLE:
+            # Faqat ffmpeg mavjud bo'lgandagina video+audio'ni birlashtirib,
+            # natijani mp4'ga sozlaymiz (loyiha MP4 kutmoqda).
+            opts["merge_output_format"] = "mp4"
+        return opts
 
     try:
         if is_youtube:
