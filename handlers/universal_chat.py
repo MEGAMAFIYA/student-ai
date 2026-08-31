@@ -33,6 +33,8 @@ from handlers.tabrik import tabrik_cmd
 from handlers.rasim import rasim_cmd
 from handlers.vid import vid_cmd
 from handlers.qoshiq import qoshiq_cmd
+from handlers.pro_tabrik import pro_cmd
+from handlers.my_cabinet import my_cabinet_cmd
 import storage
 
 logger = logging.getLogger(__name__)
@@ -70,6 +72,8 @@ SPECIAL_COMMAND_HANDLERS = {
     "rasim": rasim_cmd,
     "vid": vid_cmd,
     "qoshiq": qoshiq_cmd,
+    "pro": pro_cmd,
+    "my": my_cabinet_cmd,
 }
 
 
