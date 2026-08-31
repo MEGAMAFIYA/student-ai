@@ -44,22 +44,54 @@ if not FFMPEG_AVAILABLE:
 # ============================================================
 # Bulutli serverlarning (Render va h.k.) IP manzillari YouTube tomonidan
 # tez-tez "shubhali" deb belgilanadi va so'rov rad etiladi. Ikkita
-# yordamchi choralar:
-#   1) "player_client" ro'yxatini kengaytirish — ba'zan android/ios
-#      client orqali so'rov bu tekshiruvni chetlab o'tadi (kafolat yo'q,
-#      YouTube tez-tez o'zgartiradi).
+# yordamchi chora birga ishlatiladi:
+#   1) "player_client" ro'yxatini kengaytirish — ba'zan android/ios/tv
+#      kabi client orqali so'rov bu tekshiruvni chetlab o'tadi (kafolat
+#      yo'q, YouTube buni tez-tez o'zgartiradi).
 #   2) COOKIES FAYLI (eng ishonchli, lekin qo'lda sozlash talab qiladi):
-#      agar YOUTUBE_COOKIES_FILE muhit o'zgaruvchisi (yoki config.py)
-#      orqali brauzeringizdan eksport qilingan cookies.txt fayli
-#      ko'rsatilsa, yt-dlp shu orqali "haqiqiy foydalanuvchi" sifatida
-#      so'rov yuboradi. Eksport qilish: brauzerga "Get cookies.txt"
-#      kengaytmasini o'rnatib, youtube.com'da tizimga kirgan holda
-#      eksport qiling, faylni serverga yuklang va shu faylga yo'lni
-#      YOUTUBE_COOKIES_FILE'ga yozing.
-YOUTUBE_COOKIES_FILE = os.getenv("YOUTUBE_COOKIES_FILE", "").strip()
-if YOUTUBE_COOKIES_FILE and not os.path.isfile(YOUTUBE_COOKIES_FILE):
-    logger.warning(f"⚠️ YOUTUBE_COOKIES_FILE ko'rsatilgan, lekin fayl topilmadi: {YOUTUBE_COOKIES_FILE}")
-    YOUTUBE_COOKIES_FILE = ""
+#      cookies fayli topilsa (pastga, `_resolve_cookies_file()` ga
+#      qarang), yt-dlp shu orqali "haqiqiy tizimga kirgan foydalanuvchi"
+#      sifatida so'rov yuboradi.
+#
+# Cookies fayli QAYERDAN qidiriladi (birinchi topilgani ishlatiladi):
+#   1) YOUTUBE_COOKIES_FILE muhit o'zgaruvchisi — aniq ko'rsatilgan yo'l
+#      (masalan Render Secret File uchun: YOUTUBE_COOKIES_FILE=/etc/secrets/cookies.txt)
+#   2) /etc/secrets/cookies.txt — Render "Secret Files" standart joyi
+#      (fayl nomini aynan "cookies.txt" qilib yuklasangiz, muhit
+#      o'zgaruvchisini sozlamasangiz ham AVTOMATIK topiladi)
+#   3) loyiha root papkasidagi cookies.txt (joriy ishchi papka —
+#      Render'da bu repo root, `python bot.py` shu yerdan ishga tushadi)
+# Fayl TOPILMASA — bu FATAL XATO EMAS: yt-dlp cookiessiz, faqat
+# player_client almashtirish orqali urinishda davom etadi (pastga
+# qarang), va agar shunda ham bot-tekshiruvdan o'ta olmasa, foydalanuvchiga
+# ANIQ "cookies kerak" xabari qaytariladi (_classify_ytdlp_error).
+#
+# Eksport qilish yo'li (mahalliy brauzerdan): brauzerga "Get cookies.txt
+# LOCALLY" kengaytmasini o'rnatib, youtube.com'da tizimga kirgan holda
+# (yopib qo'ymasdan, alohida oynada) eksport qiling, faylni Render
+# "Secret Files" bo'limiga "cookies.txt" nomi bilan yuklang.
+#
+# XAVFSIZLIK: cookies fayli HECH QACHON kodga hardcode qilinmaydi va
+# HECH QACHON logga (fayl mazmuni) yozilmaydi — faqat FAYL YO'LI
+# borligi/yo'qligi haqida xabar beriladi.
+def _resolve_cookies_file() -> str:
+    explicit = os.getenv("YOUTUBE_COOKIES_FILE", "").strip()
+    project_root_cookies = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies.txt")
+    candidates = [explicit, "/etc/secrets/cookies.txt", project_root_cookies]
+    for path in candidates:
+        if path and os.path.isfile(path):
+            return path
+    if explicit:
+        logger.warning(f"⚠️ YOUTUBE_COOKIES_FILE ko'rsatilgan, lekin fayl topilmadi: {explicit}")
+    return ""
+
+
+YOUTUBE_COOKIES_FILE = _resolve_cookies_file()
+logger.info(
+    "🍪 YouTube cookies fayli: "
+    + (f"topildi ({YOUTUBE_COOKIES_FILE})" if YOUTUBE_COOKIES_FILE
+       else "topilmadi — faqat player_client almashtirish orqali urinib ko'riladi")
+)
 
 
 def _youtube_extra_opts(player_client: str | list[str] | None = None) -> dict:
@@ -69,6 +101,14 @@ def _youtube_extra_opts(player_client: str | list[str] | None = None) -> dict:
     zanjirida esa har safar BITTA client beriladi (pastga qarang)."""
     opts = {
         "extractor_args": {"youtube": {"player_client": player_client or ["android", "web_safari", "ios"]}},
+        # Cookies yo'q bo'lsa ham, oddiy brauzer kabi ko'rinish uchun —
+        # ba'zi shubha darajasini pasaytiradi (kafolat emas).
+        "http_headers": {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+            ),
+        },
     }
     if YOUTUBE_COOKIES_FILE:
         opts["cookiefile"] = YOUTUBE_COOKIES_FILE
@@ -80,7 +120,18 @@ def _youtube_extra_opts(player_client: str | list[str] | None = None) -> dict:
 # ba'zan aksincha ko'proq shubha uyg'otadi). Shu sabab, bot-tekshiruv
 # xatosiga uchraganda, HAR BIR client'ni ALOHIDA-ALOHIDA sinab ko'ramiz —
 # birortasi o'tsa, shu yetarli.
-_YOUTUBE_RETRY_CLIENTS = ["android", "ios", "web_safari", "tv", "mweb", "web"]
+#
+# MUHIM: "tv" client cookies bilan BIRGA ishlatilmaydi — tv client
+# boshqacha autentifikatsiya oqimidan foydalanadi va cookies bilan
+# aralashtirilsa, eksport qilingan brauzer sessiyasini serverda haqiqatan
+# ham tizimdan chiqarib yuborishi mumkin (cookies faylini "yoqib
+# qo'yadi"). Shu sabab ikkita ALOHIDA ro'yxat ishlatiladi.
+_YOUTUBE_CLIENTS_NO_COOKIES = ["android", "ios", "tv", "mweb", "web_safari"]
+_YOUTUBE_CLIENTS_WITH_COOKIES = ["mweb", "web_safari", "android", "ios"]
+
+
+def _youtube_retry_clients() -> list[str]:
+    return _YOUTUBE_CLIENTS_WITH_COOKIES if YOUTUBE_COOKIES_FILE else _YOUTUBE_CLIENTS_NO_COOKIES
 
 
 def _run_youtube_with_retries(build_opts_fn, url: str) -> None:
@@ -93,7 +144,7 @@ def _run_youtube_with_retries(build_opts_fn, url: str) -> None:
     urinishlarni behuda sarflamaslik uchun. Cookies fayli mavjud bo'lsa
     birinchi urinishning o'zi odatda yetarli bo'ladi."""
     last_exc: Exception | None = None
-    for client in _YOUTUBE_RETRY_CLIENTS:
+    for client in _youtube_retry_clients():
         ydl_opts = build_opts_fn(_youtube_extra_opts(player_client=[client]))
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -281,7 +332,7 @@ def _search_one_source(prefix: str, query: str, count: int) -> tuple[list[dict],
         if is_youtube:
             info = None
             last_exc: Exception | None = None
-            for client in _YOUTUBE_RETRY_CLIENTS:
+            for client in _youtube_retry_clients():
                 opts = {**base_opts, **_youtube_extra_opts(player_client=[client])}
                 try:
                     with yt_dlp.YoutubeDL(opts) as ydl:
