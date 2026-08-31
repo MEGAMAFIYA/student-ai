@@ -104,6 +104,7 @@ from telegram import (
     InputMediaDocument,
     InputMediaVideo,
     InputMediaAudio,
+    InputMediaPhoto,
     InputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -117,6 +118,8 @@ import config
 from config import UNIVERSAL_CHAT_AI, PUBLIC_BASE_URL
 from ai_clients import ask_ai
 from handlers import course_work
+import github_storage
+import pro_tabrik_logic
 import tabrik_logic
 import video_tools
 import webapp_security
@@ -196,6 +199,10 @@ TABRIK_BARE_RE = re.compile(r"^/tabrik(?:@\w+)?\s*$", re.IGNORECASE)
 # chatga bo'sh matn yuborish foydasiz), shuning uchun buni ham "rasm
 # chizish" tugmasiga yo'naltiramiz. Aniq "/rasim" ham bir xil ishlaydi.
 RASIM_RE = re.compile(r"^$|^/rasim(?:@\w+)?\s*$", re.IGNORECASE)
+
+# 💎 /pro — /tabrik'ning shaxsiy-rasmli versiyasi (qarang: handlers/pro_tabrik.py)
+PRO_WITH_TEXT_RE = re.compile(r"^/pro(?:@\w+)?\s+(.+)$", re.IGNORECASE)
+PRO_BARE_RE = re.compile(r"^/pro(?:@\w+)?\s*$", re.IGNORECASE)
 
 
 # ============================================================
@@ -344,6 +351,46 @@ async def on_inline_query(
         await _answer_instruction(
             update, "🎁 /tabrik — tabrik matnini ham yozing",
             "Masalan: /tabrik Salom mening qadrli insonim...",
+        )
+        return
+
+    # --------------------------------------------------------
+    # 💎 /pro — /tabrik'ning shaxsiy-rasmli versiyasi. Xuddi /tabrik kabi,
+    # avval FAQAT "🎁 Tabriknomani qabul qilish" tugmasi chiqadi (rasm
+    # HALI ko'rsatilmaydi) — lekin placeholder HUJJAT (PDF) turida
+    # bo'lishi kerak, chunki keyinroq RASMGA almashtiriladi (matn buni
+    # qila olmas edi, qarang: handlers/pro_tabrik.py boshidagi izoh).
+    # --------------------------------------------------------
+
+    if PRO_WITH_TEXT_RE.match(query):
+        text = pro_tabrik_logic.parse_pro_text(query)
+        if text:
+            if not PUBLIC_BASE_URL:
+                await _answer_redirect(update, query)
+                return
+            sender_id = update.inline_query.from_user.id
+            photos = github_storage.list_user_photos(sender_id) if github_storage.is_configured() else []
+            short_id = pro_tabrik_logic.store_pro_greeting(text, sender_id, photos)
+            results = [
+                InlineQueryResultDocument(
+                    id=str(uuid.uuid4()),
+                    title="💎 Pro tabriknoma yuborish",
+                    description=text[:120],
+                    document_url=f"{PUBLIC_BASE_URL}/placeholder.pdf",
+                    mime_type="application/pdf",
+                    caption=pro_tabrik_logic.build_ready_card(),
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🎁 Tabriknomani qabul qilish", callback_data=f"iprotabrik:claim:{short_id}")
+                    ]]),
+                )
+            ]
+            await update.inline_query.answer(results, cache_time=0, is_personal=True)
+            return
+
+    if PRO_BARE_RE.match(query):
+        await _answer_instruction(
+            update, "💎 /pro — tabrik matnini ham yozing",
+            "Masalan: /pro Salom mening aziz do'stim...",
         )
         return
 
@@ -1111,3 +1158,121 @@ async def _schedule_inline_tabrik_revert(context: ContextTypes.DEFAULT_TYPE, inl
         logger.warning(f"🔍 Inline /tabrik xabarini asl holatiga qaytarishda xato: {type(e).__name__}: {e}")
     finally:
         _INLINE_TABRIK_REVERT_TASKS.pop(inline_message_id, None)
+
+
+# ============================================================
+# 💎 OG'IR OQIM: /pro (inline) — /tabrik bilan BIR XIL naqsh, lekin
+# yakuniy bosqichdan OLDIN foydalanuvchining shaxsiy rasmlari (agar
+# bo'lsa) slайд-shou qilinadi. Qarang: handlers/pro_tabrik.py'dagi
+# batafsil arxitektura izohi (nega placeholder HUJJAT turida ekani).
+# ============================================================
+
+PRO_SLIDESHOW_DELAY = 1.0
+PRO_REVERT_DELAY_SEC = 120
+
+_ACTIVE_INLINE_PRO: set[str] = set()
+_INLINE_PRO_REVERT_TASKS: dict[str, asyncio.Task] = {}
+
+
+def _pro_ready_markup(short_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("🎁 Tabriknomani qabul qilish", callback_data=f"iprotabrik:claim:{short_id}")
+    ]])
+
+
+async def inline_pro_claim_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    inline_message_id = query.inline_message_id
+    if not inline_message_id:
+        await query.answer("⚠️ Bu tugma faqat inline xabarlar uchun.", show_alert=True)
+        return
+
+    short_id = query.data.split(":", 2)[2]
+    entry = pro_tabrik_logic.get_pro_greeting(short_id)
+    if not entry:
+        await query.answer("⚠️ Bu tabrikning muddati o'tgan.", show_alert=True)
+        return
+
+    if inline_message_id in _ACTIVE_INLINE_PRO:
+        await query.answer("⏳ Animatsiya allaqachon ketmoqda...", show_alert=False)
+        return
+
+    pending_revert = _INLINE_PRO_REVERT_TASKS.pop(inline_message_id, None)
+    if pending_revert:
+        pending_revert.cancel()
+
+    pro_tabrik_logic.touch_pro_greeting(short_id)
+    _ACTIVE_INLINE_PRO.add(inline_message_id)
+    await query.answer("💎 Ochilmoqda...")
+
+    try:
+        for n in (5, 4, 3, 2, 1):
+            await _safe_edit_caption_inline(context, inline_message_id, tabrik_logic.build_countdown_frame(n))
+            await asyncio.sleep(TABRIK_COUNTDOWN_DELAY)
+
+        for step in range(tabrik_logic.TOTAL_ROTATION_FRAMES):
+            await _safe_edit_caption_inline(context, inline_message_id, tabrik_logic.build_circle_frame(step))
+            await asyncio.sleep(TABRIK_FRAME_DELAY)
+
+        for i, url in enumerate(entry["photos"]):
+            try:
+                await context.bot.edit_message_media(
+                    inline_message_id=inline_message_id,
+                    media=InputMediaPhoto(media=url, caption=f"📷 {i + 1}/{len(entry['photos'])}"),
+                )
+            except Exception as e:
+                logger.warning(f"🔍 Inline /pro slайд-shou: rasmni ko'rsatib bo'lmadi ({url}): {type(e).__name__}: {e}")
+            await asyncio.sleep(PRO_SLIDESHOW_DELAY)
+
+        final_text = f"{tabrik_logic.build_final_card(escape_markdown(entry['text'], version=1))}\n\n🤖 Talaba AI — @{BOT_USERNAME}"
+        await _safe_edit_caption_inline(context, inline_message_id, final_text, reply_markup=INLINE_MESSAGE_MARKUP)
+        logger.info(f"🔍 Inline /pro animatsiyasi muvaffaqiyatli yakunlandi (inline_message_id={inline_message_id}).")
+
+        task = asyncio.create_task(_schedule_inline_pro_revert(context, inline_message_id, short_id))
+        _INLINE_PRO_REVERT_TASKS[inline_message_id] = task
+    except Exception as e:
+        logger.error(f"🔍 Inline /pro animatsiyasida kutilmagan xato: {type(e).__name__}: {e}", exc_info=True)
+        try:
+            await _safe_edit_caption_inline(
+                context, inline_message_id, f"🎁 {escape_markdown(entry['text'], version=1)}\n\n🤖 Talaba AI — @{BOT_USERNAME}",
+                reply_markup=INLINE_MESSAGE_MARKUP,
+            )
+        except Exception:
+            pass
+    finally:
+        _ACTIVE_INLINE_PRO.discard(inline_message_id)
+
+
+async def _safe_edit_caption_inline(context: ContextTypes.DEFAULT_TYPE, inline_message_id: str, caption: str, reply_markup=None) -> None:
+    """_safe_edit_text bilan BIR XIL maqsad, lekin caption uchun (chunki
+    /pro placeholder har doim MEDIA — hujjat/rasm — bo'lib qoladi, matn
+    emas)."""
+    try:
+        await context.bot.edit_message_caption(
+            inline_message_id=inline_message_id, caption=caption, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup,
+        )
+    except BadRequest as e:
+        if "message is not modified" not in str(e).lower():
+            logger.warning(f"🔍 Inline /pro caption edit qilib bo'lmadi: {e}")
+    except Exception as e:
+        logger.warning(f"🔍 Inline /pro caption edit qilishda kutilmagan xato: {type(e).__name__}: {e}")
+
+
+async def _schedule_inline_pro_revert(context: ContextTypes.DEFAULT_TYPE, inline_message_id: str, short_id: str) -> None:
+    try:
+        await asyncio.sleep(PRO_REVERT_DELAY_SEC)
+        await context.bot.edit_message_media(
+            inline_message_id=inline_message_id,
+            media=InputMediaDocument(
+                media=f"{PUBLIC_BASE_URL}/placeholder.pdf",
+                caption=pro_tabrik_logic.build_ready_card(),
+            ),
+            reply_markup=_pro_ready_markup(short_id),
+        )
+        logger.info(f"🔍 Inline /pro xabari asl holatga qaytarildi (inline_message_id={inline_message_id}).")
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        logger.warning(f"🔍 Inline /pro xabarini asl holatga qaytarishda xato: {type(e).__name__}: {e}")
+    finally:
+        _INLINE_PRO_REVERT_TASKS.pop(inline_message_id, None)
