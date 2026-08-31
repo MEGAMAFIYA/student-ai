@@ -784,53 +784,16 @@ PRO_SUBSCRIPTION_DAYS = int(os.getenv("PRO_SUBSCRIPTION_DAYS", "30"))
 MENING_KABINETIM_DIR = os.getenv("MENING_KABINETIM_DIR", "mening_kabinetim").strip().strip("/")
 
 
-def _describe_github_error(e: Exception) -> str:
-    """Istisnoni foydalanuvchiga ko'rsatsa bo'ladigan, aniq va qisqa
-    o'zbekcha sababga aylantiradi (loglash uchun EMAS — bu allaqachon
-    chaqiruvchida to'liq log qilinadi; bu faqat foydalanuvchiga
-    tushunarli xabar matnini tanlash uchun)."""
-    if isinstance(e, httpx.HTTPStatusError):
-        code = e.response.status_code
-        if code == 401:
-            return "GITHUB_TOKEN noto'g'ri yoki muddati o'tgan (401 Unauthorized)"
-        if code == 403:
-            return "GITHUB_TOKEN'da yozish huquqi yo'q yoki so'rovlar limiti tugagan (403 Forbidden)"
-        if code == 404:
-            return f"GITHUB_REPO ('{GITHUB_REPO}') topilmadi yoki token uni ko'ra olmaydi (404 Not Found)"
-        if code == 409:
-            return "GitHub'da branch/fayl versiyasi to'qnashuvi (409 Conflict)"
-        if code == 422:
-            return "Noto'g'ri so'rov — yo'l, branch nomi yoki fayl kontenti yaroqsiz (422 Unprocessable)"
-        return f"GitHub API xato qaytardi (HTTP {code})"
-    if isinstance(e, httpx.TimeoutException):
-        return "GitHub API javob bermadi (timeout)"
-    if isinstance(e, httpx.ConnectError):
-        return "GitHub API'ga ulanib bo'lmadi (tarmoq xatosi)"
-    if isinstance(e, httpx.RequestError):
-        return f"GitHub API bilan tarmoq xatosi: {type(e).__name__}"
-    return f"Kutilmagan xato: {type(e).__name__}"
-
-
-def github_upload_binary(path: str, data: bytes, message: str) -> tuple[str | None, str | None]:
+def github_upload_binary(path: str, data: bytes, message: str) -> str | None:
     """GitHub Contents API orqali BINARY faylni (masalan JPEG rasm) repo'ga
     yozadi va muvaffaqiyatli bo'lsa OCHIQ (public) "raw" URL'ini qaytaradi
     — bu URL to'g'ridan-to'g'ri Telegram'ga (`InputMediaPhoto(media=url)`,
     `InlineQueryResultPhoto(photo_url=...)` va h.k.) berilishi mumkin.
 
     MUHIM: bu `_github_write_file`dan FARQLI — u UTF-8 matn (JSON) uchun,
-    bu esa xom BINARY baytlar uchun (base64 orqali, dekodlashsiz).
-
-    Qaytaradi: (url, error_reason).
-      - Muvaffaqiyatli bo'lsa: (raw_url, None)
-      - GitHub sozlanmagan bo'lsa: (None, "GitHub sozlanmagan (...)")
-      - Xato bo'lsa: (None, "<aniq sabab, masalan '401 Unauthorized'>")
-    Xatoning TO'LIQ tafsiloti (status kodi, javob matni) har doim
-    logger.error orqali yoziladi — quyidagi qaytariladigan sabab esa
-    foydalanuvchiga ko'rsatish uchun qisqartirilgan versiya."""
+    bu esa xom BINARY baytlar uchun (base64 orqali, dekodlashsiz)."""
     if not USE_GITHUB:
-        reason = "GitHub sozlanmagan (GITHUB_TOKEN yoki GITHUB_REPO o'rnatilmagan)"
-        logger.warning(f"⚠️ GitHub'ga yozish so'raldi, lekin {reason} ('{path}').")
-        return None, reason
+        return None
     url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{path}"
     try:
         with httpx.Client(timeout=30.0) as client:
@@ -841,16 +804,10 @@ def github_upload_binary(path: str, data: bytes, message: str) -> tuple[str | No
             }
             r = client.put(url, headers=_github_headers(), json=body)
             r.raise_for_status()
-        return f"https://raw.githubusercontent.com/{GITHUB_REPO}/{GITHUB_BRANCH}/{path}", None
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            f"❌ GitHub'ga binary fayl yozishda xato ('{path}'): "
-            f"HTTP {e.response.status_code} — javob: {e.response.text[:500]}"
-        )
-        return None, _describe_github_error(e)
+        return f"https://raw.githubusercontent.com/{GITHUB_REPO}/{GITHUB_BRANCH}/{path}"
     except Exception as e:
-        logger.error(f"❌ GitHub'ga binary fayl yozishda xato ('{path}'): {type(e).__name__}: {e}", exc_info=True)
-        return None, _describe_github_error(e)
+        logger.error(f"❌ GitHub'ga binary fayl yozishda xato ('{path}'): {type(e).__name__}: {e}")
+        return None
 
 
 def github_list_directory(path: str) -> list[str]:
@@ -876,3 +833,51 @@ def github_list_directory(path: str) -> list[str]:
     except Exception as e:
         logger.error(f"❌ GitHub papkasini o'qishda xato ('{path}'): {type(e).__name__}: {e}")
         return []
+
+
+def github_read_text_file(path: str) -> str | None:
+    """`_github_read_file`ga o'xshaydi, lekin GITHUB_DATA_DIR prefiksisiz,
+    ISTALGAN to'liq yo'l bilan ishlaydi — foydalanuvchi-maxsus fayllar
+    (masalan shaxsiy AI kalitlari, "mening_kabinetim/{user_id}/...")
+    uchun. Fayl topilmasa yoki GitHub sozlanmagan bo'lsa — None."""
+    if not USE_GITHUB:
+        return None
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{path}"
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            r = client.get(url, headers=_github_headers(), params={"ref": GITHUB_BRANCH})
+            if r.status_code == 404:
+                return None
+            r.raise_for_status()
+            data = r.json()
+        return base64.b64decode(data["content"]).decode("utf-8")
+    except Exception as e:
+        logger.error(f"❌ GitHub'dan matn fayl o'qishda xato ('{path}'): {type(e).__name__}: {e}")
+        return None
+
+
+def github_write_text_file(path: str, content: str, message: str) -> bool:
+    """`github_read_text_file`ning yozish jufti — mavjud faylni yangilaydi
+    (kerakli "sha" ni avval o'qib) yoki yangi fayl yaratadi."""
+    if not USE_GITHUB:
+        return False
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{path}"
+    sha = None
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            r = client.get(url, headers=_github_headers(), params={"ref": GITHUB_BRANCH})
+            if r.status_code == 200:
+                sha = r.json().get("sha")
+            body = {
+                "message": message,
+                "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
+                "branch": GITHUB_BRANCH,
+            }
+            if sha:
+                body["sha"] = sha
+            r = client.put(url, headers=_github_headers(), json=body)
+            r.raise_for_status()
+        return True
+    except Exception as e:
+        logger.error(f"❌ GitHub'ga matn fayl yozishda xato ('{path}'): {type(e).__name__}: {e}")
+        return False
