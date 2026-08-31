@@ -7,8 +7,11 @@ bosqichma-bosqich o'zgaradi:
   1) 5→1 countdown — har bir raqam "katta ASCII-art raqam" sifatida
      (5x7 nuqta-matritsa shrifti, faqat tabrik_logic.DECOR_CHARS
      palitrasidan foydalanib chizilgan — oddiy "5, 4, 3..." matn EMAS).
-  2) "Aylanayotgan naqsh" animatsiyasi (bezak chizig'i + aylanuvchi
-     halqa, yana shu palitra bilan).
+  2) Emoji animatsiyasi — sanoqdan keyin, bir nechta emoji ketma-ket
+     (har biri alohida, hech qanday qo'shimcha matnsiz) ko'rsatiladi.
+     Foydalanuvchi /tabrik'dan keyin matndan OLDIN emoji(lar) yozgan
+     bo'lsa (masalan "/tabrik 😊🥰 Salom...") o'shalar ishlatiladi,
+     aks holda tabrik_logic.DEFAULT_EMOJIS.
   3) Yakuniy karta — foydalanuvchi yozgan tabrik matni shu YERDA birinchi
      marta ko'rinadi.
   4) 2 daqiqadan so'ng xabar avtomatik ravishda YANA faqat tugma
@@ -82,7 +85,20 @@ async def tabrik_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE, overrid
         )
         return
 
-    short_id = tabrik_logic.store_greeting(text)
+    # Matn boshida emoji(lar) yozilgan bo'lsa (masalan
+    # "/tabrik 😊🥰 Salom...") — o'shalar animatsiyada ishlatiladi,
+    # qolgan qism esa haqiqiy tabrik matni bo'ladi.
+    emojis, text = tabrik_logic.extract_emojis(text)
+    if not text:
+        await update.message.reply_text(
+            "🎁 Tabrik matnini ham yozing, masalan:\n\n"
+            "`/tabrik Salom mening qadrli insonim, sizni bugungi kun bilan "
+            "tabriklayman. Hurmat bilan Davron`",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return
+
+    short_id = tabrik_logic.store_greeting(text, emojis)
     # MUHIM: bu yerda tabrik matni HECH QACHON ko'rsatilmaydi — faqat
     # tugma bosilgach, animatsiya oxirida ochiladi.
     await update.message.reply_text(
@@ -148,8 +164,9 @@ async def tabrik_claim_callback(update: Update, context: ContextTypes.DEFAULT_TY
             await _safe_edit(msg, tabrik_logic.build_countdown_frame(n))
             await asyncio.sleep(COUNTDOWN_DELAY)
 
-        for step in range(tabrik_logic.TOTAL_ROTATION_FRAMES):
-            await _safe_edit(msg, tabrik_logic.build_circle_frame(step))
+        emojis = tabrik_logic.get_greeting_emojis(short_id) or tabrik_logic.DEFAULT_EMOJIS
+        for emoji in emojis:
+            await _safe_edit(msg, tabrik_logic.build_emoji_frame(emoji))
             await asyncio.sleep(FRAME_DELAY)
 
         escaped = escape_markdown(greeting, version=1)
