@@ -36,6 +36,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 
 import ai_clients
 import config
+import pro_subscription
 import storage
 import wallet
 from handlers import payment_admin as pay_ui
@@ -172,6 +173,7 @@ def _main_menu_keyboard() -> InlineKeyboardMarkup:
     rows.append([InlineKeyboardButton("🔑 AI kalitlari", callback_data="dev:keys")])
     rows.append([InlineKeyboardButton("➕ Barcha modellar", callback_data="dev:bulk")])
     rows.append([InlineKeyboardButton("📊 Statistika", callback_data="dev:stats")])
+    rows.append([InlineKeyboardButton("💎 Pro obunalar", callback_data="dev:prosub")])
     rows.append([InlineKeyboardButton("💳 To'lovlar", callback_data="dev:pay"),
                  InlineKeyboardButton("💰 Balanslar", callback_data="dev:paybal")])
     rows.append([InlineKeyboardButton("📈 Moliyaviy statistika", callback_data="dev:finstats")])
@@ -350,6 +352,40 @@ def _stats_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("🔄 Yangilash", callback_data="dev:stats")],
         [InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:menu")],
     ])
+
+
+# ============================================================
+# 💎 Pro obunalar (kutilayotgan so'rovlar ro'yxati)
+# ============================================================
+
+def _prosub_menu_text() -> str:
+    pending = pro_subscription.get_pending_requests()
+    lines = [
+        "💎 <b>Pro obuna so'rovlari</b>\n",
+        f"💰 Narx: {config.PRO_SUBSCRIPTION_PRICE_SUM:,} so'm / {config.PRO_SUBSCRIPTION_DAYS} kun".replace(",", " "),
+        f"💳 Karta: <code>{_esc(config.PAYMENT_CARD_NUMBER or '(sozlanmagan)')}</code>\n",
+    ]
+    if not pending:
+        lines.append("<i>Hozircha kutilayotgan so'rov yo'q.</i>")
+    else:
+        lines.append(f"<b>Kutilayotgan so'rovlar ({len(pending)}):</b>")
+        for req in pending:
+            lines.append(f"  • user_id=<code>{req['user_id']}</code> — req_id=<code>{req['req_id']}</code>")
+        lines.append("\nHar birini tasdiqlash/rad etish uchun pastdagi tugmalardan foydalaning:")
+    return "\n".join(lines)
+
+
+def _prosub_menu_keyboard() -> InlineKeyboardMarkup:
+    pending = pro_subscription.get_pending_requests()
+    rows = []
+    for req in pending[:15]:  # bitta xabarga sig'ishi uchun cheklov
+        rows.append([
+            InlineKeyboardButton(f"✅ {req['user_id']}", callback_data=f"prosub:approve:{req['req_id']}"),
+            InlineKeyboardButton(f"❌ {req['user_id']}", callback_data=f"prosub:reject:{req['req_id']}"),
+        ])
+    rows.append([InlineKeyboardButton("🔄 Yangilash", callback_data="dev:prosub")])
+    rows.append([InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:menu")])
+    return InlineKeyboardMarkup(rows)
 
 
 async def _run_key_check() -> str:
@@ -618,6 +654,11 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _safe_edit_query(query, "🩺 Tekshirilmoqda, biroz kuting...")
         report = await _run_key_check()
         await _edit_menu(context, report, _keys_menu_keyboard())
+        return DEV_MENU
+
+    # ---------- 💎 Pro obunalar ----------
+    if action == "prosub":
+        await _safe_edit_query(query, _prosub_menu_text(), reply_markup=_prosub_menu_keyboard(), parse_mode="HTML")
         return DEV_MENU
 
     # ---------- 💳 To'lovlar ----------
