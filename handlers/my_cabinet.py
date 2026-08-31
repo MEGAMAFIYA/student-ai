@@ -251,14 +251,19 @@ async def on_kabinet_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         photo = update.message.photo[-1]  # eng katta o'lchamdagi versiya
         file = await context.bot.get_file(photo.file_id)
         image_bytes = bytes(await file.download_as_bytearray())
-        url = await asyncio.to_thread(github_storage.upload_user_photo, user_id, image_bytes)
+        url, error = await asyncio.to_thread(github_storage.upload_user_photo, user_id, image_bytes)
     except Exception as e:
         logger.error(f"🖼 Kabinet rasmini yuklashda kutilmagan xato (user_id={user_id}): {type(e).__name__}: {e}", exc_info=True)
-        await status.edit_text("❌ Rasmni saqlashda kutilmagan xatolik yuz berdi.")
+        await status.edit_text(f"❌ Rasmni saqlashda kutilmagan xatolik yuz berdi.\n\nSabab: {type(e).__name__}: {e}")
         return
 
     if url:
         await status.edit_text("✅ Rasm muvaffaqiyatli saqlandi! Yana rasm yuklash uchun /my ni qayta bosing.")
         logger.info(f"🖼 Kabinet rasmi muvaffaqiyatli yuklandi: user_id={user_id}.")
     else:
-        await status.edit_text("❌ Rasmni saqlashda xatolik yuz berdi. Birozdan so'ng qayta urinib ko'ring.")
+        logger.error(f"🖼 Kabinet rasmi GitHub'ga yuklanmadi (user_id={user_id}): {error}")
+        await status.edit_text(
+            "❌ Rasmni saqlashda xatolik yuz berdi.\n\n"
+            f"Sabab: {error}\n\n"
+            "Birozdan so'ng qayta urinib ko'ring yoki administratorga shu sababni yuboring."
+        )
