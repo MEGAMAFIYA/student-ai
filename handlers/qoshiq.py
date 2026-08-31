@@ -98,7 +98,7 @@ async def qoshiq_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE, overrid
         return
     except Exception as e:
         logger.error(f"🎵 /qo'shiq qidiruvida kutilmagan xato ('{query}'): {type(e).__name__}: {e}", exc_info=True)
-        await status.edit_text("❌ Qidiruvda kutilmagan xatolik yuz berdi.")
+        await status.edit_text(f"❌ Qidiruvda kutilmagan xatolik yuz berdi.\n\nSabab: {type(e).__name__}: {e}")
         return
 
     _purge_expired_sessions()
@@ -176,7 +176,7 @@ async def qoshiq_choice_callback(update: Update, context: ContextTypes.DEFAULT_T
         await context.bot.send_message(chat_id, str(e))
     except Exception as e:
         logger.error(f"🎵 /qo'shiq yuborishda kutilmagan xato (chat_id={chat_id}): {type(e).__name__}: {e}", exc_info=True)
-        await context.bot.send_message(chat_id, "❌ Qo'shiqni yuborishda kutilmagan xatolik yuz berdi.")
+        await context.bot.send_message(chat_id, f"❌ Qo'shiqni yuborishda kutilmagan xatolik yuz berdi.\n\nSabab: {type(e).__name__}: {e}")
     finally:
         shutil.rmtree(dest_dir, ignore_errors=True)
         # Sessiyani ishlatilgandan keyin o'chiramiz — bir marta tanlangan
