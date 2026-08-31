@@ -15,6 +15,7 @@ ham saqlanib qoladi. Ya'ni AI kalit/model/provider'larni ENDI to'g'ridan-to'g'ri
 import json
 import logging
 import os
+import base64
 import httpx
 from dotenv import load_dotenv
 
@@ -766,3 +767,69 @@ KAPITALBANK_WEBHOOK_SECRET = os.getenv("KAPITALBANK_WEBHOOK_SECRET", "")
 PAYMENT_CARD_NUMBER = os.getenv("PAYMENT_CARD_NUMBER", "")
 PAYMENT_CARD_HOLDER = os.getenv("PAYMENT_CARD_HOLDER", "")
 PAYMENT_RECEIVER_NOTE = os.getenv("PAYMENT_RECEIVER_NOTE", "")
+
+# ============================================================
+# 💎 Pro obuna (👤 /my — "Mening kabinetim")
+# ============================================================
+PRO_SUBSCRIPTION_PRICE_SUM = int(os.getenv("PRO_SUBSCRIPTION_PRICE_SUM", "10000"))
+PRO_SUBSCRIPTION_DAYS = int(os.getenv("PRO_SUBSCRIPTION_DAYS", "30"))
+
+# ============================================================
+# 🖼 "Mening kabinetim" — foydalanuvchi rasmlari GitHub repo'da shu papka
+# ostida saqlanadi: {MENING_KABINETIM_DIR}/{user_id}/rasimlar/{fayl}.
+# Bu — persist_read/write uchun ishlatiladigan GITHUB_DATA_DIR'dan ATAYLAB
+# ALOHIDA (u yerda bot_data JSON fayllari, bu yerda esa foydalanuvchi
+# rasmlari — ikkalasi aralashib ketmasligi uchun).
+# ============================================================
+MENING_KABINETIM_DIR = os.getenv("MENING_KABINETIM_DIR", "mening_kabinetim").strip().strip("/")
+
+
+def github_upload_binary(path: str, data: bytes, message: str) -> str | None:
+    """GitHub Contents API orqali BINARY faylni (masalan JPEG rasm) repo'ga
+    yozadi va muvaffaqiyatli bo'lsa OCHIQ (public) "raw" URL'ini qaytaradi
+    — bu URL to'g'ridan-to'g'ri Telegram'ga (`InputMediaPhoto(media=url)`,
+    `InlineQueryResultPhoto(photo_url=...)` va h.k.) berilishi mumkin.
+
+    MUHIM: bu `_github_write_file`dan FARQLI — u UTF-8 matn (JSON) uchun,
+    bu esa xom BINARY baytlar uchun (base64 orqali, dekodlashsiz)."""
+    if not USE_GITHUB:
+        return None
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{path}"
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            body = {
+                "message": message,
+                "content": base64.b64encode(data).decode("ascii"),
+                "branch": GITHUB_BRANCH,
+            }
+            r = client.put(url, headers=_github_headers(), json=body)
+            r.raise_for_status()
+        return f"https://raw.githubusercontent.com/{GITHUB_REPO}/{GITHUB_BRANCH}/{path}"
+    except Exception as e:
+        logger.error(f"❌ GitHub'ga binary fayl yozishda xato ('{path}'): {type(e).__name__}: {e}")
+        return None
+
+
+def github_list_directory(path: str) -> list[str]:
+    """GitHub Contents API orqali papka ichidagi fayllarni sanab, har biri
+    uchun OCHIQ "raw" URL qaytaradi (fayl nomi bo'yicha, eng eskisi
+    birinchi bo'lib turadigan tartibda). Papka mavjud bo'lmasa (404) yoki
+    GitHub sozlanmagan bo'lsa — bo'sh ro'yxat qaytaradi (xato ko'tarilmaydi,
+    chaqiruvchi "hali rasm yo'q" deb talqin qilishi kerak)."""
+    if not USE_GITHUB:
+        return []
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{path}"
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            r = client.get(url, headers=_github_headers(), params={"ref": GITHUB_BRANCH})
+            if r.status_code == 404:
+                return []
+            r.raise_for_status()
+            items = r.json()
+        if not isinstance(items, list):
+            return []
+        names = sorted(item["name"] for item in items if item.get("type") == "file")
+        return [f"https://raw.githubusercontent.com/{GITHUB_REPO}/{GITHUB_BRANCH}/{path}/{name}" for name in names]
+    except Exception as e:
+        logger.error(f"❌ GitHub papkasini o'qishda xato ('{path}'): {type(e).__name__}: {e}")
+        return []
