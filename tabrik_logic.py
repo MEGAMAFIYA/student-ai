@@ -69,20 +69,37 @@ def _purge_expired(now: float | None = None) -> None:
             del _STORE[k]
 
 
-def store_greeting(text: str) -> str:
-    """Tabrik matnini saqlaydi va tugma uchun qisqa ID qaytaradi."""
+def store_greeting(text: str, emojis: list[str] | None = None) -> str:
+    """Tabrik matnini (va, agar berilgan bo'lsa, foydalanuvchi tanlagan
+    emojilar ro'yxatini) saqlaydi va tugma uchun qisqa ID qaytaradi.
+    `emojis` berilmasa yoki bo'sh bo'lsa, DEFAULT_EMOJIS ishlatiladi."""
     short_id = uuid.uuid4().hex[:10]
-    _STORE[short_id] = {"text": text, "created_at": time.time()}
+    _STORE[short_id] = {
+        "text": text,
+        "emojis": list(emojis) if emojis else list(DEFAULT_EMOJIS),
+        "created_at": time.time(),
+    }
     _purge_expired()
     return short_id
+
+
+def _get_entry(short_id: str) -> dict | None:
+    _purge_expired()
+    return _STORE.get(short_id)
 
 
 def get_greeting(short_id: str) -> str | None:
     """ID bo'yicha tabrik matnini qaytaradi (muddati o'tgan/topilmagan
     bo'lsa None)."""
-    _purge_expired()
-    entry = _STORE.get(short_id)
+    entry = _get_entry(short_id)
     return entry["text"] if entry else None
+
+
+def get_greeting_emojis(short_id: str) -> list[str] | None:
+    """ID bo'yicha shu tabrik uchun ishlatiladigan emojilar ro'yxatini
+    qaytaradi (muddati o'tgan/topilmagan bo'lsa None)."""
+    entry = _get_entry(short_id)
+    return list(entry["emojis"]) if entry else None
 
 
 def touch_greeting(short_id: str) -> None:
@@ -98,6 +115,47 @@ def touch_greeting(short_id: str) -> None:
 #    belgilardan foydalanadi.
 # ------------------------------------------------------------------
 DECOR_CHARS = ["•", "~", "✓", "«", "»", "-", "_", "—", "+", "×"]
+
+
+# ------------------------------------------------------------------
+# 3-b) EMOJI ANIMATSIYASI — sanoqdan keyingi "aylanayotgan naqsh"
+#      o'rniga ishlatiladi. Foydalanuvchi /tabrik yoki /pro'dan keyin
+#      matndan OLDIN emoji(lar) yozsa (masalan
+#      "/pro 😊🥰😳🙄 tabriklayman...") o'sha emojilar ishlatiladi;
+#      aks holda DEFAULT_EMOJIS.
+# ------------------------------------------------------------------
+DEFAULT_EMOJIS = ["🎉", "🎊", "🥳", "🎁", "✨"]
+
+_EMOJI_TOKEN = (
+    "[\U0001F300-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U0001F1FF"
+    "\U00002190-\U000021FF\U00002B00-\U00002BFF\U0001F900-\U0001F9FF]"
+    "[\U0000FE0F\U0001F3FB-\U0001F3FF]?"
+)
+_EMOJI_RE = re.compile(_EMOJI_TOKEN)
+_LEADING_EMOJIS_RE = re.compile(rf"^(?:{_EMOJI_TOKEN}\s*)+")
+
+
+def extract_emojis(text: str) -> tuple[list[str], str]:
+    """Matn BOSHIDAGI emoji ketma-ketligini ajratib oladi va qolgan
+    (haqiqiy tabrik) matnni qaytaradi. Masalan:
+    "😊🥰😳🙄 tabriklayman..." -> (["😊", "🥰", "😳", "🙄"], "tabriklayman...").
+    Boshida emoji topilmasa — bo'sh ro'yxat va o'zgarishsiz matn
+    qaytariladi (bu holda chaqiruvchi DEFAULT_EMOJIS'dan foydalanadi)."""
+    if not text:
+        return [], text
+    match = _LEADING_EMOJIS_RE.match(text)
+    if not match:
+        return [], text
+    emojis = _EMOJI_RE.findall(match.group(0))
+    rest = text[match.end():].lstrip()
+    return emojis, rest
+
+
+def build_emoji_frame(emoji: str) -> str:
+    """Sanoqdan keyingi animatsiya freym'i — endi "aylanayotgan naqsh"
+    o'rniga FAQAT bitta emoji, hech qanday qo'shimcha matnsiz (har biri
+    alohida yuklanib, ustidagisini almashtiradi)."""
+    return emoji
 
 
 def _ornament_line(offset: int, length: int = 21) -> str:
