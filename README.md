@@ -108,6 +108,35 @@ Bot ichida oddiy HTTP health-check server ham ishlaydi (Render "Free Web
 Service" uyquga ketmasligi/portni ko'rishi uchun) — qo'shimcha sozlash shart
 emas.
 
+## 🎬🎵 /vid va /qo'shiq — YouTube "Sign in to confirm you're not a bot"
+
+Bulutli serverlarning (shu jumladan Render) IP manzillarini YouTube ba'zan
+"shubhali" deb belgilaydi va videoni bermay, ushbu xatoni qaytaradi. Buni
+kamaytirish uchun `video_tools.py` avtomatik ravishda bir nechta
+player_client bilan qayta urinadi, lekin ENG ISHONCHLI yechim — cookies
+fayli qo'shish:
+
+1. Kompyuteringizda brauzerga "Get cookies.txt LOCALLY" kengaytmasini
+   o'rnating, youtube.com'da tizimga kiring (alohida/incognito oynada,
+   keyin oynani YOPMASDAN eksport qiling — logout qilmang, aks holda
+   cookies darhol yaroqsiz bo'lib qoladi) va `cookies.txt` faylini
+   yuklab oling.
+2. Render loyihangizda **Settings -> Secret Files** bo'limiga o'ting va
+   shu faylni aynan **`cookies.txt`** nomi bilan, yo'li **`/etc/secrets/cookies.txt`**
+   bo'ladigan qilib yuklang (Render Secret Files har doim shu papkaga
+   joylaydi).
+3. Boshqa hech narsa qilish shart emas — kod `/etc/secrets/cookies.txt`
+   ni AVTOMATIK topadi. Xohlasangiz, boshqa yo'l ko'rsatish uchun
+   ixtiyoriy environment variable ham qo'yishingiz mumkin:
+   `YOUTUBE_COOKIES_FILE=/etc/secrets/cookies.txt` (yoki boshqa yo'l).
+
+Cookies fayli topilmasa ham bot ishlashda davom etadi (faqat
+player_client almashtirish orqali urinadi) — shunchaki bot-tekshiruvga
+duch kelsa, foydalanuvchiga "cookies kerak" degan aniq xabar chiqadi,
+bot yiqilib qolmaydi. Cookies faylini HECH QACHON kodga yoki repo'ga
+committing qilmang — u faqat Render "Secret Files" orqali (yoki
+mahalliyda `.gitignore`langan holda) saqlanishi kerak.
+
 ## ⚠️ DOIMIY SAQLASH — MUHIM
 
 `/developer` orqali qo'shilgan AI kalitlar, "Mening fayllarim" tarixi,
