@@ -28,15 +28,24 @@ def _user_photos_dir(user_id: int) -> str:
     return f"{config.MENING_KABINETIM_DIR}/{user_id}/rasimlar"
 
 
-def upload_user_photo(user_id: int, image_bytes: bytes) -> str | None:
-    """Rasmni yuklaydi, muvaffaqiyatli bo'lsa OCHIQ (raw) URL qaytaradi."""
+def upload_user_photo(user_id: int, image_bytes: bytes) -> tuple[str | None, str | None]:
+    """Rasmni yuklaydi.
+
+    Qaytaradi: (url, error_reason).
+      - Muvaffaqiyatli bo'lsa: (raw_url, None)
+      - Muvaffaqiyatsiz bo'lsa: (None, "<foydalanuvchiga ko'rsatsa bo'ladigan aniq sabab>")
+    Xatoning to'liq tafsiloti (HTTP status, javob matni) config.py'da
+    logger.error orqali allaqachon yozib qo'yiladi; bu yerda faqat
+    yuqori darajadagi (user_id, path) konteksti qo'shib log qilinadi."""
     import uuid
     filename = f"{uuid.uuid4().hex}.jpg"
     path = f"{_user_photos_dir(user_id)}/{filename}"
-    url = config.github_upload_binary(path, image_bytes, message=f"🖼 Rasm yuklandi: user_id={user_id}")
+    url, error = config.github_upload_binary(path, image_bytes, message=f"🖼 Rasm yuklandi: user_id={user_id}")
     if url:
         logger.info(f"🖼 Rasm GitHub'ga yuklandi: user_id={user_id}, path={path}.")
-    return url
+        return url, None
+    logger.error(f"🖼 Rasm GitHub'ga YUKLANMADI: user_id={user_id}, path={path}, sabab: {error}.")
+    return None, error
 
 
 def list_user_photos(user_id: int) -> list[str]:
