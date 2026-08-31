@@ -17,6 +17,7 @@ uchun rasmiy uslubiy qo'llanmalarga asoslangan.
 """
 
 import asyncio
+import contextvars
 import json
 import logging
 import re
@@ -26,7 +27,10 @@ from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode, ChatAction
 
 from config import COURSE_WORK_AI
-from ai_clients import ask_ai
+import config
+from ai_clients import ask_ai, ask_ai_with_source
+import user_ai_keys
+import wallet
 from pdf_tools import build_course_work_pdf, count_pdf_pages
 from handlers.menu import main_menu_keyboard
 from handlers import wallet_ui
@@ -37,6 +41,26 @@ CW_PAGES, CW_TOPIC = range(2)
 
 WORDS_PER_PAGE = 380
 MAX_PAGES = 150
+
+# ============================================================
+# 🔑 Shaxsiy AI kalitlaridan foydalanishni kuzatish (/my > 🔑 Shaxsiy
+# kalitlarim). `_ask_retry` bitta generatsiya davomida O'NLAB marta
+# chaqiriladi (reja, har bir kichik bo'lim, xulosa, adabiyotlar...) —
+# har birida qaysi manba (foydalanuvchi kaliti / bot kaliti) ishlaganini
+# HAR BIR funksiya imzosiga qo'shimcha parametr sifatida uzatish o'rniga,
+# contextvars orqali "joriy generatsiya" kontekstini uzatamiz (bitta
+# asyncio Task ichida avtomatik ko'rinadi, boshqa parallel
+# foydalanuvchilarning generatsiyasiga ARALASHMAYDI).
+#
+# QOIDA (soddalik va moliyaviy xavfsizlik uchun ATAYLAB "hammasi yoki
+# hech narsa"): agar BUTUN generatsiya davomida FAQAT foydalanuvchining
+# shaxsiy kaliti ishlatilgan bo'lsa — 50% pul qaytariladi. Agar hech
+# bo'lmaganda BITTA chaqiruv bot kalitiga tushib qolgan bo'lsa (masalan
+# foydalanuvchi kaliti yarim yo'lda limitga urilib qolsa) — pul
+# QAYTARILMAYDI (qisman ishlatilgan xizmat uchun qisman qaytarish —
+# noaniq va murakkab hisob-kitobni oldini olish uchun).
+_current_user_id: "contextvars.ContextVar[int | None]" = contextvars.ContextVar("cw_user_id", default=None)
+_current_source_tracker: "contextvars.ContextVar[dict | None]" = contextvars.ContextVar("cw_source_tracker", default=None)
 
 # Xavfsizlik zahirasi: so'z hisobi bilan sahifa hisobi orasidagi tafovutni
 # qoplash uchun boshlang'ich generatsiyada biroz ko'proq maqsad qo'yiladi.
@@ -347,8 +371,18 @@ async def receive_topic_and_generate(update: Update, context: ContextTypes.DEFAU
 
 
 async def _generate_and_send(update, context, topic: str, pages: int, status):
+    user = update.effective_user
+    user_id = user.id if user else None
+    # 🔑 Shaxsiy AI kalitlari FAQAT bu (pullik, wallet_ui.require_payment
+    # bilan o'ralgan) oqimda kuzatiladi — universal_chat/inline'dagi bepul
+    # chaqiruvlar bunga aloqasi yo'q (source_tracker=None qoladi).
+    source_tracker = {"used_user_key": False, "used_bot_key": False, "last_user_key_failure": ""} if user_id else None
+
     try:
-        result = await asyncio.wait_for(generate_course_work(topic, pages, status), timeout=OVERALL_TIMEOUT_SEC)
+        result = await asyncio.wait_for(
+            generate_course_work(topic, pages, status, user_id=user_id, source_tracker=source_tracker),
+            timeout=OVERALL_TIMEOUT_SEC,
+        )
     except asyncio.TimeoutError:
         logger.error(f"Kurs ishi generatsiyasi {OVERALL_TIMEOUT_SEC}s ichida tugamadi ('{topic}').")
         result = None
@@ -372,6 +406,28 @@ async def _generate_and_send(update, context, topic: str, pages: int, status):
     sections, pdf_buf, actual_pages = result
     logger.info(f"📘 Kurs ishi muvaffaqiyatli yakunlandi: '{topic}', {actual_pages} bet.")
 
+    # 💰 Shaxsiy kalit natijasiga qarab qo'shimcha xabar (finalize_success
+    # ichidagi "✅ Tayyor! X so'm yechildi" xabariga QO'SHIMCHA sifatida
+    # ko'rsatiladi — narxning o'zi baribir to'liq yechiladi, chunki
+    # reservation narx qadar band qilingan edi; farq shu — foydalanuvchi
+    # kaliti ishlagan bo'lsa YARMI DARHOL qaytariladi).
+    extra_note = ""
+    if source_tracker and source_tracker["used_user_key"] and not source_tracker["used_bot_key"]:
+        reservation = wallet_ui.get_active_reservation(context)
+        price = reservation["price"] if reservation else 0
+        if price > 0:
+            refund_amount = price // 2
+            wallet.refund(
+                user_id, refund_amount,
+                description=f"Shaxsiy AI kaliti ishlatilgani uchun 50% qaytarildi: {topic[:60]}",
+            )
+            extra_note = f"🔑 Siz yuklagan AI kalitingiz ishladi! Hisobingizga {refund_amount:,} so'm qaytarildi.".replace(",", " ")
+            logger.info(f"🔑 Shaxsiy kalit muvaffaqiyati: user_id={user_id}, {refund_amount} so'm qaytarildi.")
+    elif source_tracker and source_tracker["used_bot_key"] and user_ai_keys.has_any_keys(user_id):
+        reason = source_tracker["last_user_key_failure"] or "noma'lum sabab"
+        extra_note = f"⚠️ Siz yuklagan AI kalit ishlamagani sababli ({reason}) bot kaliti ishlatildi. 50% pul qaytarilmaydi."
+        logger.info(f"🔑 Shaxsiy kalit ishlamadi: user_id={user_id}, sabab='{reason}' — bot kaliti ishlatildi.")
+
     await update.message.reply_document(
         document=InputFile(pdf_buf, filename=f"{topic[:40]}.pdf"),
         caption=(
@@ -387,7 +443,7 @@ async def _generate_and_send(update, context, topic: str, pages: int, status):
         pass
     # 💰 Xizmat MUVAFFAQIYATLI yakunlandi — band qilingan summa endi
     # HAQIQATAN balansdan yechiladi (avval emas!).
-    await wallet_ui.finalize_success(context, update=update)
+    await wallet_ui.finalize_success(context, update=update, extra_note=extra_note)
 
 
 async def _ask_retry(prompt: str, system: str, attempts: int = RETRY_ATTEMPTS, delay: int = RETRY_DELAY_SEC, raw: bool = False, tag: str = "") -> str | None:
@@ -400,10 +456,22 @@ async def _ask_retry(prompt: str, system: str, attempts: int = RETRY_ATTEMPTS, d
     `tag` — logda ko'rinadigan yorliq (masalan "1.2-bo'lim", "KIRISH"), shu
     orqali log faylida AYNAN qaysi bo'lim so'rovi ketayotgani ko'rinadi."""
     label = tag or "so'rov"
+    user_id = _current_user_id.get()
+    tracker = _current_source_tracker.get()
     for i in range(1, attempts + 1):
         logger.info(f"[{label}] AI ga so'rov yuborilmoqda ({i}/{attempts}-urinish, provider={COURSE_WORK_AI.get('provider')}, model={COURSE_WORK_AI.get('model')})...")
         try:
-            result = await ask_ai(COURSE_WORK_AI, prompt, system)
+            if user_id:
+                result, source, detail = await ask_ai_with_source(COURSE_WORK_AI, prompt, system, user_id=user_id)
+                if tracker is not None:
+                    if source == "user_key":
+                        tracker["used_user_key"] = True
+                    else:
+                        tracker["used_bot_key"] = True
+                        if detail:
+                            tracker["last_user_key_failure"] = detail
+            else:
+                result = await ask_ai(COURSE_WORK_AI, prompt, system)
         except Exception as e:
             logger.error(f"[{label}] ask_ai chaqiruvida kutilmagan xato ({i}/{attempts}): {e}", exc_info=True)
             result = None
@@ -425,15 +493,35 @@ async def _ask_retry(prompt: str, system: str, attempts: int = RETRY_ATTEMPTS, d
     return None
 
 
-async def generate_course_work(topic: str, pages: int, status_msg=None):
+async def generate_course_work(topic: str, pages: int, status_msg=None, user_id: int | None = None, source_tracker: dict | None = None):
     """
     Kurs ishini tuzilgan holda generatsiya qiladi, NAZORATCHI orqali har bir
     bo'limning to'liqligini tekshirib, bo'sh qolgan qismlarni qayta yozdiradi,
     so'ng HAQIQIY PDF sahifa soni so'ralgan sahifa sonidan kam bo'lmagunicha
     kengaytirib boradi.
     Qaytaradi: (sections dict, pdf_buffer, actual_pages) yoki None (xato bo'lsa).
-    Boshqa modullar (masalan universal_chat) ham shu funksiyadan foydalanadi.
-    """
+    Boshqa modullar (masalan universal_chat) ham shu funksiyadan foydalanadi
+    (ular `user_id`/`source_tracker` bermaydi — o'sha chaqiruvlarda shaxsiy
+    kalit kuzatilmaydi, xatti-harakat AVVALGIDEK qoladi).
+
+    `user_id` va `source_tracker` (bo'sh lug'at — chaqiruvchi o'zi yaratib
+    beradi) berilsa (FAQAT pullik /kurs_ishi oqimidan), generatsiya
+    davomidagi BARCHA AI so'rovlari avval o'sha foydalanuvchining shaxsiy AI
+    kalitlarini sinaydi, natija esa (qaysi manba ishlatilgani) BERILGAN
+    `source_tracker` lug'atiga YOZILADI — funksiya qaytgandan keyin
+    chaqiruvchi shu lug'atni o'qib, foydalanuvchiga tegishli xabar
+    (50% qaytarish / kalit ishlamadi) berishi mumkin. Qarang: fayl
+    boshidagi contextvars izohi va _ask_retry() ichidagi ishlatilishi."""
+    token_u = _current_user_id.set(user_id)
+    token_t = _current_source_tracker.set(source_tracker)
+    try:
+        return await _generate_course_work_impl(topic, pages, status_msg)
+    finally:
+        _current_user_id.reset(token_u)
+        _current_source_tracker.reset(token_t)
+
+
+async def _generate_course_work_impl(topic: str, pages: int, status_msg=None):
     target_words = int(pages * WORDS_PER_PAGE * SAFETY_MARGIN)
     logger.info(f"===== [KURS ISHI BOSHLANDI] mavzu='{topic}', bet={pages}, maqsad so'z={target_words} =====")
 
