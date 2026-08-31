@@ -47,17 +47,25 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         audio_bytes = bio.getvalue()
     except Exception as e:
         logger.error(f"🎙 Ovozli xabarni yuklab olishda xato: chat_id={chat_id}, {type(e).__name__}: {e}", exc_info=True)
-        await status.edit_text("❌ Ovozli xabarni yuklab olib bo'lmadi.")
+        await status.edit_text(f"❌ Ovozli xabarni yuklab olib bo'lmadi.\n\nSabab: {type(e).__name__}: {e}")
         return
 
     result, status_code, detail = await ask_gemini_multimodal(VOICE_AI, _SYSTEM, audio_bytes, "audio/ogg", label="Ovozli xabar")
 
     if not result:
         logger.error(f"🎙 Ovozli xabar QAYTA ISHLANMADI: chat_id={chat_id}, status={status_code}, sabab={detail}.")
-        await status.edit_text(
-            "❌ Ovozli xabarni tushunib bo'lmadi. Aniqroq gapirib qayta yuboring "
-            "yoki matn qilib yozing."
-        )
+        if status_code == "quota":
+            user_msg = f"❌ Ovozli xabarni tushunolmadim.\n\nSabab: {detail}"
+        elif status_code == "invalid":
+            user_msg = f"❌ Ovozli xabar xizmati sozlanmagan yoki kaliti yaroqsiz.\n\nSabab: {detail}"
+        elif status_code == "paid":
+            user_msg = f"❌ Ovozli xabar xizmati hozircha ishlamayapti.\n\nSabab: {detail}"
+        else:
+            user_msg = (
+                f"❌ Ovozli xabarni tushunib bo'lmadi.\n\nSabab: {detail}\n\n"
+                "Aniqroq gapirib qayta yuboring yoki matn qilib yozing."
+            )
+        await status.edit_text(user_msg)
         return
 
     transcript, answer = _split_response(result)
