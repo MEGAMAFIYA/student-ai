@@ -86,6 +86,50 @@ def _is_drm_error(exc: Exception) -> bool:
     return "drm protected" in str(exc).lower()
 
 
+def _classify_ytdlp_error(exc: Exception) -> str:
+    """yt-dlp'dan kelgan xom xato matnini foydalanuvchiga ko'rsatsa
+    bo'ladigan ANIQ, qisqa o'zbekcha sababga aylantiradi. Har doim biror
+    narsa qaytaradi (aniqlab bo'lmasa — xomashyo xabarning qisqartirilgani).
+    Bu FAQAT foydalanuvchiga ko'rsatiladigan matn uchun — xatoning TO'LIQ
+    asl matni har doim chaqiruvchida logger.error orqali alohida yoziladi."""
+    msg = str(exc)
+    low = msg.lower()
+    if _is_bot_check_error(exc):
+        return "YouTube bu so'rovni \"bot\" deb bloklamoqda (bulutli server IP'si shubhali deb belgilangan)"
+    if _is_drm_error(exc):
+        return "Bu kontent DRM (litsenziya) himoyasi bilan qulflangan"
+    if "private video" in low:
+        return "Video shaxsiy (private) — ochiq emas"
+    if "video unavailable" in low or "this video is unavailable" in low:
+        return "Video mavjud emas (o'chirilgan yoki yopilgan)"
+    if "unsupported url" in low or "no video formats found" in low or "unable to extract" in low:
+        return "Bu havola/manba qo'llab-quvvatlanmaydi yoki sahifa tuzilishi o'zgargan"
+    if "age" in low and "restrict" in low:
+        return "Video yosh chegarasi (age-restricted) bilan himoyalangan"
+    if "copyright" in low:
+        return "Video mualliflik huquqi da'vosi sababli bloklangan"
+    if "geo" in low and ("block" in low or "restrict" in low) or "not available in your country" in low:
+        return "Video geografik hudud bo'yicha bloklangan"
+    if "http error 403" in low or "403: forbidden" in low:
+        return "Manba so'rovni rad etdi (HTTP 403 — kirish taqiqlangan)"
+    if "http error 404" in low:
+        return "Sahifa topilmadi (HTTP 404) — havola noto'g'ri yoki o'chirilgan"
+    if "http error 429" in low or "too many requests" in low:
+        return "Manba so'rovlar sonini cheklab qo'ydi (429 — birozdan so'ng urinib ko'ring)"
+    if "timed out" in low or "timeout" in low:
+        return "Manbadan javob kutish vaqti tugadi (timeout)"
+    if "connection" in low or "network" in low or "name or service not known" in low or "temporary failure in name resolution" in low:
+        return "Tarmoq xatosi — manbaga ulanib bo'lmadi"
+    if "premieres in" in low or "live event will begin" in low:
+        return "Bu — hali boshlanmagan jonli efir (premyera)"
+    if "ffmpeg" in low or "postprocessing" in low:
+        return "Faylni qayta ishlashda (ffmpeg) xatolik"
+    # Aniqlanmagan holat — yt-dlp xabarining o'zini (qisqartirib) ko'rsatamiz,
+    # shunda ham foydalanuvchi, ham admin ANIQ nima yozilganini ko'radi.
+    short = msg.strip().splitlines()[0][:200] if msg.strip() else "noma'lum xato"
+    return f"Aniqlanmagan xato — {short}"
+
+
 def _largest_file_in(dest_dir: str) -> str | None:
     candidates = [
         os.path.join(dest_dir, f) for f in os.listdir(dest_dir)
@@ -139,21 +183,12 @@ def download_video(url: str, dest_dir: str, max_mb: int, timeout_sec: int) -> st
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
     except yt_dlp.utils.DownloadError as e:
-        logger.warning(f"🎬 /vid yuklab olishda xato ({url}): {e}")
-        if _is_bot_check_error(e):
-            raise DownloadError(
-                "❌ YouTube bu so'rovni \"bot\" deb bloklamoqda (bulutli serverlarda tez-tez "
-                "uchraydigan holat). Boshqa havola bilan urinib ko'ring yoki birozdan so'ng "
-                "qayta urinib ko'ring."
-            ) from e
-        raise DownloadError(
-            "❌ Bu havoladan video yuklab bo'lmadi. Havola noto'g'ri, video "
-            "o'chirilgan/yopiq (private) bo'lishi yoki manba hozircha "
-            "qo'llab-quvvatlanmasligi mumkin."
-        ) from e
+        reason = _classify_ytdlp_error(e)
+        logger.error(f"🎬 /vid yuklab olishda xato ({url}) — sabab: {reason} | asl xato: {e}")
+        raise DownloadError(f"❌ Video yuklab bo'lmadi.\n\nSabab: {reason}.") from e
     except Exception as e:
         logger.error(f"🎬 /vid kutilmagan xato ({url}): {type(e).__name__}: {e}", exc_info=True)
-        raise DownloadError("❌ Video yuklab olishda kutilmagan xatolik yuz berdi.") from e
+        raise DownloadError(f"❌ Video yuklab olishda kutilmagan xatolik yuz berdi.\n\nSabab: {type(e).__name__}: {e}") from e
 
     filepath = _largest_file_in(dest_dir)
     if not filepath:
@@ -179,11 +214,15 @@ SEARCH_SOURCES = [
 ]
 
 
-def _search_one_source(prefix: str, query: str, count: int) -> list[dict]:
+def _search_one_source(prefix: str, query: str, count: int) -> tuple[list[dict], str | None]:
     """Bitta manbadan (masalan faqat YouTube yoki faqat SoundCloud)
     natijalarni yuklab olmasdan qaytaradi. Manba vaqtincha ishlamasa
     (tarmoq xatosi, bloklash va h.k.) BO'SH RO'YXAT qaytaradi — shu
-    orqali bitta manbaning muammosi butun qidiruvni to'xtatib qo'ymaydi."""
+    orqali bitta manbaning muammosi butun qidiruvni to'xtatib qo'ymaydi.
+    Qaytaradi: (natijalar, xato_sababi_yoki_None) — sabab faqat xato
+    bo'lganda (natija topilmagani uchun emas) beriladi, shunda
+    search_tracks() barcha manbalar muvaffaqiyatsiz bo'lsa foydalanuvchiga
+    ANIQ sababni ko'rsata oladi."""
     ydl_opts = {
         "quiet": True,
         "no_warnings": True,
@@ -197,9 +236,10 @@ def _search_one_source(prefix: str, query: str, count: int) -> list[dict]:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(query, download=False)
     except Exception as e:
-        logger.warning(f"🎵 /qo'shiq: '{prefix}' manbasida qidiruv muvaffaqiyatsiz ('{query}'): {type(e).__name__}: {e}")
-        return []
-    return [e for e in ((info or {}).get("entries") or []) if e]
+        reason = _classify_ytdlp_error(e)
+        logger.error(f"🎵 /qo'shiq: '{prefix}' manbasida qidiruv muvaffaqiyatsiz ('{query}') — sabab: {reason} | asl xato: {e}")
+        return [], reason
+    return [e for e in ((info or {}).get("entries") or []) if e], None
 
 
 def search_tracks(query: str, count: int) -> list[dict]:
@@ -214,8 +254,11 @@ def search_tracks(query: str, count: int) -> list[dict]:
     per_source = max(1, -(-count // len(SEARCH_SOURCES)))  # yumaloq yuqoriga
 
     merged: list[dict] = []
+    errors: list[str] = []
     for src in SEARCH_SOURCES:
-        raw_entries = _search_one_source(src["prefix"], query, per_source)
+        raw_entries, error_reason = _search_one_source(src["prefix"], query, per_source)
+        if error_reason:
+            errors.append(f"{src['label']}: {error_reason}")
         for e in raw_entries:
             raw_ref = e.get("webpage_url") or e.get("url")
             if not raw_ref and src["id"] == "youtube":
@@ -242,6 +285,14 @@ def search_tracks(query: str, count: int) -> list[dict]:
             })
 
     if not merged:
+        if errors:
+            # Barcha manbalar XATO bilan muvaffaqiyatsiz bo'ldi (shunchaki
+            # natija topilmagani emas) — foydalanuvchiga ANIQ sababini
+            # ko'rsatamiz, "hech narsa topilmadi" deb chalg'itmaymiz.
+            logger.error(f"🎵 /qo'shiq: '{query}' — barcha manbalar muvaffaqiyatsiz: {'; '.join(errors)}")
+            raise DownloadError(
+                f"❌ \"{query}\" bo'yicha qidiruv amalga oshmadi.\n\nSabab: {'; '.join(errors)}."
+            )
         raise DownloadError(f"❌ \"{query}\" bo'yicha hech qanday manbada natija topilmadi.")
 
     return merged[:count]
@@ -286,21 +337,12 @@ def download_audio(url: str, dest_dir: str, max_mb: int, timeout_sec: int) -> st
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
     except yt_dlp.utils.DownloadError as e:
-        logger.warning(f"🎵 /qo'shiq audio yuklab olishda xato ({url}): {e}")
-        if _is_bot_check_error(e):
-            raise DownloadError(
-                "❌ YouTube bu so'rovni \"bot\" deb bloklamoqda (bulutli serverlarda tez-tez "
-                "uchraydigan holat). Boshqa qo'shiq/manba bilan urinib ko'ring."
-            ) from e
-        if _is_drm_error(e):
-            raise DownloadError(
-                "❌ Bu qo'shiq DRM (litsenziya) himoyasi bilan qulflangan — yuklab bo'lmaydi. "
-                "Boshqa natijani tanlab ko'ring."
-            ) from e
-        raise DownloadError("❌ Bu qo'shiqni yuklab bo'lmadi. Birozdan so'ng qayta urinib ko'ring.") from e
+        reason = _classify_ytdlp_error(e)
+        logger.error(f"🎵 /qo'shiq audio yuklab olishda xato ({url}) — sabab: {reason} | asl xato: {e}")
+        raise DownloadError(f"❌ Bu qo'shiqni yuklab bo'lmadi.\n\nSabab: {reason}.") from e
     except Exception as e:
         logger.error(f"🎵 /qo'shiq audio yuklab olishda kutilmagan xato ({url}): {type(e).__name__}: {e}", exc_info=True)
-        raise DownloadError("❌ Audio yuklab olishda kutilmagan xatolik yuz berdi.") from e
+        raise DownloadError(f"❌ Audio yuklab olishda kutilmagan xatolik yuz berdi.\n\nSabab: {type(e).__name__}: {e}") from e
 
     # FFmpegExtractAudio ishlagach original (webm/m4a) fayl o'chiriladi va
     # faqat .mp3 qoladi — shu sabab eng katta fayl emas, ANIQ .mp3
