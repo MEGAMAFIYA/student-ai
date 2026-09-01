@@ -28,6 +28,7 @@ from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
 import config
+import pending_input
 import storage
 import video_tools
 
@@ -50,15 +51,17 @@ async def vid_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE, override_t
         return
     raw_text = override_text if override_text is not None else (update.message.text or "")
     url = _extract_url(raw_text)
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
 
     if not url:
-        await update.message.reply_text(
-            "🎬 Video havolasini ham yozing, masalan:\n\n`/vid https://www.youtube.com/watch?v=...`",
-            parse_mode="Markdown",
-        )
+        # Ikki bosqichli kiritish: "/vid" argumentsiz yuborilgan (yoki
+        # foydalanuvchi kutish holatida havolasiz xabar yuborgan) — bot
+        # so'raydi va KEYINGI oddiy xabarni shu foydalanuvchi/chat uchun
+        # kutadi (qarang: pending_input.py, handlers/universal_chat.py).
+        pending_input.set_pending(chat_id, user_id, "vid")
+        await update.message.reply_text("🎬 Video nomi yoki qidiruv so'rovini yuboring:")
         return
-
-    chat_id = update.effective_chat.id
     status = await update.message.reply_text("⏳ Video yuklab olinmoqda, biroz kuting...")
     await context.bot.send_chat_action(chat_id, ChatAction.UPLOAD_VIDEO)
 
