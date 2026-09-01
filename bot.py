@@ -179,6 +179,44 @@ def _build_placeholder_pdf() -> bytes:
 
 
 # ============================================================
+# 🎵 Inline "/qo'shiq" natijalari uchun MUSIQA ikonkasi (thumbnail_url)
+# ============================================================
+# Inline natijalar `InlineQueryResultDocument` turida bo'lishi SHART
+# (qarang: handlers/inline_query.py boshidagi izoh — bu keyinroq audio
+# bilan almashtirilishi uchun texnik talab), shu sabab Telegram natija
+# ro'yxatida ularni generik "hujjat" belgisi bilan ko'rsatadi (talab #2:
+# "oddiy fayl ko'rinishidagi 📄 belgisini ishlatma"). Buni to'liq
+# tuzatib bo'lmaydi (Document turi shu tarzda ko'rinadi), lekin
+# `thumbnail_url` orqali o'zimizning mayda musiqa ikonkamizni
+# ko'rsatib, "chiroyli musiqa menyusi" taassurotiga yaqinlashtiramiz.
+_MUSIC_ICON_PNG_BYTES: bytes = b""
+_MUSIC_ICON_PATH = "/music_icon.png"
+
+
+def _build_music_icon_png() -> bytes:
+    try:
+        from PIL import Image, ImageDraw
+        size = 128
+        img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        # Doira fon (Telegram musiqa pleyerlariga o'xshash binafsha rang).
+        draw.ellipse([2, 2, size - 2, size - 2], fill=(108, 92, 231, 255))
+        # Oddiy "eighth note" (bitta nota) shakli — ikkita doira + tayoqcha.
+        draw.ellipse([34, 78, 58, 98], fill=(255, 255, 255, 255))
+        draw.ellipse([64, 66, 88, 86], fill=(255, 255, 255, 255))
+        draw.rectangle([56, 30, 62, 88], fill=(255, 255, 255, 255))
+        draw.rectangle([86, 22, 92, 76], fill=(255, 255, 255, 255))
+        draw.line([56, 30, 92, 22], fill=(255, 255, 255, 255), width=6)
+        import io as _io
+        out = _io.BytesIO()
+        img.save(out, format="PNG")
+        return out.getvalue()
+    except Exception as e:
+        logger.warning(f"🎵 Musiqa ikonkasini yaratib bo'lmadi (ahamiyatsiz — thumbnail'siz davom etadi): {type(e).__name__}: {e}")
+        return b""
+
+
+# ============================================================
 # 🎨 /rasim MINI APP — statik fayllarni xizmat qilish + rasm yuklash
 # ============================================================
 # MUHIM: bu HTTP server ALOHIDA OS thread'da ishlaydi (yuqoridagi
@@ -443,6 +481,15 @@ class HealthHandler(BaseHTTPRequestHandler):
             self.wfile.write(_PLACEHOLDER_PDF_BYTES)
             return
 
+        if self.path == _MUSIC_ICON_PATH and _MUSIC_ICON_PNG_BYTES:
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(_MUSIC_ICON_PNG_BYTES)))
+            self.send_header("Cache-Control", "public, max-age=86400")
+            self.end_headers()
+            self.wfile.write(_MUSIC_ICON_PNG_BYTES)
+            return
+
         if self.path.startswith(_WEBAPP_GENERATED_URL_PREFIX):
             self._serve_generated_image()
             return
@@ -552,8 +599,9 @@ class HealthHandler(BaseHTTPRequestHandler):
 
 
 def start_health_server():
-    global _PLACEHOLDER_PDF_BYTES
+    global _PLACEHOLDER_PDF_BYTES, _MUSIC_ICON_PNG_BYTES
     _PLACEHOLDER_PDF_BYTES = _build_placeholder_pdf()
+    _MUSIC_ICON_PNG_BYTES = _build_music_icon_png()
     try:
         port = int(os.getenv("PORT", "10000"))
         server = HTTPServer(("0.0.0.0", port), HealthHandler)
@@ -891,6 +939,7 @@ def main():
     # handlers/qoshiq.py boshidagi izoh).
     app.add_handler(CommandHandler("qoshiq", qoshiq.qoshiq_cmd))
     app.add_handler(CallbackQueryHandler(qoshiq.qoshiq_choice_callback, pattern="^song:"))
+    app.add_handler(CallbackQueryHandler(qoshiq.qoshiq_page_callback, pattern="^songpage:"))
 
     # 💎 /pro — /tabrik'ning shaxsiy rasmli versiyasi.
     app.add_handler(CommandHandler("pro", pro_tabrik.pro_cmd))
