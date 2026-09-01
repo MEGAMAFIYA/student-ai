@@ -114,7 +114,7 @@ async def qoshiq_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE, overrid
     # tanlasin.
     buttons = [
         [InlineKeyboardButton(
-            f"{r['source_emoji']} {r['title'][:48]}{_format_duration(r['duration'])}",
+            f"{r['source_emoji']} {video_tools.format_track_label(r, max_len=48)}{_format_duration(r['duration'])}",
             callback_data=f"song:{session_id}:{i}",
         )]
         for i, r in enumerate(results)
