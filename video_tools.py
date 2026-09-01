@@ -25,6 +25,7 @@ QASDDAN qo'shilmagan.
 import logging
 import os
 import shutil
+import subprocess
 import tempfile
 
 import yt_dlp
@@ -54,15 +55,45 @@ logger = logging.getLogger(__name__)
 # ruxsati SHART EMAS, shu sabab Render'da ham ishlaydi. PATH'da tizim
 # ffmpeg'i topilsa ham (masalan lokal rivojlantirishda) shundan
 # foydalaniladi — imageio-ffmpeg faqat ZAXIRA sifatida ishlatiladi.
+def _ffmpeg_actually_works(path: str) -> bool:
+    """Fayl MAVJUDLIGI yetarli emas — ba'zi muhitlarda (masalan Render)
+    `pip install imageio-ffmpeg` orqali kelgan binary EXECUTE ruxsatisiz
+    yoki mos bo'lmagan arxitekturada bo'lishi mumkin, natijada
+    `os.path.isfile()` True qaytarsa ham HAQIQIY ishga tushirilganda
+    yiqiladi (bu esa aynan "audio yuklab olindi, lekin MP3'ga
+    o'tkazishda xatolik" holatining sababi bo'lishi mumkin — postprocessor
+    ffmpeg'ni jimgina ishlata olmay qoladi). Shu sabab HAQIQIY `-version`
+    chaqiruvi bilan tekshiramiz, shunda FFMPEG_AVAILABLE hech qachon
+    "yolg'on True" bo'lib qolmaydi."""
+    try:
+        result = subprocess.run(
+            [path, "-version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10,
+        )
+        return result.returncode == 0
+    except Exception as e:
+        logger.warning(f"⚠️ ffmpeg ishga tushmadi ({path}): {type(e).__name__}: {e}")
+        return False
+
+
 def _detect_ffmpeg() -> str:
     system_ffmpeg = shutil.which("ffmpeg")
-    if system_ffmpeg:
+    if system_ffmpeg and _ffmpeg_actually_works(system_ffmpeg):
         return system_ffmpeg
     try:
         import imageio_ffmpeg
         bundled = imageio_ffmpeg.get_ffmpeg_exe()
         if bundled and os.path.isfile(bundled):
-            return bundled
+            # Execute ruxsati yo'q bo'lsa (Render'da uchraydigan holat) —
+            # o'zimiz to'g'irlashga urinamiz, aks holda ffmpeg "topildi"
+            # deb hisoblanadi-yu, amalda hech qachon ishga tushmaydi.
+            if not os.access(bundled, os.X_OK):
+                try:
+                    os.chmod(bundled, 0o755)
+                except OSError as e:
+                    logger.warning(f"⚠️ ffmpeg binary'ga ishga tushirish ruxsatini berib bo'lmadi ({bundled}): {e}")
+            if _ffmpeg_actually_works(bundled):
+                return bundled
+            logger.warning(f"⚠️ imageio-ffmpeg orqali topilgan binary ishlamayapti ({bundled}).")
     except Exception as e:
         logger.warning(f"⚠️ imageio_ffmpeg orqali ham ffmpeg topilmadi: {e}")
     return ""
@@ -569,15 +600,27 @@ def search_tracks(query: str, count: int) -> list[dict]:
     if not active_sources and not telegram_effective_enabled:
         raise DownloadError("❌ Hozircha qo'shiq qidirish manbalarining barchasi o'chirilgan.")
 
-    # `count` FAOL manba TOIFALARI (YouTube/Web yt-dlp manbalari — bittalik
-    # hisoblanadi, Telegram — alohida toifa) orasida taxminan teng
-    # taqsimlanadi. OFF qilingan toifalar bu hisobga umuman kirmaydi.
-    active_category_count = len(active_sources) + (1 if telegram_effective_enabled else 0)
-    per_source = max(1, -(-count // active_category_count)) if active_category_count else 0
+    # `count` FAOL manba TOIFALARI orasida taqsimlanadi, lekin TENG EMAS —
+    # Telegram (config.TG_SEARCH_CHANNELS ichidagi ko'plab kanallar,
+    # odatda 20 ta) YouTube/SoundCloud'ga qaraganda ancha ko'proq natija
+    # bera oladi va qattiq so'rov cheklovlariga uchramaydi, shu sabab unga
+    # 2x og'irlik beriladi (talab #14: "Telegram → 10, YouTube → 5, Web →
+    # 5" kabi taqsimot namunasiga yaqinroq). OFF qilingan toifalar bu
+    # hisobga umuman kirmaydi.
+    weights: dict[str, int] = {s["id"]: 1 for s in active_sources}
+    if telegram_effective_enabled:
+        weights["telegram"] = 2
+    total_weight = sum(weights.values())
+
+    def _alloc(source_id: str) -> int:
+        if not total_weight:
+            return 0
+        return max(3, -(-count * weights[source_id] // total_weight))
 
     merged: list[dict] = []
     errors: list[str] = []
     for src in active_sources:
+        per_source = _alloc(src["id"])
         raw_entries, error_reason = _search_one_source(src["prefix"], query, per_source)
         if error_reason:
             errors.append(f"{src['label']}: {error_reason}")
@@ -633,10 +676,24 @@ def search_tracks(query: str, count: int) -> list[dict]:
     if telegram_effective_enabled:
         try:
             import telegram_search
-            merged.extend(telegram_search.search_public_audio(query, per_source))
+            merged.extend(telegram_search.search_public_audio(query, _alloc("telegram")))
         except Exception as e:
             errors.append(f"Telegram: {type(e).__name__}: {e}")
             logger.error(f"🎵 /qo'shiq: Telegram manbasida qidiruv muvaffaqiyatsiz ('{query}'): {type(e).__name__}: {e}", exc_info=True)
+
+    # 🔁 TO'LDIRISH: agar birinchi bosqichdan keyin natija "kamida 10 ta"
+    # maqsadidan (talab #1/#14) kam bo'lsa VA Telegram faol bo'lsa,
+    # Telegram'dan BIR MARTA, kattaroq limit bilan qo'shimcha so'rov
+    # yuboramiz — u 20 ta kanalga ega bo'lgani uchun odatda eng ko'p
+    # zaxiraga ega manba. Boshqa manbalarga (YouTube/SoundCloud) qo'shimcha
+    # so'rov YUBORILMAYDI (ularning so'rov limitlariga urilmaslik uchun).
+    min_target = min(10, count)
+    if telegram_effective_enabled and len(_dedupe_tracks(merged)) < min_target:
+        try:
+            import telegram_search
+            merged.extend(telegram_search.search_public_audio(query, count))
+        except Exception as e:
+            logger.warning(f"🎵 /qo'shiq: Telegram to'ldirish so'rovi muvaffaqiyatsiz ('{query}'): {type(e).__name__}: {e}")
 
     if not merged:
         if errors:
@@ -918,6 +975,19 @@ def download_audio(url: str, dest_dir: str, max_mb: int, timeout_sec: int) -> st
         if f.lower().endswith(".mp3") and os.path.isfile(os.path.join(dest_dir, f))
     ]
     if not mp3_files:
+        # Foydalanuvchiga qisqa/tushunarli xabar qoladi, lekin ADMIN uchun
+        # (Render log) ANIQ diagnostika yozamiz — talab #6/#11/#20: muammoni
+        # yashirmaslik. Ko'pincha sabab: ffmpeg postprocessor jimgina
+        # ishlamay qolgani (masalan binary buzilgan/mos emas) — papkada
+        # nima QOLGANI (masalan .webm/.m4a original fayl) buni ko'rsatadi.
+        try:
+            leftover = os.listdir(dest_dir)
+        except OSError:
+            leftover = []
+        logger.error(
+            f"🎵 /qo'shiq: MP3 hosil bo'lmadi ({url}) — FFMPEG_PATH="
+            f"{FFMPEG_PATH or 'TOPILMAGAN'}, papkadagi qoldiq fayllar: {leftover}"
+        )
         raise DownloadError("❌ Qo'shiq yuklab olindi, lekin MP3'ga o'tkazishda xatolik yuz berdi.")
     filepath = max(mp3_files, key=os.path.getsize)
 
@@ -942,7 +1012,4 @@ def download_telegram_audio(track: dict, dest_dir: str, max_mb: int) -> str:
         raise DownloadError(f"❌ Audio yuklab olishda kutilmagan xatolik yuz berdi.\n\nSabab: {type(e).__name__}: {e}") from e
 
     if not filepath or not os.path.isfile(filepath):
-        raise DownloadError("❌ Qo'shiq yuklab olindi, lekin fayl topilmadi.")
-
-    _enforce_size_limit(filepath, max_mb)
-    return filepath
+        raise DownloadError("❌ Qo's
