@@ -39,6 +39,7 @@ _lock = threading.Lock()
 
 MAX_FILES_PER_USER = 30      # har bir foydalanuvchi uchun saqlanadigan fayllar tarixi chegarasi
 MAX_USAGE_DATES = 60         # statistikada saqlanadigan kunlar soni (eskilari siqiladi)
+MAX_INLINE_LOGS = 300         # 🔍 inline jurnalida saqlanadigan yozuvlar chegarasi (eskilari siqiladi)
 
 _DEFAULT_DATA = {
     "files": {},      # {"<user_id>": [{"type","title","file_id","ts"}, ...]}
@@ -46,6 +47,7 @@ _DEFAULT_DATA = {
     "all_users": [],   # botdan umuman foydalangan barcha noyob user_id'lar
     "reminders": [],   # [{"id","user_id","chat_id","text","due_ts","created_ts"}]
     "groups": {},      # {"<chat_id>": {"active": bool}} — guruhda Universal chat holati
+    "inline_logs": [],  # [{"ts","user_id","username","query","status","detail"}] — inline (@Bot ...) jurnali
 }
 
 
@@ -171,6 +173,58 @@ def get_stats() -> dict:
         "total_users": len(_data["all_users"]),
         "per_function": per_function,
     }
+
+
+# ============================================================
+# 🔍 Inline rejim jurnali (/developer > 🔍 Inline jurnali uchun)
+# ============================================================
+#
+# Foydalanuvchi botni GURUHGA A'ZO QILMASDAN yoki SHAXSIY chatda
+# "@Student_ai_uz_bot <savol/buyruq>" deb yozib ishlatganda (Telegram
+# inline rejimi, qarang: handlers/inline_query.py) shu yerga qayd
+# etiladi — qaysi foydalanuvchi, qanday savol/buyruq yuborgani va u
+# ISHLAGAN-ISHLAMAGANI (ishlamagan bo'lsa — aniq sababi) bilan birga.
+
+def record_inline_log(user_id: int, username: str, query: str, status: str, detail: str = "") -> None:
+    """Har bir inline (@Bot ...) so'rovi ISHLANGANDA (yakuniy natija —
+    muvaffaqiyatli javob/fayl BERILGANDA yoki muvaffaqiyatsiz/yo'naltirilgan
+    bo'lganda) chaqiriladi.
+
+    status:
+      'ok'          — foydalanuvchiga muvaffaqiyatli javob/fayl berildi.
+      'error'       — ishlashga urinildi, lekin xatolik chiqdi (detail — sababi).
+      'redirect'    — inline rejimda bajarib bo'lmadigan vazifa, shaxsiy
+                       chatga yo'naltirildi (detail — sababi).
+      'instruction' — buyruq to'liq emas edi (masalan argumentsiz), shu
+                       sababli ko'rsatma ko'rsatildi (detail — sababi).
+    """
+    with _lock:
+        lst = _data.setdefault("inline_logs", [])
+        lst.append({
+            "ts": _now_iso(),
+            "user_id": int(user_id) if user_id else 0,
+            "username": (username or "")[:64],
+            "query": (query or "")[:300],
+            "status": status,
+            "detail": (detail or "")[:300],
+        })
+        if len(lst) > MAX_INLINE_LOGS:
+            del lst[: len(lst) - MAX_INLINE_LOGS]
+        _save()
+    logger.info(
+        f"🔍 Inline jurnaliga yozildi: user_id={user_id}, username='{username}', "
+        f"status={status}, savol='{(query or '')[:80]}'"
+        + (f", sabab='{detail[:120]}'" if detail else "") + "."
+    )
+
+
+def get_inline_logs(limit: int = 25, status_filter: str | None = None) -> list:
+    """Eng yangisi birinchi bo'lgan tartibda so'nggi yozuvlarni qaytaradi.
+    status_filter berilsa (masalan 'error'), faqat o'sha holatdagilar."""
+    lst = list(reversed(_data.get("inline_logs", [])))
+    if status_filter:
+        lst = [e for e in lst if e.get("status") == status_filter]
+    return lst[:limit]
 
 
 # ============================================================
