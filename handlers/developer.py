@@ -175,6 +175,7 @@ def _main_menu_keyboard() -> InlineKeyboardMarkup:
     rows.append([InlineKeyboardButton("🎵 Qo'shiq qidirish", callback_data="dev:music")])
     rows.append([InlineKeyboardButton("➕ Barcha modellar", callback_data="dev:bulk")])
     rows.append([InlineKeyboardButton("📊 Statistika", callback_data="dev:stats")])
+    rows.append([InlineKeyboardButton("🔍 Inline jurnali (@Bot ...)", callback_data="dev:inlinelog:all")])
     rows.append([InlineKeyboardButton("💎 Pro obunalar", callback_data="dev:prosub")])
     rows.append([InlineKeyboardButton("💳 To'lovlar", callback_data="dev:pay"),
                  InlineKeyboardButton("💰 Balanslar", callback_data="dev:paybal")])
@@ -354,6 +355,77 @@ def _stats_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("🔄 Yangilash", callback_data="dev:stats")],
         [InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:menu")],
     ])
+
+
+# ============================================================
+# 🔍 Inline jurnali (@Student_ai_uz_bot ...) — bot GURUHGA A'ZO
+# BO'LMASDAN yoki SHAXSIY chatda "@Bot savol/buyruq" deb ishlatilganda
+# (Telegram inline rejimi) qayd etilgan yozuvlar. Qarang:
+# handlers/inline_query.py -> storage.record_inline_log().
+# ============================================================
+
+_INLINE_LOG_STATUS_LABEL = {
+    "ok": "✅ ishladi",
+    "error": "❌ ishlamadi",
+    "redirect": "↪️ shaxsiy chatga yo'naltirildi",
+    "instruction": "⚠️ buyruq to'liq emas edi",
+}
+
+
+def _inline_log_text(status_filter: str | None) -> str:
+    entries = storage.get_inline_logs(limit=15, status_filter=status_filter)
+
+    title_suffix = {
+        None: "so'nggi 15 ta yozuv",
+        "error": "faqat ishlamaganlar (so'nggi 15 ta)",
+    }.get(status_filter, f"faqat: {status_filter}")
+
+    lines = [
+        f"🔍 <b>Inline jurnali</b> ({_esc(title_suffix)})\n",
+        "<i>Foydalanuvchilar botni guruhga a'zo qilmasdan yoki shaxsiy "
+        "chatda \"@Student_ai_uz_bot savol/buyruq\" deb ishlatganda shu "
+        "yerda qayd etiladi.</i>\n",
+    ]
+
+    if not entries:
+        lines.append("<i>Hozircha yozuv yo'q.</i>")
+        return "\n".join(lines)
+
+    for e in entries:
+        ts = (e.get("ts") or "")[:16].replace("T", " ")
+        who = _esc(e.get("username") or "") or f"id:{e.get('user_id')}"
+        q = _esc((e.get("query") or "")[:120])
+        status_label = _INLINE_LOG_STATUS_LABEL.get(e.get("status"), e.get("status") or "?")
+        line = f"🕐 {ts} | 👤 {who}\n❓ {q}\n{status_label}"
+        detail = e.get("detail")
+        if detail:
+            line += f"\n   ↳ sabab: {_esc(detail[:150])}"
+        lines.append(line)
+
+    result = "\n\n".join(lines[:2]) + "\n\n" + "\n\n".join(lines[2:])
+    if len(result) > 3900:
+        result = result[:3900] + "\n\n<i>… (qolganlari qisqartirildi)</i>"
+    return result
+
+
+def _inline_log_keyboard(status_filter: str | None) -> InlineKeyboardMarkup:
+    all_cb = "dev:inlinelog:all"
+    err_cb = "dev:inlinelog:error"
+    rows = [
+        [
+            InlineKeyboardButton(
+                ("• " if status_filter is None else "") + "📋 Barchasi",
+                callback_data=all_cb,
+            ),
+            InlineKeyboardButton(
+                ("• " if status_filter == "error" else "") + "❌ Faqat ishlamaganlar",
+                callback_data=err_cb,
+            ),
+        ],
+        [InlineKeyboardButton("🔄 Yangilash", callback_data=f"dev:inlinelog:{status_filter or 'all'}")],
+        [InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:menu")],
+    ]
+    return InlineKeyboardMarkup(rows)
 
 
 # ============================================================
@@ -747,6 +819,17 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if action == "stats":
         await _safe_edit_query(query, _stats_text(), reply_markup=_stats_keyboard(), parse_mode="HTML")
+        return DEV_MENU
+
+    if action == "inlinelog":
+        status_filter = parts[2] if len(parts) > 2 else "all"
+        status_filter = None if status_filter == "all" else status_filter
+        await _safe_edit_query(
+            query,
+            _inline_log_text(status_filter),
+            reply_markup=_inline_log_keyboard(status_filter),
+            parse_mode="HTML",
+        )
         return DEV_MENU
 
     if action == "keycheck":
