@@ -70,8 +70,13 @@ VID_DOWNLOAD_TIMEOUT_SEC = int(os.getenv("VID_DOWNLOAD_TIMEOUT_SEC", "180"))
 # ============================================================
 # 🎵 /qo'shiq — musiqa qidirish va audio yuborish (yt-dlp, ytsearch)
 # ============================================================
-QOSHIQ_MAX_MB = int(os.getenv("QOSHIQ_MAX_MB", "45"))
-QOSHIQ_SEARCH_COUNT = int(os.getenv("QOSHIQ_SEARCH_COUNT", "4"))
+# MUHIM: bu son FAOL manba TOIFALARI orasida taqsimlanadi (video_tools.py >
+# search_tracks), keyin dublikatlar olib tashlanadi va oxirida shu son
+# bilan cheklanadi — shuning uchun "kamida 10 ta natija" maqsadiga
+# yetish uchun bufer bilan (10 dan sal yuqori) belgilangan: ba'zi
+# natijalar dublikat/yaroqsiz (masalan bloklangan SoundCloud treki)
+# sifatida chiqarib tashlanishi mumkin.
+QOSHIQ_SEARCH_COUNT = int(os.getenv("QOSHIQ_SEARCH_COUNT", "14"))
 QOSHIQ_DOWNLOAD_TIMEOUT_SEC = int(os.getenv("QOSHIQ_DOWNLOAD_TIMEOUT_SEC", "120"))
 # Qidiruv natijalari xotirada shuncha soniya saqlanadi (tugmalar shundan
 # keyin "muddati o'tgan" bo'lib qoladi) — xotira cheksiz o'sib ketmasligi uchun.
