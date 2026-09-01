@@ -43,6 +43,7 @@ from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
 import config
+import pending_input
 import storage
 import video_tools
 
@@ -79,16 +80,17 @@ async def qoshiq_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE, overrid
     raw_text = override_text if override_text is not None else (update.message.text or "")
     query = _COMMAND_RE.sub("", raw_text, count=1).strip()
 
-    if not query:
-        await update.message.reply_text(
-            "🎵 Qidirmoqchi bo'lgan qo'shiq yoki ijrochi nomini ham yozing, masalan:\n\n"
-            "`/qo'shiq Ozodbek Nazarbekov`",
-            parse_mode="Markdown",
-        )
-        return
-
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
+
+    if not query:
+        # Ikki bosqichli kiritish: "/qo'shiq" so'z/argumentsiz yuborilgan
+        # (yoki foydalanuvchi kutish holatida bo'sh xabar yuborgan) — bot
+        # so'raydi va KEYINGI oddiy xabarni shu foydalanuvchi/chat uchun
+        # kutadi (qarang: pending_input.py, handlers/universal_chat.py).
+        pending_input.set_pending(chat_id, user_id, "qoshiq")
+        await update.message.reply_text("🎵 Qo'shiq nomi yoki ijrochini yuboring:")
+        return
     status = await update.message.reply_text(f"🔎 \"{query}\" qidirilmoqda...")
 
     try:
@@ -158,9 +160,16 @@ async def qoshiq_choice_callback(update: Update, context: ContextTypes.DEFAULT_T
 
     dest_dir = tempfile.mkdtemp(prefix="qoshiq_")
     try:
-        filepath = await asyncio.to_thread(
-            video_tools.download_audio, track["webpage_url"], dest_dir, config.QOSHIQ_MAX_MB, config.QOSHIQ_DOWNLOAD_TIMEOUT_SEC,
-        )
+        if track.get("source_id") == "telegram":
+            # 📡 Telegram manbasidan kelgan natija — yt-dlp EMAS, MTProto
+            # (Telethon) orqali yuklanadi (qarang: video_tools.download_telegram_audio).
+            filepath = await asyncio.to_thread(
+                video_tools.download_telegram_audio, track, dest_dir, config.QOSHIQ_MAX_MB,
+            )
+        else:
+            filepath = await asyncio.to_thread(
+                video_tools.download_audio, track["webpage_url"], dest_dir, config.QOSHIQ_MAX_MB, config.QOSHIQ_DOWNLOAD_TIMEOUT_SEC,
+            )
         with open(filepath, "rb") as f:
             await context.bot.send_audio(
                 chat_id=chat_id,
