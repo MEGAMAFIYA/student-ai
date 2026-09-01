@@ -424,9 +424,15 @@ def download_video(url: str, dest_dir: str, max_mb: int, timeout_sec: int) -> st
 # hujjatlarida rasman tasdiqlangan bo'lishi kerak; "oqayiq.uz" kabi
 # litsenziyasiz mp3-agregator saytlar BUNGA KIRMAYDI va qo'shilmaydi
 # (ular mualliflik huquqi egalaridan ruxsatsiz ishlaydi).
+#
+# "toggle" — config.MUSIC_SEARCH_SOURCES ichidagi qaysi ON/OFF kalitga
+# bog'liqligini bildiradi (qarang: config.py > "🎵 /qo'shiq — qidiruv
+# manbalarini alohida YOQISH/O'CHIRISH"). YouTube'dan tashqari BARCHA
+# yt-dlp manbalari (hozircha faqat SoundCloud) admin panelida yagona
+# "🌐 Web" nomi ostida birgalikda boshqariladi.
 SEARCH_SOURCES = [
-    {"id": "youtube", "label": "YouTube", "emoji": "▶️", "prefix": "ytsearch"},
-    {"id": "soundcloud", "label": "SoundCloud", "emoji": "☁️", "prefix": "scsearch"},
+    {"id": "youtube", "label": "YouTube", "emoji": "▶️", "prefix": "ytsearch", "toggle": "youtube"},
+    {"id": "soundcloud", "label": "SoundCloud", "emoji": "☁️", "prefix": "scsearch", "toggle": "web"},
 ]
 
 
@@ -505,11 +511,24 @@ def search_tracks(query: str, count: int) -> list[dict]:
     havolasi (webpage_url) bilan qaytadi — shu orqali download_audio()
     qaysi manbadan yuklashni bilish uchun manba turini bilishi shart
     emas, faqat havolani ochadi."""
-    per_source = max(1, -(-count // len(SEARCH_SOURCES)))  # yumaloq yuqoriga
+    # 🎵 Faqat admin panelida (( /developer > 🎵 Qo'shiq qidirish )) YOQILGAN
+    # manbalar qidiruvga qatnashadi — OFF qilingan manbaga UMUMAN so'rov
+    # yuborilmaydi (shunchaki natijadan yashirish emas).
+    active_sources = [s for s in SEARCH_SOURCES if config.is_music_source_enabled(s["toggle"])]
+    telegram_effective_enabled = config.TG_SEARCH_ENABLED and config.is_music_source_enabled("telegram")
+
+    if not active_sources and not telegram_effective_enabled:
+        raise DownloadError("❌ Hozircha qo'shiq qidirish manbalarining barchasi o'chirilgan.")
+
+    # `count` FAOL manba TOIFALARI (YouTube/Web yt-dlp manbalari — bittalik
+    # hisoblanadi, Telegram — alohida toifa) orasida taxminan teng
+    # taqsimlanadi. OFF qilingan toifalar bu hisobga umuman kirmaydi.
+    active_category_count = len(active_sources) + (1 if telegram_effective_enabled else 0)
+    per_source = max(1, -(-count // active_category_count)) if active_category_count else 0
 
     merged: list[dict] = []
     errors: list[str] = []
-    for src in SEARCH_SOURCES:
+    for src in active_sources:
         raw_entries, error_reason = _search_one_source(src["prefix"], query, per_source)
         if error_reason:
             errors.append(f"{src['label']}: {error_reason}")
@@ -555,7 +574,7 @@ def search_tracks(query: str, count: int) -> list[dict]:
     # natijalariga hech qanday ta'sir qilmaydi. Xato bo'lsa ham (masalan
     # 'telethon' o'rnatilmagan yoki sessiya eskirgan) qolgan ikki manba
     # natijalari BUZILMAYDI — qarang: telegram_search.py.
-    if config.TG_SEARCH_ENABLED:
+    if telegram_effective_enabled:
         try:
             import telegram_search
             merged.extend(telegram_search.search_public_audio(query, per_source))
@@ -575,6 +594,113 @@ def search_tracks(query: str, count: int) -> list[dict]:
         raise DownloadError(f"❌ \"{query}\" bo'yicha hech qanday manbada natija topilmadi.")
 
     return merged[:count]
+
+
+# ============================================================
+# 🔍 /developer > 🎵 Qo'shiq qidirish > "Tekshirish" — har bir manbani
+# HAQIQATAN (jonli so'rov bilan) tekshiradi. Har biri {"status": "off"|
+# "ok"|"partial"|"error", "lines": [...]} qaytaradi — chaqiruvchi
+# (handlers/developer.py) buni ekranga chiqaradigan matnga aylantiradi.
+# Bu funksiyalar SINXRON (blocking) — chaqiruvchi asyncio.to_thread()
+# orqali chaqirishi kerak (qarang: video_tools.py fayl boshidagi izoh).
+# ============================================================
+
+def check_youtube_music_search() -> dict:
+    if not config.is_music_source_enabled("youtube"):
+        return {"status": "off", "lines": ["Holati: OFF (admin tomonidan o'chirilgan)"]}
+
+    lines = ["Holati: ON", "yt-dlp: ✅ o'rnatilgan"]
+    lines.append(f"Cookies: {'✅ topildi' if YOUTUBE_COOKIES_FILE else '⚠️ topilmadi (faqat player_client almashtirish bilan urinadi)'}")
+
+    entries, err = _search_one_source("ytsearch", "test", 1)
+    if err:
+        lines.append(f"Qidiruv: ❌\nSabab: {err}")
+        return {"status": "error", "lines": lines}
+    if not entries:
+        lines.append("Qidiruv: ⚠️ natija topilmadi")
+        return {"status": "partial", "lines": lines}
+    lines.append("Qidiruv: ✅")
+
+    if not FFMPEG_AVAILABLE:
+        lines.append("Yuklab olish: ❌\nSabab: ffmpeg topilmadi (MP3'ga o'tkazib bo'lmaydi)")
+        return {"status": "partial", "lines": lines}
+
+    raw_ref = entries[0].get("webpage_url") or entries[0].get("url") or entries[0].get("id")
+    test_url = raw_ref if (raw_ref and raw_ref.startswith("http")) else (f"https://www.youtube.com/watch?v={raw_ref}" if raw_ref else None)
+    if not test_url:
+        lines.append("Yuklab olish: ⚠️ test video havolasi aniqlanmadi")
+        return {"status": "partial", "lines": lines}
+
+    # Haqiqiy faylni yuklamasdan (trafik sarflamasdan), faqat format/kirish
+    # imkoniyatini tekshiramiz — bot-tekshiruv yoki login talabi kabi
+    # muammolarni aniqlash uchun bu yetarli.
+    probe_opts = {"quiet": True, "no_warnings": True, "skip_download": True, "noplaylist": True, "format": "bestaudio/best"}
+    try:
+        last_exc: Exception | None = None
+        ok = False
+        for client in _youtube_retry_clients():
+            opts = {**probe_opts, **_youtube_extra_opts(player_client=[client])}
+            try:
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    ydl.extract_info(test_url, download=False)
+                ok = True
+                break
+            except Exception as e:
+                last_exc = e
+                if not _is_bot_check_error(e):
+                    raise
+                continue
+        if not ok and last_exc:
+            raise last_exc
+    except Exception as e:
+        reason = _classify_ytdlp_error(e)
+        lines.append(f"Yuklab olish: ❌\nSabab: {reason}")
+        return {"status": "partial", "lines": lines}
+
+    lines.append("Yuklab olish: ✅")
+    return {"status": "ok", "lines": lines}
+
+
+def check_web_music_search() -> dict:
+    if not config.is_music_source_enabled("web"):
+        return {"status": "off", "lines": ["Holati: OFF (admin tomonidan o'chirilgan)"]}
+
+    web_sources = [s for s in SEARCH_SOURCES if s.get("toggle") == "web"]
+    if not web_sources:
+        return {"status": "error", "lines": ["Holati: ON", "Sabab: hech qanday Web manba sozlanmagan"]}
+
+    lines = ["Holati: ON"]
+    any_ok, any_fail = False, False
+    for src in web_sources:
+        entries, err = _search_one_source(src["prefix"], "test", 1)
+        if err:
+            any_fail = True
+            lines.append(f"{src['label']} qidiruvi: ❌\nSabab: {err}")
+        elif not entries:
+            any_fail = True
+            lines.append(f"{src['label']} qidiruvi: ⚠️ natija topilmadi")
+        else:
+            any_ok = True
+            lines.append(f"{src['label']} qidiruvi: ✅")
+
+    status = "ok" if (any_ok and not any_fail) else ("partial" if any_ok else "error")
+    return {"status": status, "lines": lines}
+
+
+def check_all_music_search_sources() -> dict:
+    """Uchala manbani birdaniga tekshiradi (bitta manba xato bersa ham
+    qolganlar to'xtamaydi — har biri alohida try/except ichida)."""
+    results = {}
+    for key, fn, label in (
+        ("youtube", check_youtube_music_search, "YouTube"),
+        ("web", check_web_music_search, "Web"),
+    ):
+        try:
+            results[key] = fn()
+        except Exception as e:
+            logger.error(f"🎵 '{label}' manbasini tekshirishda kutilmagan xato: {type(e).__name__}: {e}", exc_info=True)
+            results[key] = {"status": "error", "lines": [f"Ichki xato: {type(e).__name__}: {e}"]}
+    return results
 
 
 def download_audio(url: str, dest_dir: str, max_mb: int, timeout_sec: int) -> str:
