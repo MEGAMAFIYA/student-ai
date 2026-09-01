@@ -38,6 +38,7 @@ import ai_clients
 import config
 import pro_subscription
 import storage
+import video_tools
 import wallet
 from handlers import payment_admin as pay_ui
 
@@ -171,6 +172,7 @@ def _main_menu_keyboard() -> InlineKeyboardMarkup:
         ]
         rows.append(row)
     rows.append([InlineKeyboardButton("🔑 AI kalitlari", callback_data="dev:keys")])
+    rows.append([InlineKeyboardButton("🎵 Qo'shiq qidirish", callback_data="dev:music")])
     rows.append([InlineKeyboardButton("➕ Barcha modellar", callback_data="dev:bulk")])
     rows.append([InlineKeyboardButton("📊 Statistika", callback_data="dev:stats")])
     rows.append([InlineKeyboardButton("💎 Pro obunalar", callback_data="dev:prosub")])
@@ -446,6 +448,103 @@ async def _run_key_check() -> str:
 
 
 # ============================================================
+# 🎵 Qo'shiq qidirish — manbalarni YOQISH/O'CHIRISH + Tekshirish
+# ============================================================
+
+_MUSIC_CHECK_STATUS = {
+    "ok": "🟢 Ishlayapti",
+    "partial": "🟡 Qisman ishlayapti",
+    "error": "🔴 Ishlamayapti",
+    "off": "⚪️ O'chirilgan",
+}
+
+
+def _music_status_label(source_id: str) -> str:
+    return "🟢 YOQILGAN" if config.is_music_source_enabled(source_id) else "🔴 O'CHIRILGAN"
+
+
+def _music_menu_text() -> str:
+    lines = ["🎵 <b>Qo'shiq qidirish sozlamalari</b>\n"]
+    for sid in config.MUSIC_SEARCH_SOURCE_IDS:
+        label = _esc(config.MUSIC_SEARCH_SOURCE_LABELS[sid])
+        lines.append(f"{label}: {_music_status_label(sid)}")
+    if config.is_music_source_enabled("telegram") and not config.TG_SEARCH_ENABLED:
+        lines.append(
+            "\n⚠️ <i>Telegram manbasi bu yerda YOQILGAN, lekin TG_API_ID/"
+            "TG_API_HASH/TG_SESSION/TG_SEARCH_CHANNELS to'liq sozlanmagan — "
+            "shu sabab amalda ishlamaydi ('🔍 Tekshirish' orqali aniq "
+            "sababni ko'rishingiz mumkin).</i>"
+        )
+    lines.append("\nManbani yoqish/o'chirish uchun tugmani bosing:")
+    return "\n".join(lines)
+
+
+def _music_menu_keyboard() -> InlineKeyboardMarkup:
+    rows = []
+    for sid in config.MUSIC_SEARCH_SOURCE_IDS:
+        label = config.MUSIC_SEARCH_SOURCE_LABELS[sid]
+        state = "🟢 ON" if config.is_music_source_enabled(sid) else "🔴 OFF"
+        rows.append([InlineKeyboardButton(f"{label}: {state}", callback_data=f"dev:musictoggle:{sid}")])
+    rows.append([InlineKeyboardButton("🔍 Tekshirish", callback_data="dev:musiccheck")])
+    rows.append([InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:menu")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _music_check_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 Qayta tekshirish", callback_data="dev:musiccheck")],
+        [InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:music")],
+    ])
+
+
+def _render_music_check_block(title: str, result: dict) -> str:
+    status = result.get("status", "error")
+    block = [title, _MUSIC_CHECK_STATUS.get(status, status)]
+    for line in result.get("lines", []):
+        block.append(_esc(line))
+    return "\n".join(block)
+
+
+def _check_telegram_music_search() -> dict:
+    """telegram_search.py IXTIYORIY modul (telethon o'rnatilmasligi
+    mumkin) — shu sabab import shu yerda, xato bo'lsa ham qolgan ikki
+    manba tekshiruvi buzilmaydi. SINXRON (blocking, ichida `asyncio.run()`
+    chaqiradi) — chaqiruvchi asyncio.to_thread() orqali chaqirishi kerak."""
+    try:
+        import telegram_search
+    except Exception as e:
+        return {"status": "error", "lines": [f"Ichki xato: {type(e).__name__}: {e}"]}
+    return telegram_search.check_telegram_music_search()
+
+
+async def _run_music_check() -> str:
+    """Uchala manbani PARALLEL tekshiradi. Har biri o'z thread'ida (yt-dlp/
+    Telethon — ikkalasi ham blocking) ishlaydi, bittasi xato bersa ham
+    qolganlar davom etadi (har biri alohida try/except bilan o'ralgan)."""
+    logger.info("🎵 Qo'shiq qidirish manbalari tekshirilmoqda (/developer > 🎵 Qo'shiq qidirish > Tekshirish)...")
+
+    async def _safe_thread(fn, label: str) -> dict:
+        try:
+            return await asyncio.to_thread(fn)
+        except Exception as e:
+            logger.error(f"🎵 '{label}' tekshiruvida kutilmagan xato: {type(e).__name__}: {e}", exc_info=True)
+            return {"status": "error", "lines": [f"Ichki xato: {type(e).__name__}: {e}"]}
+
+    yt_result, web_result, tg_result = await asyncio.gather(
+        _safe_thread(video_tools.check_youtube_music_search, "YouTube"),
+        _safe_thread(video_tools.check_web_music_search, "Web"),
+        _safe_thread(_check_telegram_music_search, "Telegram"),
+    )
+
+    return "\n\n".join([
+        "🔍 <b>QIDIRUV MANBALARI TEKSHIRUVI</b>",
+        _render_music_check_block("🎬 YouTube", yt_result),
+        _render_music_check_block("🌐 Web", web_result),
+        _render_music_check_block("📱 Telegram", tg_result),
+    ])
+
+
+# ============================================================
 # Kirish nuqtasi va callback dispatcher
 # ============================================================
 
@@ -654,6 +753,23 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _safe_edit_query(query, "🩺 Tekshirilmoqda, biroz kuting...")
         report = await _run_key_check()
         await _edit_menu(context, report, _keys_menu_keyboard())
+        return DEV_MENU
+
+    # ---------- 🎵 Qo'shiq qidirish ----------
+    if action == "music":
+        await _safe_edit_query(query, _music_menu_text(), reply_markup=_music_menu_keyboard(), parse_mode="HTML")
+        return DEV_MENU
+
+    if action == "musictoggle":
+        source_id = parts[2]
+        config.set_music_search_source(source_id, not config.is_music_source_enabled(source_id))
+        await _safe_edit_query(query, _music_menu_text(), reply_markup=_music_menu_keyboard(), parse_mode="HTML")
+        return DEV_MENU
+
+    if action == "musiccheck":
+        await _safe_edit_query(query, "🔍 Manbalar tekshirilmoqda, biroz kuting...")
+        report = await _run_music_check()
+        await _edit_menu(context, report, _music_check_keyboard())
         return DEV_MENU
 
     # ---------- 💎 Pro obunalar ----------
