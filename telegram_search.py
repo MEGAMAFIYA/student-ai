@@ -230,8 +230,11 @@ def check_telegram_music_search() -> dict:
         return {"status": "error", "lines": lines}
 
     if not TELETHON_AVAILABLE:
-        lines.append("Sabab: 'telethon' kutubxonasi o'rnatilmagan")
+        lines.append("Telethon: ❌ o'rnatilmagan")
+        lines.append("Sabab: 'telethon' kutubxonasi o'rnatilmagan (requirements.txt'ni tekshiring, keyin qayta deploy qiling)")
         return {"status": "error", "lines": lines}
+
+    lines.append("Telethon: ✅ o'rnatilgan")
 
     try:
         result = asyncio.run(_check_telegram_async())
@@ -241,16 +244,16 @@ def check_telegram_music_search() -> dict:
         return {"status": "error", "lines": lines}
 
     if not result["authorized"]:
-        lines.append("Ulanish: ❌\nSabab: sessiya tasdiqlanmagan (TG_SESSION eskirgan/yaroqsiz)")
+        lines.append("Telegram API ulanishi: ❌\nSabab: sessiya tasdiqlanmagan (TG_SESSION eskirgan/yaroqsiz)")
         return {"status": "error", "lines": lines}
 
-    lines.append("Ulanish: ✅ OK")
+    lines.append("Telegram API ulanishi: ✅ OK")
     ok_channels, bad_channels = result["ok_channels"], result["bad_channels"]
     if bad_channels:
-        lines.append(f"Qidiruv: 🟡 ({ok_channels} ta kanal OK, {len(bad_channels)} ta muammoli)")
+        lines.append(f"Kanallarga qidiruv: 🟡 ({ok_channels} ta kanal OK, {len(bad_channels)} ta muammoli)")
         for ch, reason in bad_channels:
             lines.append(f"  ⚠️ @{ch}: {reason}")
         return {"status": "partial", "lines": lines}
 
-    lines.append(f"Qidiruv: ✅ ({ok_channels} ta kanal)")
+    lines.append(f"Kanallarga qidiruv: ✅ OK ({ok_channels} ta kanal)")
     return {"status": "ok", "lines": lines}
