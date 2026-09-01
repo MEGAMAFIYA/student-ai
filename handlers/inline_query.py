@@ -87,6 +87,7 @@ MUHIM SOZLASH (config.py / .env orqali):
 """
 
 import asyncio
+import io
 import logging
 import re
 import shutil
@@ -301,11 +302,12 @@ async def on_inline_query(
         for t in tracks:
             result_id = str(uuid.uuid4())
             cache[result_id] = {"type": "qoshiq", "url": t["webpage_url"], "title": t["title"], "uploader": t.get("uploader")}
+            channel = video_tools.display_channel(t)
             results.append(
                 InlineQueryResultDocument(
                     id=result_id,
-                    title=f"{t['source_emoji']} {t['title'][:60]}",
-                    description=t.get("uploader") or t["source_label"],
+                    title=f"{t['source_emoji']} {video_tools.format_track_label(t, max_len=60)}",
+                    description=channel or t["source_label"],
                     document_url=f"{PUBLIC_BASE_URL}/placeholder.pdf",
                     mime_type="application/pdf",
                     caption=f"⏳ \"{t['title']}\" yuklab olinmoqda...",
@@ -970,6 +972,36 @@ async def _handle_course_work(
 # 🎬 OG'IR OQIM: /vid
 # ============================================================
 
+async def _fail_inline_media(context: ContextTypes.DEFAULT_TYPE, inline_message_id: str, error_text: str) -> None:
+    """/vid va /qo'shiq OG'IR oqimlarida yuklab olish/konvertatsiya
+    MUVAFFAQIYATSIZ bo'lganda chaqiriladi. MUHIM: bu yerda ATAYLAB faqat
+    `edit_message_caption` EMAS, `edit_message_media` ishlatiladi —
+    aks holda xabar hali ham boshlang'ich "placeholder.pdf" hujjati
+    bo'lib qolaverar edi (foydalanuvchiga xato tagida chalkash/soxta
+    "placeholder.pdf" fayli ko'rinar edi, qarang: talab #5). Bu yerda
+    o'sha placeholder MEDIA'ning o'zi kichik, aniq nomli ("xatolik.txt")
+    matn hujjati bilan ALMASHTIRILADI — foydalanuvchi hech qachon
+    "placeholder.pdf" nomli faylni oxirgi natija sifatida ko'rmaydi."""
+    error_file = io.BytesIO(error_text.encode("utf-8"))
+    try:
+        await context.bot.edit_message_media(
+            inline_message_id=inline_message_id,
+            media=InputMediaDocument(
+                media=InputFile(error_file, filename="xatolik.txt"),
+                caption=error_text[:1024],
+            ),
+            reply_markup=INLINE_MESSAGE_MARKUP,
+        )
+    except Exception as e:
+        logger.warning(f"🔍 Inline xato xabarini media orqali ko'rsatib bo'lmadi, caption bilan urinildi: {type(e).__name__}: {e}")
+        try:
+            await context.bot.edit_message_caption(
+                inline_message_id=inline_message_id, caption=error_text[:1024], reply_markup=INLINE_MESSAGE_MARKUP,
+            )
+        except Exception:
+            pass
+
+
 async def _handle_vid(
     context: ContextTypes.DEFAULT_TYPE,
     inline_message_id: str,
@@ -991,22 +1023,10 @@ async def _handle_vid(
             )
         logger.info(f"🔍 Inline /vid muvaffaqiyatli: url={url}.")
     except video_tools.DownloadError as e:
-        try:
-            await context.bot.edit_message_caption(
-                inline_message_id=inline_message_id, caption=str(e), reply_markup=INLINE_MESSAGE_MARKUP,
-            )
-        except Exception:
-            pass
+        await _fail_inline_media(context, inline_message_id, str(e))
     except Exception as e:
         logger.error(f"🔍 Inline /vid kutilmagan xato (url={url}): {type(e).__name__}: {e}", exc_info=True)
-        try:
-            await context.bot.edit_message_caption(
-                inline_message_id=inline_message_id,
-                caption="❌ Video yuborishda kutilmagan xatolik yuz berdi.",
-                reply_markup=INLINE_MESSAGE_MARKUP,
-            )
-        except Exception:
-            pass
+        await _fail_inline_media(context, inline_message_id, "❌ Video yuborishda kutilmagan xatolik yuz berdi.")
     finally:
         shutil.rmtree(dest_dir, ignore_errors=True)
 
@@ -1040,22 +1060,10 @@ async def _handle_qoshiq(
             )
         logger.info(f"🔍 Inline /qo'shiq muvaffaqiyatli: track='{title}'.")
     except video_tools.DownloadError as e:
-        try:
-            await context.bot.edit_message_caption(
-                inline_message_id=inline_message_id, caption=str(e), reply_markup=INLINE_MESSAGE_MARKUP,
-            )
-        except Exception:
-            pass
+        await _fail_inline_media(context, inline_message_id, str(e))
     except Exception as e:
         logger.error(f"🔍 Inline /qo'shiq kutilmagan xato (title='{title}'): {type(e).__name__}: {e}", exc_info=True)
-        try:
-            await context.bot.edit_message_caption(
-                inline_message_id=inline_message_id,
-                caption="❌ Qo'shiqni yuborishda kutilmagan xatolik yuz berdi.",
-                reply_markup=INLINE_MESSAGE_MARKUP,
-            )
-        except Exception:
-            pass
+        await _fail_inline_media(context, inline_message_id, "❌ Qo'shiqni yuborishda kutilmagan xatolik yuz berdi.")
     finally:
         shutil.rmtree(dest_dir, ignore_errors=True)
 
