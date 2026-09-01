@@ -78,6 +78,16 @@ VID_DOWNLOAD_TIMEOUT_SEC = int(os.getenv("VID_DOWNLOAD_TIMEOUT_SEC", "180"))
 # sifatida chiqarib tashlanishi mumkin.
 QOSHIQ_SEARCH_COUNT = int(os.getenv("QOSHIQ_SEARCH_COUNT", "14"))
 QOSHIQ_DOWNLOAD_TIMEOUT_SEC = int(os.getenv("QOSHIQ_DOWNLOAD_TIMEOUT_SEC", "120"))
+# 🐞 MUHIM TUZATISH: bu qiymat avval BU YERDA UMUMAN YO'Q edi, lekin
+# handlers/qoshiq.py va handlers/inline_query.py uni `config.QOSHIQ_MAX_MB`
+# sifatida ishlatadi — natijada HAR BIR "/qo'shiq" yuklab olish urinishi
+# (natija tanlangan zahoti) `AttributeError: module 'config' has no
+# attribute 'QOSHIQ_MAX_MB'` bilan yiqilardi (bu argument sifatida
+# `asyncio.to_thread(...)`ga uzatilishidan OLDIN, chaqiruv joyida
+# baholanadi). Telegram Bot API oddiy bot uchun ~50MB yuborish chegarasi
+# qo'yadi (qarang: VID_MAX_MB yuqorida) — audio uchun ham xuddi shu
+# xavfsiz chegara qo'llaniladi.
+QOSHIQ_MAX_MB = int(os.getenv("QOSHIQ_MAX_MB", "45"))
 # Qidiruv natijalari xotirada shuncha soniya saqlanadi (tugmalar shundan
 # keyin "muddati o'tgan" bo'lib qoladi) — xotira cheksiz o'sib ketmasligi uchun.
 QOSHIQ_SESSION_TTL_SEC = int(os.getenv("QOSHIQ_SESSION_TTL_SEC", "600"))
