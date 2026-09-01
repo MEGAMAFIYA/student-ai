@@ -530,12 +530,93 @@ def _github_path(filename: str) -> str:
     return f"{GITHUB_DATA_DIR}/{filename}" if GITHUB_DATA_DIR else filename
 
 
+def _github_contents_url(path: str) -> str:
+    return f"https://api.github.com/repos/{GITHUB_REPO}/contents/{path}"
+
+
+def _github_get_sha(url: str) -> str | None:
+    """Contents API orqali faylning JORIY "sha" qiymatini o'qiydi (PUT
+    qilishdan OLDIN chaqiriladi — mavjud faylni yangilash uchun GitHub
+    aynan shu "sha"ni talab qiladi, aks holda 409 Conflict qaytaradi).
+    Fayl mavjud bo'lmasa (404 — hali yaratilmagan) yoki boshqa xato
+    bo'lsa None qaytaradi (chaqiruvchi buni "yangi fayl" deb talqin
+    qiladi — 404 uchun bu to'g'ri, boshqa xatolar uchun ham xavfsiz
+    tomonga og'ish, chunki keyingi PUT baribir xatoni ko'rsatadi)."""
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            r = client.get(url, headers=_github_headers(), params={"ref": GITHUB_BRANCH})
+            if r.status_code == 404:
+                return None
+            r.raise_for_status()
+            return r.json().get("sha")
+    except Exception as e:
+        logger.error(f"GitHub'dan 'sha' o'qishda xato ({url}): {type(e).__name__}: {e}")
+        return None
+
+
+def _github_put_content(path: str, content_bytes: bytes, message: str, max_attempts: int = 3) -> bool:
+    """GitHub Contents API orqali BITTA fayl yozadigan YAGONA umumiy
+    funksiya — barcha GitHub'ga yozuvchi joylar (`_github_write_file`,
+    `github_upload_binary`, `github_write_text_file`) shu orqali ishlaydi,
+    409 Conflict xatosi FAQAT shu bitta joyda tuzatiladi.
+
+    Mantiq (fayl mavjud bo'lsa/bo'lmasa ikkalasi uchun ham):
+      1. Avval GET bilan faylning JORIY "sha"sini olamiz (mavjud bo'lsa).
+      2. PUT so'rovida: fayl mavjud bo'lsa "sha" YUBORILADI (YANGILASH),
+         mavjud bo'lmasa "sha" YUBORILMAYDI (YANGI FAYL YARATISH).
+      3. Agar GitHub 409 Conflict qaytarsa — bu SHA ESKIRGANI (masalan
+         parallel ikkita so'rov bir vaqtda yozganda) degani. Bunday holda
+         faylni QAYTA GET qilib YANGI "sha" olamiz va PUT'ni qayta
+         urinamiz (`max_attempts` marta, so'nggisida ham 409 bo'lsa xato
+         qaytariladi va log yoziladi)."""
+    if not USE_GITHUB:
+        return False
+    url = _github_contents_url(path)
+    encoded_content = base64.b64encode(content_bytes).decode("ascii")
+
+    for attempt in range(1, max_attempts + 1):
+        sha = _github_get_sha(url)
+        body = {
+            "message": message,
+            "content": encoded_content,
+            "branch": GITHUB_BRANCH,
+        }
+        if sha:
+            body["sha"] = sha
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                r = client.put(url, headers=_github_headers(), json=body)
+            if r.status_code == 409:
+                logger.warning(
+                    f"⚠️ GitHub 409 Conflict ('{path}') — SHA eskirgan bo'lishi mumkin "
+                    f"(parallel yozuv). Qayta urinilmoqda ({attempt}/{max_attempts})..."
+                )
+                continue
+            r.raise_for_status()
+            return True
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                f"❌ GitHub'ga '{path}' yozishda xato: {e.response.status_code} "
+                f"{e.response.text[:300]}"
+            )
+            return False
+        except Exception as e:
+            logger.error(f"❌ GitHub'ga '{path}' yozishda kutilmagan xato: {type(e).__name__}: {e}")
+            return False
+
+    logger.error(
+        f"❌ GitHub'ga '{path}' yozib bo'lmadi — {max_attempts} urinishdan keyin ham "
+        "409 Conflict davom etmoqda (SHA doimo eskirib qolmoqda, ehtimol bir nechta "
+        "so'rov juda tez-tez yozmoqda)."
+    )
+    return False
+
+
 def _github_read_file(filename: str) -> str | None:
     """GitHub Contents API orqali repo'dagi faylni o'qiydi. Fayl mavjud
     bo'lmasa (404 — birinchi marta ishga tushirilyapti) yoki xato bo'lsa
     None qaytaradi."""
-    import base64
-    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{_github_path(filename)}"
+    url = _github_contents_url(_github_path(filename))
     try:
         with httpx.Client(timeout=15.0) as client:
             r = client.get(url, headers=_github_headers(), params={"ref": GITHUB_BRANCH})
@@ -552,28 +633,10 @@ def _github_read_file(filename: str) -> str | None:
 
 def _github_write_file(filename: str, content: str, message: str) -> bool:
     """GitHub Contents API orqali repo'ga fayl yozadi (mavjud bo'lsa
-    YANGILAYDI, aks holda YARATADI) — bitta YANGI COMMIT sifatida."""
-    import base64
-    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{_github_path(filename)}"
-    sha = None
-    try:
-        with httpx.Client(timeout=15.0) as client:
-            r = client.get(url, headers=_github_headers(), params={"ref": GITHUB_BRANCH})
-            if r.status_code == 200:
-                sha = r.json().get("sha")
-            body = {
-                "message": message,
-                "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
-                "branch": GITHUB_BRANCH,
-            }
-            if sha:
-                body["sha"] = sha
-            r = client.put(url, headers=_github_headers(), json=body)
-            r.raise_for_status()
-            return True
-    except Exception as e:
-        logger.error(f"❌ GitHub'ga '{filename}' yozishda xato: {type(e).__name__}: {e}")
-        return False
+    YANGILAYDI, aks holda YARATADI) — bitta YANGI COMMIT sifatida.
+    409 Conflict kelsa `_github_put_content` avtomatik qayta urinadi
+    (qarang: yuqoridagi funksiya izohi)."""
+    return _github_put_content(_github_path(filename), content.encode("utf-8"), message)
 
 
 def persist_read(local_filename: str, upstash_key: str) -> tuple[str | None, str]:
@@ -883,23 +946,16 @@ def github_upload_binary(path: str, data: bytes, message: str) -> str | None:
     `InlineQueryResultPhoto(photo_url=...)` va h.k.) berilishi mumkin.
 
     MUHIM: bu `_github_write_file`dan FARQLI — u UTF-8 matn (JSON) uchun,
-    bu esa xom BINARY baytlar uchun (base64 orqali, dekodlashsiz)."""
+    bu esa xom BINARY baytlar uchun (base64 orqali, dekodlashsiz). Fayl
+    nomi tasodifiy UUID bo'lgani uchun deyarli har doim YANGI fayl bo'ladi,
+    lekin xavfsizlik uchun baribir `_github_put_content` orqali (sha
+    mavjud bo'lsa yuboriladi, 409 kelsa qayta uriniladi) yoziladi."""
     if not USE_GITHUB:
         return None
-    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{path}"
-    try:
-        with httpx.Client(timeout=30.0) as client:
-            body = {
-                "message": message,
-                "content": base64.b64encode(data).decode("ascii"),
-                "branch": GITHUB_BRANCH,
-            }
-            r = client.put(url, headers=_github_headers(), json=body)
-            r.raise_for_status()
-        return f"https://raw.githubusercontent.com/{GITHUB_REPO}/{GITHUB_BRANCH}/{path}"
-    except Exception as e:
-        logger.error(f"❌ GitHub'ga binary fayl yozishda xato ('{path}'): {type(e).__name__}: {e}")
+    ok = _github_put_content(path, data, message)
+    if not ok:
         return None
+    return f"https://raw.githubusercontent.com/{GITHUB_REPO}/{GITHUB_BRANCH}/{path}"
 
 
 def github_list_directory(path: str) -> list[str]:
@@ -950,26 +1006,10 @@ def github_read_text_file(path: str) -> str | None:
 
 def github_write_text_file(path: str, content: str, message: str) -> bool:
     """`github_read_text_file`ning yozish jufti — mavjud faylni yangilaydi
-    (kerakli "sha" ni avval o'qib) yoki yangi fayl yaratadi."""
+    (kerakli "sha" ni avval o'qib) yoki yangi fayl yaratadi. UTF-8 matn
+    sifatida kodlanadi (masalan JSON — foydalanuvchining shaxsiy AI
+    kalitlari, "mening_kabinetim/{user_id}/mening_kalitlarim.json").
+    409 Conflict kelsa `_github_put_content` avtomatik qayta urinadi."""
     if not USE_GITHUB:
         return False
-    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{path}"
-    sha = None
-    try:
-        with httpx.Client(timeout=15.0) as client:
-            r = client.get(url, headers=_github_headers(), params={"ref": GITHUB_BRANCH})
-            if r.status_code == 200:
-                sha = r.json().get("sha")
-            body = {
-                "message": message,
-                "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
-                "branch": GITHUB_BRANCH,
-            }
-            if sha:
-                body["sha"] = sha
-            r = client.put(url, headers=_github_headers(), json=body)
-            r.raise_for_status()
-        return True
-    except Exception as e:
-        logger.error(f"❌ GitHub'ga matn fayl yozishda xato ('{path}'): {type(e).__name__}: {e}")
-        return False
+    return _github_put_content(path, content.encode("utf-8"), message)
