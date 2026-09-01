@@ -121,6 +121,7 @@ from ai_clients import ask_ai
 from handlers import course_work
 import github_storage
 import pro_tabrik_logic
+import storage
 import tabrik_logic
 import video_tools
 import webapp_security
@@ -129,6 +130,31 @@ logger = logging.getLogger(__name__)
 
 PLACEHOLDER_TEXT = "⏳ Javob tayyorlanmoqda..."
 BOT_USERNAME = "Student_ai_uz_bot"  # faqat imzo/havola uchun, username o'zgarsa shu yerni yangilang
+
+
+# ------------------------------------------------------------------
+# 🔍📜 /developer > "🔍 Inline jurnali" uchun — foydalanuvchi botni
+# GURUHGA A'ZO QILMASDAN yoki SHAXSIY chatda "@Student_ai_uz_bot ..."
+# deb ishlatganda (inline rejim) shu yordamchilar orqali storage.py'ga
+# qayd etiladi (qarang: storage.record_inline_log). Har bir chaqiruv
+# nuqtasida "ishladimi/ishlamadimi va nima sababdan" aniq ko'rinadi.
+# ------------------------------------------------------------------
+
+def _user_label(user) -> str:
+    if not user:
+        return ""
+    if user.username:
+        return f"@{user.username}"
+    return user.full_name or str(user.id)
+
+
+def _log_inline(user, query: str, status: str, detail: str = "") -> None:
+    if not user:
+        return
+    try:
+        storage.record_inline_log(user.id, _user_label(user), query, status, detail)
+    except Exception as e:
+        logger.error(f"🔍 Inline jurnalga yozishda xato (e'tiborsiz qoldirildi): {type(e).__name__}: {e}")
 
 _MAX_CACHE = 500  # eslab qolinadigan so'rovlar soni chegarasi (xotira toshib ketmasligi uchun)
 MIN_CAPTION_EDIT_INTERVAL = 6  # soniya — progress xabarini juda tez-tez tahrirlamaslik uchun
@@ -239,7 +265,7 @@ async def on_inline_query(
 
     if VID_WITH_URL_RE.match(query):
         if not PUBLIC_BASE_URL:
-            await _answer_redirect(update, query)
+            await _answer_redirect(update, query, "PUBLIC_BASE_URL sozlanmagan — /vid inline rejimda ishlay olmaydi")
             return
 
         url = VID_WITH_URL_RE.match(query).group(1)
@@ -264,6 +290,7 @@ async def on_inline_query(
         await _answer_instruction(
             update, "🎬 /vid — video havolasini ham yozing",
             "Masalan: /vid https://www.youtube.com/watch?v=...",
+            query=query,
         )
         return
 
@@ -276,7 +303,7 @@ async def on_inline_query(
 
     if QOSHIQ_WITH_QUERY_RE.match(query):
         if not PUBLIC_BASE_URL:
-            await _answer_redirect(update, query)
+            await _answer_redirect(update, query, "PUBLIC_BASE_URL sozlanmagan — /qo'shiq inline rejimda ishlay olmaydi")
             return
 
         search_text = QOSHIQ_WITH_QUERY_RE.match(query).group(1).strip()
@@ -285,17 +312,18 @@ async def on_inline_query(
             await _answer_instruction(
                 update, "🎵 Bu havolaga o'xshaydi",
                 "Video/audio havolasi uchun /qo'shiq emas, /vid dan foydalaning.",
+                query=query,
             )
             return
 
         try:
             tracks = await asyncio.to_thread(video_tools.search_tracks, search_text, config.QOSHIQ_SEARCH_COUNT)
         except video_tools.DownloadError as e:
-            await _answer_instruction(update, "🎵 Qidiruvda xatolik", str(e))
+            await _answer_instruction(update, "🎵 Qidiruvda xatolik", str(e), query=query)
             return
         except Exception as e:
             logger.error(f"🔍 Inline /qo'shiq qidiruvida kutilmagan xato ('{search_text}'): {type(e).__name__}: {e}", exc_info=True)
-            await _answer_instruction(update, "🎵 Qidiruvda xatolik", f"Sabab: {type(e).__name__}: {e}")
+            await _answer_instruction(update, "🎵 Qidiruvda xatolik", f"Sabab: {type(e).__name__}: {e}", query=query)
             return
 
         results = []
@@ -334,6 +362,7 @@ async def on_inline_query(
         await _answer_instruction(
             update, "🎵 /qo'shiq — ijrochi yoki qo'shiq nomini ham yozing",
             "Masalan: /qo'shiq Ozodbek Nazarbekov",
+            query=query,
         )
         return
 
@@ -366,6 +395,7 @@ async def on_inline_query(
         await _answer_instruction(
             update, "🎁 /tabrik — tabrik matnini ham yozing",
             "Masalan: /tabrik Salom mening qadrli insonim...",
+            query=query,
         )
         return
 
@@ -381,7 +411,7 @@ async def on_inline_query(
         text = pro_tabrik_logic.parse_pro_text(query)
         if text:
             if not PUBLIC_BASE_URL:
-                await _answer_redirect(update, query)
+                await _answer_redirect(update, query, "PUBLIC_BASE_URL sozlanmagan — /pro inline rejimda ishlay olmaydi")
                 return
             sender_id = update.inline_query.from_user.id
             photos = github_storage.list_user_photos(sender_id) if github_storage.is_configured() else []
@@ -406,6 +436,7 @@ async def on_inline_query(
         await _answer_instruction(
             update, "💎 /pro — tabrik matnini ham yozing",
             "Masalan: /pro Salom mening aziz do'stim...",
+            query=query,
         )
         return
 
@@ -469,7 +500,11 @@ async def on_inline_query(
 
         # PUBLIC_BASE_URL sozlanmagan yoki bet soni topilmadi
         # -> shaxsiy chatga yo'naltiramiz
-        await _answer_redirect(update, query)
+        reason = (
+            "PUBLIC_BASE_URL sozlanmagan" if not PUBLIC_BASE_URL
+            else "kurs ishi so'rovida bet soni yoki mavzu aniqlanmadi"
+        )
+        await _answer_redirect(update, query, reason)
         return
 
     # --------------------------------------------------------
@@ -478,7 +513,7 @@ async def on_inline_query(
     # --------------------------------------------------------
 
     if OTHER_HEAVY_HINTS.search(query):
-        await _answer_redirect(update, query)
+        await _answer_redirect(update, query, "bu vazifa turi hozircha inline rejimda qo'llab-quvvatlanmaydi")
         return
 
     # --------------------------------------------------------
@@ -517,7 +552,8 @@ async def on_inline_query(
 
 async def _answer_redirect(
     update: Update,
-    query: str
+    query: str,
+    reason: str = "og'ir vazifa inline rejimda bajarilmaydi — shaxsiy chatga yo'naltirildi",
 ):
     results = [
         InlineQueryResultArticle(
@@ -537,9 +573,10 @@ async def _answer_redirect(
         cache_time=0,
         is_personal=True
     )
+    _log_inline(update.inline_query.from_user, query, "redirect", reason)
 
 
-async def _answer_instruction(update: Update, title: str, description: str):
+async def _answer_instruction(update: Update, title: str, description: str, query: str | None = None):
     """Foydalanuvchi buyruqni to'liq yozmagan (masalan faqat "/vid",
     havolasiz) holatlarda ko'rsatiladigan, keshlanmaydigan ko'rsatma
     natijasi — tanlansa ham hech qanday og'ir ish boshlanmaydi, faqat
@@ -553,6 +590,7 @@ async def _answer_instruction(update: Update, title: str, description: str):
         )
     ]
     await update.inline_query.answer(results, cache_time=0, is_personal=True)
+    _log_inline(update.inline_query.from_user, query if query is not None else title, "instruction", description)
 
 
 async def _answer_rasim(update: Update) -> None:
@@ -614,6 +652,11 @@ async def on_chosen_inline_result(
         None
     )
 
+    # 🔍📜 /developer > "🔍 Inline jurnali" uchun — natijani TANLAGAN
+    # foydalanuvchi (ChosenInlineResult'ning o'zida keladi, qayta so'rash
+    # shart emas).
+    user = chosen.from_user
+
     # --------------------------------------------------------
     # KURS ISHI
     # --------------------------------------------------------
@@ -623,7 +666,8 @@ async def on_chosen_inline_result(
             context,
             inline_message_id,
             entry["topic"],
-            entry["pages"]
+            entry["pages"],
+            user,
         )
         return
 
@@ -632,7 +676,7 @@ async def on_chosen_inline_result(
     # --------------------------------------------------------
 
     if entry and entry.get("type") == "vid":
-        await _handle_vid(context, inline_message_id, entry["url"])
+        await _handle_vid(context, inline_message_id, entry["url"], user)
         return
 
     # --------------------------------------------------------
@@ -640,7 +684,7 @@ async def on_chosen_inline_result(
     # --------------------------------------------------------
 
     if entry and entry.get("type") == "qoshiq":
-        await _handle_qoshiq(context, inline_message_id, entry["url"], entry["title"], entry.get("uploader"))
+        await _handle_qoshiq(context, inline_message_id, entry["url"], entry["title"], entry.get("uploader"), user)
         return
 
     # 🎁 /tabrik uchun bu yerda ATAYLAB hech narsa yo'q — animatsiya endi
@@ -662,7 +706,8 @@ async def on_chosen_inline_result(
     await _handle_chat(
         context,
         inline_message_id,
-        query
+        query,
+        user,
     )
 
 
@@ -674,7 +719,8 @@ async def on_chosen_inline_result(
 async def _handle_chat(
     context: ContextTypes.DEFAULT_TYPE,
     inline_message_id: str,
-    query: str
+    query: str,
+    user=None,
 ):
     wants_location = bool(
         LOCATION_HINTS.search(query)
@@ -722,6 +768,7 @@ async def _handle_chat(
             reply_markup=INLINE_MESSAGE_MARKUP,
         )
 
+        _log_inline(user, query, "error", "AI javob qaytarmadi (ai_clients loglariga qarang)")
         return
 
     # --------------------------------------------------------
@@ -763,6 +810,7 @@ async def _handle_chat(
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=INLINE_MESSAGE_MARKUP,
     )
+    _log_inline(user, query, "ok")
 
 
 # ============================================================
@@ -877,7 +925,8 @@ async def _handle_course_work(
     context: ContextTypes.DEFAULT_TYPE,
     inline_message_id: str,
     topic: str,
-    pages: int
+    pages: int,
+    user=None,
 ):
     status_proxy = _InlineCaptionStatus(
         context.bot,
@@ -924,6 +973,7 @@ async def _handle_course_work(
                 f"Xato xabarini yozishda muammo: {e}"
             )
 
+        _log_inline(user, f"kurs ishi: {topic} ({pages}+ bet)", "error", "AI xizmatlari javob bermadi (generatsiya muvaffaqiyatsiz)")
         return
 
     # --------------------------------------------------------
@@ -955,6 +1005,7 @@ async def _handle_course_work(
             ),
             reply_markup=INLINE_MESSAGE_MARKUP,
         )
+        _log_inline(user, f"kurs ishi: {topic} ({pages}+ bet)", "ok")
 
     except Exception as e:
 
@@ -979,6 +1030,8 @@ async def _handle_course_work(
 
         except Exception:
             pass
+
+        _log_inline(user, f"kurs ishi: {topic} ({pages}+ bet)", "error", f"PDF tayyor bo'ldi, lekin joylashda xatolik: {type(e).__name__}: {e}")
 
 
 # ============================================================
@@ -1045,6 +1098,7 @@ async def _handle_vid(
     context: ContextTypes.DEFAULT_TYPE,
     inline_message_id: str,
     url: str,
+    user=None,
 ):
     dest_dir = tempfile.mkdtemp(prefix="inline_vid_")
     try:
@@ -1061,11 +1115,14 @@ async def _handle_vid(
                 reply_markup=INLINE_MESSAGE_MARKUP,
             )
         logger.info(f"🔍 Inline /vid muvaffaqiyatli: url={url}.")
+        _log_inline(user, f"/vid {url}", "ok")
     except video_tools.DownloadError as e:
         await _fail_inline_media(context, inline_message_id, str(e))
+        _log_inline(user, f"/vid {url}", "error", str(e))
     except Exception as e:
         logger.error(f"🔍 Inline /vid kutilmagan xato (url={url}): {type(e).__name__}: {e}", exc_info=True)
         await _fail_inline_media(context, inline_message_id, "❌ Video yuborishda kutilmagan xatolik yuz berdi.")
+        _log_inline(user, f"/vid {url}", "error", f"kutilmagan xato: {type(e).__name__}: {e}")
     finally:
         shutil.rmtree(dest_dir, ignore_errors=True)
 
@@ -1080,6 +1137,7 @@ async def _handle_qoshiq(
     url: str,
     title: str,
     uploader: str | None,
+    user=None,
 ):
     dest_dir = tempfile.mkdtemp(prefix="inline_qoshiq_")
     try:
@@ -1098,11 +1156,14 @@ async def _handle_qoshiq(
                 reply_markup=INLINE_MESSAGE_MARKUP,
             )
         logger.info(f"🔍 Inline /qo'shiq muvaffaqiyatli: track='{title}'.")
+        _log_inline(user, f"/qo'shiq {title}", "ok")
     except video_tools.DownloadError as e:
         await _fail_inline_media(context, inline_message_id, str(e))
+        _log_inline(user, f"/qo'shiq {title}", "error", str(e))
     except Exception as e:
         logger.error(f"🔍 Inline /qo'shiq kutilmagan xato (title='{title}'): {type(e).__name__}: {e}", exc_info=True)
         await _fail_inline_media(context, inline_message_id, "❌ Qo'shiqni yuborishda kutilmagan xatolik yuz berdi.")
+        _log_inline(user, f"/qo'shiq {title}", "error", f"kutilmagan xato: {type(e).__name__}: {e}")
     finally:
         shutil.rmtree(dest_dir, ignore_errors=True)
 
