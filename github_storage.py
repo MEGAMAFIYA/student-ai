@@ -52,4 +52,3 @@ def list_user_photos(user_id: int) -> list[str]:
     """Foydalanuvchining barcha rasmlari (raw URL'lar ro'yxati). Hech qanday
     rasm yo'q bo'lsa yoki GitHub sozlanmagan bo'lsa — bo'sh ro'yxat."""
     return config.github_list_directory(_user_photos_dir(user_id))
- 
