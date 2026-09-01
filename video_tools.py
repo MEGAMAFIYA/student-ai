@@ -158,9 +158,10 @@ def _resolve_cookies_file() -> str:
 
 YOUTUBE_COOKIES_FILE = _resolve_cookies_file()
 logger.info(
-    "🍪 YouTube cookies fayli: "
+    "🍪 Cookies fayli (YouTube + Instagram/TikTok va h.k. uchun): "
     + (f"topildi ({YOUTUBE_COOKIES_FILE})" if YOUTUBE_COOKIES_FILE
-       else "topilmadi — faqat player_client almashtirish orqali urinib ko'riladi")
+       else "topilmadi — YouTube uchun faqat player_client almashtirish orqali urinib ko'riladi, "
+            "login talab qiladigan boshqa manbalar (masalan Instagram) cookies'siz ishlamasligi mumkin")
 )
 
 
@@ -260,8 +261,13 @@ def _classify_ytdlp_error(exc: Exception) -> str:
         return "Video mavjud emas (o'chirilgan yoki yopilgan)"
     if "unsupported url" in low or "no video formats found" in low or "unable to extract" in low:
         return "Bu havola/manba qo'llab-quvvatlanmaydi yoki sahifa tuzilishi o'zgargan"
+    if "login" in low or "log in" in low or "authentication" in low:
+        return "Bu kontentni ko'rish uchun manba tizimga kirishni (login/cookies) talab qilmoqda"
     if "requested format is not available" in low:
-        return "Bu video uchun mos video/audio format topilmadi (manba tomonidan cheklangan bo'lishi mumkin)"
+        return (
+            "Bu video uchun mos video/audio format topilmadi (manba "
+            "tomonidan cheklangan yoki login/cookies talab qilinishi mumkin)"
+        )
     if "age" in low and "restrict" in low:
         return "Video yosh chegarasi (age-restricted) bilan himoyalangan"
     if "copyright" in low:
@@ -354,8 +360,21 @@ def download_video(url: str, dest_dir: str, max_mb: int, timeout_sec: int) -> st
             "no_warnings": True,
             "restrictfilenames": True,
             "socket_timeout": timeout_sec,
-            **(youtube_opts if is_youtube else {}),
         }
+        # Cookies faylini FAQAT YouTube uchun emas, BARCHA manbalar
+        # (Instagram, TikTok, Facebook, Twitter/X va h.k.) uchun ham
+        # qo'llaymiz. Sabab: bu opsiya avval `youtube_opts` ichida bo'lib,
+        # faqat `is_youtube=True` bo'lganda yuklab olinar edi — natijada
+        # Instagram Reels kabi ko'pincha LOGIN talab qiladigan
+        # manbalarga cookies UMUMAN yuborilmagan. Cookies bo'lmasa yt-dlp
+        # bunday sahifalardan formatlar RO'YXATINI umuman ololmaydi va
+        # aynan shu "Requested format is not available" xatosini beradi —
+        # garchi bu holatda haqiqiy sabab "format mos kelmadi" emas,
+        # "kirish rad etildi" bo'lsa ham. Fayl faqat mos domen uchun
+        # ishlatiladi — boshqa saytlarga zarar yetkazmaydi.
+        if YOUTUBE_COOKIES_FILE:
+            opts["cookiefile"] = YOUTUBE_COOKIES_FILE
+        opts.update(youtube_opts if is_youtube else {})
         if FFMPEG_AVAILABLE:
             # Faqat ffmpeg mavjud bo'lgandagina video+audio'ni birlashtirib,
             # natijani mp4'ga sozlaymiz (loyiha MP4 kutmoqda).
@@ -565,7 +584,7 @@ def download_audio(url: str, dest_dir: str, max_mb: int, timeout_sec: int) -> st
     is_youtube = "youtube.com" in url or "youtu.be" in url
 
     def build_opts(youtube_opts: dict) -> dict:
-        return {
+        opts = {
             "outtmpl": out_tmpl,
             "format": f"bestaudio[filesize<{max_mb}M]/bestaudio/best",
             "noplaylist": True,
@@ -583,8 +602,13 @@ def download_audio(url: str, dest_dir: str, max_mb: int, timeout_sec: int) -> st
             # "topolmadi" deb ishlamay qoladi (yuqoridagi
             # `_detect_ffmpeg()` izohiga qarang).
             "ffmpeg_location": FFMPEG_PATH,
-            **(youtube_opts if is_youtube else {}),
         }
+        # Cookies faylini FAQAT YouTube uchun emas, BARCHA manbalar uchun
+        # qo'llaymiz (download_video()dagi bir xil izohga qarang).
+        if YOUTUBE_COOKIES_FILE:
+            opts["cookiefile"] = YOUTUBE_COOKIES_FILE
+        opts.update(youtube_opts if is_youtube else {})
+        return opts
 
     try:
         if is_youtube:
