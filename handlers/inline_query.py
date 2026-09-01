@@ -1312,4 +1312,14 @@ async def _schedule_inline_pro_revert(context: ContextTypes.DEFAULT_TYPE, inline
             inline_message_id=inline_message_id,
             media=InputMediaDocument(
                 media=f"{PUBLIC_BASE_URL}/placeholder.pdf",
-              
+                caption=pro_tabrik_logic.build_ready_card(),
+            ),
+            reply_markup=_pro_ready_markup(short_id),
+        )
+        logger.info(f"🔍 Inline /pro xabari asl holatga qaytarildi (inline_message_id={inline_message_id}).")
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        logger.warning(f"🔍 Inline /pro xabarini asl holatga qaytarishda xato: {type(e).__name__}: {e}")
+    finally:
+        _INLINE_PRO_REVERT_TASKS.pop(inline_message_id, None)
