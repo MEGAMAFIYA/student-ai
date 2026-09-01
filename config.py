@@ -77,6 +77,47 @@ QOSHIQ_DOWNLOAD_TIMEOUT_SEC = int(os.getenv("QOSHIQ_DOWNLOAD_TIMEOUT_SEC", "120"
 # keyin "muddati o'tgan" bo'lib qoladi) — xotira cheksiz o'sib ketmasligi uchun.
 QOSHIQ_SESSION_TTL_SEC = int(os.getenv("QOSHIQ_SESSION_TTL_SEC", "600"))
 
+# ============================================================
+# ⏳ "/qoshiq" va "/vid" — ikki bosqichli kiritish
+# ============================================================
+# "/qoshiq" yoki "/vid" argumentsiz yuborilsa, bot so'rov matnini
+# so'raydi va KEYINGI oddiy xabarni shu son soniya davomida kutadi
+# (qarang: pending_input.py). Vaqt o'tsa, kutish holati bekor bo'ladi —
+# foydalanuvchi qaytadan buyruqni yozishi kerak bo'ladi.
+PENDING_INPUT_TTL_SEC = int(os.getenv("PENDING_INPUT_TTL_SEC", "300"))
+
+# ============================================================
+# 📡 Telegram public kontentidan qidirish (MTProto, Telethon) — IXTIYORIY
+# ============================================================
+# Bu FAQAT foydalanuvchi (bot EMAS) hisobi orqali, Telegram tomonidan
+# PUBLIC deb belgilangan kanal/guruhlarni qidirish uchun — yopiq/xususiy
+# guruhlarga ruxsatsiz kirish YOKI Telegram cheklovlarini chetlab
+# o'tish UCHUN EMAS. Quyidagi 4 ta sozlama HAMMASI to'ldirilmaguncha
+# (TG_API_ID, TG_API_HASH, TG_SESSION, TG_SEARCH_CHANNELS) bu manba
+# butunlay O'CHIRILGAN holda qoladi — "/qo'shiq" avvalgidek faqat
+# YouTube + SoundCloud bilan ishlayveradi, hech narsa buzilmaydi.
+#
+#   TG_API_ID / TG_API_HASH — https://my.telegram.org/apps dan olinadigan,
+#       SHAXSIY Telegram user account'ga tegishli MTProto ilova
+#       kalitlari (bot tokeni EMAS).
+#   TG_SESSION — Telethon StringSession qiymati (oldindan, LOKAL
+#       muhitda, bir marta login qilib olinadi — pastdagi eslatmaga
+#       qarang). Hech qachon kodga hardcode qilinmaydi, faqat Render
+#       Environment Variable / Secret sifatida saqlanadi.
+#   TG_SEARCH_CHANNELS — qidiriladigan PUBLIC kanal/guruh username'lari,
+#       vergul bilan ajratilgan (masalan: "ozbek_qoshiqlari,musiqa_arxivi").
+#       Aniq shu ro'yxatdagilar (yoki foydalanuvchi hisobi allaqachon
+#       a'zo bo'lgan public kanallar) qidiriladi — Telegram'da GLOBAL
+#       qidiruv MTProto orqali ham imkonsiz, shu sababli ro'yxat SHART.
+TG_API_ID = os.getenv("TG_API_ID", "")
+TG_API_HASH = os.getenv("TG_API_HASH", "")
+TG_SESSION = os.getenv("TG_SESSION", "")
+TG_SEARCH_CHANNELS = [
+    c.strip().lstrip("@") for c in os.getenv("TG_SEARCH_CHANNELS", "").split(",") if c.strip()
+]
+TG_SEARCH_TIMEOUT_SEC = int(os.getenv("TG_SEARCH_TIMEOUT_SEC", "15"))
+TG_SEARCH_ENABLED = bool(TG_API_ID and TG_API_HASH and TG_SESSION and TG_SEARCH_CHANNELS)
+
 
 def _cfg(prefix: str, default_model: str, default_provider: str = "gemini") -> dict:
     """
