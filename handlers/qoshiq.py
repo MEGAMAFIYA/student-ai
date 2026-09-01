@@ -106,24 +106,83 @@ async def qoshiq_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE, overrid
     _purge_expired_sessions()
     session_id = uuid.uuid4().hex[:12]
     _SESSIONS[session_id] = {
-        "user_id": user_id, "chat_id": chat_id, "results": results, "ts": time.time(),
+        "user_id": user_id, "chat_id": chat_id, "results": results, "ts": time.time(), "query": query,
     }
 
-    # Har bir tugmada MANBA ham ko'rsatiladi (masalan "▶️ YouTube",
-    # "☁️ SoundCloud") — foydalanuvchi qaysi saytdan kelayotganini bilib
-    # tanlasin.
-    buttons = [
-        [InlineKeyboardButton(
-            f"{r['source_emoji']} {video_tools.format_track_label(r, max_len=48)}{_format_duration(r['duration'])}",
-            callback_data=f"song:{session_id}:{i}",
-        )]
-        for i, r in enumerate(results)
-    ]
     await status.edit_text(
-        f"🎵 \"{query}\" bo'yicha natijalar — birini tanlang:",
-        reply_markup=InlineKeyboardMarkup(buttons),
+        f"🎵 \"{query}\" bo'yicha {len(results)} ta natija topildi — birini tanlang:",
+        reply_markup=_build_results_markup(session_id, results, page=0),
     )
-    logger.info(f"🎵 /qo'shiq qidiruvi: chat_id={chat_id}, user_id={user_id}, query='{query}', session={session_id}.")
+    logger.info(f"🎵 /qo'shiq qidiruvi: chat_id={chat_id}, user_id={user_id}, query='{query}', session={session_id}, natijalar soni={len(results)}.")
+
+
+# Talab #15: 10 tadan ko'p natija bitta katta xabarga joylanmaydi —
+# sahifalarga bo'linadi ("1-10", "11-20" va h.k.), "⬅️ Oldingi | Keyingi
+# ➡️" tugmalari bilan.
+_PAGE_SIZE = 10
+
+
+def _build_results_markup(session_id: str, results: list[dict], page: int) -> InlineKeyboardMarkup:
+    """Har bir natija UCHTA elementdan iborat: sarlavha (faqat ko'rsatish
+    uchun, bosilmaydi), "🎧 Eshitish" (manba sahifasiga tashqi havola —
+    talab #4/#16) va "⬇️ Yuklash" (haqiqiy yuklab olish/yuborish)."""
+    start = page * _PAGE_SIZE
+    page_results = results[start:start + _PAGE_SIZE]
+
+    rows: list[list[InlineKeyboardButton]] = []
+    for offset, r in enumerate(page_results):
+        i = start + offset
+        label = f"{r['source_emoji']} {video_tools.format_track_label(r, max_len=42)}{_format_duration(r['duration'])}"
+        row = [InlineKeyboardButton(f"⬇️ {label}", callback_data=f"song:{session_id}:{i}")]
+        # 📡 Telegram manbasidagi natijalar HAM "webpage_url" bilan keladi
+        # (https://t.me/<kanal>/<msg_id>) — shu sabab preview havolasi
+        # barcha manbalar uchun bir xil tarzda ishlaydi.
+        if r.get("webpage_url"):
+            row.append(InlineKeyboardButton("🎧", url=r["webpage_url"]))
+        rows.append(row)
+
+    nav_row = []
+    if start > 0:
+        nav_row.append(InlineKeyboardButton("⬅️ Oldingi", callback_data=f"songpage:{session_id}:{page - 1}"))
+    if start + _PAGE_SIZE < len(results):
+        nav_row.append(InlineKeyboardButton("Keyingi ➡️", callback_data=f"songpage:{session_id}:{page + 1}"))
+    if nav_row:
+        rows.append(nav_row)
+
+    return InlineKeyboardMarkup(rows)
+
+
+async def qoshiq_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """"⬅️ Oldingi"/"Keyingi ➡️" tugmalari — faqat ko'rsatilayotgan
+    sahifani almashtiradi, yangi qidiruv YUBORMAYDI."""
+    query_cb = update.callback_query
+    parts = query_cb.data.split(":")
+    if len(parts) != 3:
+        await query_cb.answer("⚠️ Noto'g'ri so'rov.", show_alert=True)
+        return
+    _, session_id, page_str = parts
+
+    _purge_expired_sessions()
+    session = _SESSIONS.get(session_id)
+    if not session:
+        await query_cb.answer("⚠️ Bu qidiruv natijasining muddati o'tgan. Qaytadan /qo'shiq deb qidiring.", show_alert=True)
+        return
+    if update.effective_user.id != session["user_id"]:
+        await query_cb.answer("⚠️ Bu qidiruv sizga tegishli emas.", show_alert=True)
+        return
+
+    try:
+        page = int(page_str)
+    except ValueError:
+        await query_cb.answer("⚠️ Noto'g'ri sahifa.", show_alert=True)
+        return
+
+    await query_cb.answer()
+    results = session["results"]
+    await query_cb.edit_message_text(
+        f"🎵 \"{session.get('query', '')}\" bo'yicha {len(results)} ta natija topildi — birini tanlang:",
+        reply_markup=_build_results_markup(session_id, results, page=page),
+    )
 
 
 async def qoshiq_choice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
