@@ -34,6 +34,7 @@ from telegram.ext import (
 
 import config
 from config import TELEGRAM_TOKEN, PUBLIC_BASE_URL
+import pending_input
 import wallet
 import payment_providers
 import webapp_security
@@ -113,6 +114,22 @@ async def _post_init(application):
         reminders.reschedule_all(application)
     except Exception as e:
         logger.error(f"⏰ Eslatmalarni qayta rejalashtirishda xato: {type(e).__name__}: {e}", exc_info=True)
+
+
+async def _clear_pending_on_other_command(update, context):
+    """"/qo'shiq" yoki "/vid" argumentsiz yuborilib, bot navbatdagi
+    xabarni kutayotgan bo'lsa-yu, foydalanuvchi shu o'rniga BOSHQA
+    buyruq ("/start", "/vid", "/help" va h.k.) yuborsa — eski kutish
+    holati shu yerda bekor qilinadi (guruh=-1: har doim eng BIRINCHI
+    ishlaydi, keyin oddiy add_handler(group=0) navbati bilan tegishli
+    buyruq handleri — masalan CommandHandler("vid", ...) — normal davom
+    etadi). Agar aynan "/qoshiq" yoki "/vid" qayta yuborilgan bo'lsa, bu
+    shunchaki eski holatni tozalaydi — tegishli handler o'zi kerak
+    bo'lsa YANGI kutish holatini qayta o'rnatadi, hech qanday
+    ziddiyat yo'q."""
+    if not update.message or not update.effective_chat or not update.effective_user:
+        return
+    pending_input.clear_pending(update.effective_chat.id, update.effective_user.id)
 
 
 async def _error_handler(update, context):
@@ -842,6 +859,12 @@ def main():
     global _MAIN_LOOP, _BOT_INSTANCE
     _MAIN_LOOP = loop
     _BOT_INSTANCE = app.bot
+
+    # ⏳ "/qoshiq"/"/vid" ikki bosqichli kiritishning kutish holatini
+    # BOSHQA istalgan buyruq kelganda bekor qiladi — group=-1 bo'lgani
+    # uchun BARCHA quyidagi (group=0) buyruq handlerlaridan OLDIN, lekin
+    # ularni to'xtatmasdan (block qilmasdan) ishlaydi.
+    app.add_handler(MessageHandler(filters.COMMAND, _clear_pending_on_other_command), group=-1)
 
     app.add_handler(CommandHandler("start", menu.start_cmd))
     app.add_handler(CommandHandler("cancel", menu.cancel_cmd))
