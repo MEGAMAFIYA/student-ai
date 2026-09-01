@@ -82,7 +82,24 @@ def _format_title(msg) -> str:
     return (msg.text or "Noma'lum audio")[:80]
 
 
-async def _search_channel(client, channel: str, query: str, limit: int) -> list[dict]:
+async def _channel_display_title(client, channel: str) -> str | None:
+    """Kanalning HAQIQIY ko'rsatiladigan nomini (masalan "Muzikalar
+    UzMuz") oladi — natijalar ro'yxatida "Artist — Qo'shiq — Kanal"
+    formatidagi "Kanal" qismi shu (username emas, chunki username
+    ko'pincha o'qib bo'lmaydigan/notanish bo'ladi). Topib bo'lmasa (kanal
+    o'chirilgan, kirish yo'q va h.k.) `None` qaytaradi — bunday holda
+    natija kanal nomisiz (faqat sarlavha bilan) ko'rsatiladi, hech qanday
+    "None"/generik qiymat QO'YILMAYDI."""
+    try:
+        entity = await client.get_entity(channel)
+        title = (getattr(entity, "title", "") or "").strip()
+        return title or None
+    except Exception as e:
+        logger.warning(f"📡 Telegram: '{channel}' kanal nomini olib bo'lmadi: {type(e).__name__}: {e}")
+        return None
+
+
+async def _search_channel(client, channel: str, query: str, limit: int, channel_title: str | None) -> list[dict]:
     """Bitta public kanal ICHIDA qidiradi. Kanal topilmasa/kira
     bo'lmasa yoki boshqa xato bo'lsa — BO'SH RO'YXAT qaytaradi (bitta
     kanalning muammosi qolganlarini to'xtatmasin)."""
@@ -98,6 +115,12 @@ async def _search_channel(client, channel: str, query: str, limit: int) -> list[
                 "title": _format_title(msg)[:120],
                 "duration": msg.file.duration if msg.file else None,
                 "uploader": (msg.file.performer if msg.file else "") or "",
+                # "channel" — ro'yxatda ko'rsatiladigan HAQIQIY kanal nomi
+                # (masalan "Muzikalar UzMuz"), performer/ijrochi EMAS —
+                # ular allaqachon "title" ichida bor bo'lishi mumkin
+                # (qarang: _format_title). Topilmasa — None (qarang:
+                # video_tools.display_channel()).
+                "channel": channel_title,
                 # Foydalanuvchiga ko'rsatish/log uchun — YUKLASH uchun
                 # emas (yuklash aynan tg_channel+tg_message_id orqali,
                 # qarang: download_public_audio()).
@@ -126,7 +149,8 @@ async def _search_public_audio_async(query: str, count: int) -> list[dict]:
         per_channel = max(1, -(-count // max(1, len(config.TG_SEARCH_CHANNELS))))
         results: list[dict] = []
         for channel in config.TG_SEARCH_CHANNELS:
-            results.extend(await _search_channel(client, channel, query, per_channel))
+            channel_title = await _channel_display_title(client, channel)
+            results.extend(await _search_channel(client, channel, query, per_channel, channel_title))
         return results[:count]
     finally:
         await client.disconnect()
