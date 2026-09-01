@@ -607,13 +607,20 @@ def search_tracks(query: str, count: int) -> list[dict]:
                     logger.info(f"🎵 SoundCloud trek ro'yxatdan chiqarib tashlandi (bloklangan): {webpage_url} — {blocked_reason}")
                     continue
 
+            uploader = (e.get("uploader") or "").strip()
             merged.append({
                 "source_id": src["id"],
                 "source_label": src["label"],
                 "source_emoji": src["emoji"],
                 "title": (e.get("title") or "Noma'lum").strip(),
                 "duration": e.get("duration"),
-                "uploader": (e.get("uploader") or "").strip(),
+                "uploader": uploader,
+                # "channel" — natijalar ro'yxatida KO'RSATISH uchun (Artist —
+                # Song — Channel formatida). Faqat HAQIQIY nom bo'lsa
+                # to'ldiriladi ("uploader"dan farqli, hech qachon manba
+                # nomining o'zi ("YouTube"/"Telegram") bilan bir xil
+                # bo'lmaydi — qarang: _display_channel()).
+                "channel": uploader or None,
                 "webpage_url": webpage_url,
             })
 
@@ -642,7 +649,61 @@ def search_tracks(query: str, count: int) -> list[dict]:
             )
         raise DownloadError(f"❌ \"{query}\" bo'yicha hech qanday manbada natija topilmadi.")
 
-    return merged[:count]
+    return _dedupe_tracks(merged)[:count]
+
+
+def _normalize_for_dedupe(text: str) -> str:
+    return "".join(ch for ch in text.lower() if ch.isalnum())
+
+
+def _dedupe_tracks(tracks: list[dict]) -> list[dict]:
+    """Bir xil qo'shiq bir nechta manbada chiqsa (masalan xuddi shu
+    trek YouTube'da HAM, Telegram'da HAM topilsa), faqat BIRINCHISINI
+    qoldiramiz — sarlavha (deyarli bir xil) + davomiylik (bor bo'lsa, 3
+    soniyagacha farq bilan) bo'yicha taqqoslaymiz. Manba o'zgacha
+    bo'lgani uchun URL solishtirish ishlamaydi, shu sabab sarlavha
+    asosida taxminiy taqqoslash ishlatiladi."""
+    seen: list[tuple[str, int]] = []
+    out: list[dict] = []
+    for t in tracks:
+        key_title = _normalize_for_dedupe(t["title"])
+        dur = t.get("duration") or 0
+        is_dup = False
+        for seen_title, seen_dur in seen:
+            if seen_title == key_title and (not dur or not seen_dur or abs(dur - seen_dur) <= 3):
+                is_dup = True
+                break
+        if is_dup:
+            continue
+        seen.append((key_title, dur))
+        out.append(t)
+    return out
+
+
+def display_channel(track: dict) -> str | None:
+    """`track["channel"]` — faqat HAQIQIY, mazmunli qiymat bo'lsagina
+    qaytariladi. Bo'sh/`None`/manba nomining o'zi ("YouTube", "Telegram",
+    "SoundCloud", "Web") kabi keraksiz/chalkash qiymatlar hech qachon
+    qaytarilmaydi — shu orqali "Artist — Song — Telegram" yoki
+    "Artist — Song — None" kabi noto'g'ri formatlar oldini olamiz
+    (qarang: talab #3)."""
+    channel = (track.get("channel") or "").strip()
+    if not channel:
+        return None
+    if channel.lower() in {"none", "noma'lum", (track.get("source_label") or "").lower()}:
+        return None
+    return channel
+
+
+def format_track_label(track: dict, max_len: int = 64) -> str:
+    """Ro'yxat/tugma/xabarlarda ko'rsatiladigan yagona format:
+    "Sarlavha — Kanal" (kanal mavjud bo'lsagina), aks holda faqat
+    "Sarlavha". Barcha joyda (handlers/qoshiq.py, handlers/inline_query.py)
+    SHU funksiya orqali chiqariladi — formatlar orasida farq bo'lmasin."""
+    title = track["title"]
+    channel = display_channel(track)
+    label = f"{title} — {channel}" if channel else title
+    return label[:max_len]
 
 
 # ============================================================
