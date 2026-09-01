@@ -303,15 +303,28 @@ async def on_inline_query(
             result_id = str(uuid.uuid4())
             cache[result_id] = {"type": "qoshiq", "url": t["webpage_url"], "title": t["title"], "uploader": t.get("uploader")}
             channel = video_tools.display_channel(t)
+            # 🎧 Haqiqiy ("20-30 soniyalik") audio preview'ni bot ichida
+            # ijro etib bo'lmaydi (Telegram inline natijalari faqat
+            # HUJJAT/matn qaytara oladi, alohida audio-stream imkoniyati
+            # yo'q) — shu sabab, foydalanuvchi hali yuklamasdan turib
+            # eshitib ko'rishi uchun, ENG YAQIN haqiqiy yechim: manbaning
+            # o'zidagi sahifaga (YouTube/SoundCloud/Telegram post) to'g'ridan
+            # to'g'ri havola beramiz (talab #4 — "preview mavjud emas"
+            # holatini soxta imkoniyat bilan almashtirmaslik).
+            preview_markup = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🎧 Manbada eshitish", url=t["webpage_url"])],
+                [InlineKeyboardButton("🤖 Talaba AI", url=f"https://t.me/{BOT_USERNAME}")],
+            ])
             results.append(
                 InlineQueryResultDocument(
                     id=result_id,
-                    title=f"{t['source_emoji']} {video_tools.format_track_label(t, max_len=60)}",
-                    description=channel or t["source_label"],
+                    title=f"🎵 {video_tools.format_track_label(t, max_len=60)}",
+                    description=f"{t['source_emoji']} {channel or t['source_label']}",
                     document_url=f"{PUBLIC_BASE_URL}/placeholder.pdf",
                     mime_type="application/pdf",
+                    thumbnail_url=f"{PUBLIC_BASE_URL}/music_icon.png",
                     caption=f"⏳ \"{t['title']}\" yuklab olinmoqda...",
-                    reply_markup=INLINE_MESSAGE_MARKUP,
+                    reply_markup=preview_markup,
                 )
             )
         await update.inline_query.answer(results, cache_time=0, is_personal=True)
@@ -982,24 +995,50 @@ async def _fail_inline_media(context: ContextTypes.DEFAULT_TYPE, inline_message_
     o'sha placeholder MEDIA'ning o'zi kichik, aniq nomli ("xatolik.txt")
     matn hujjati bilan ALMASHTIRILADI — foydalanuvchi hech qachon
     "placeholder.pdf" nomli faylni oxirgi natija sifatida ko'rmaydi."""
-    error_file = io.BytesIO(error_text.encode("utf-8"))
     try:
         await context.bot.edit_message_media(
             inline_message_id=inline_message_id,
             media=InputMediaDocument(
-                media=InputFile(error_file, filename="xatolik.txt"),
+                media=InputFile(io.BytesIO(error_text.encode("utf-8")), filename="xatolik.txt"),
                 caption=error_text[:1024],
             ),
             reply_markup=INLINE_MESSAGE_MARKUP,
         )
+        return
     except Exception as e:
-        logger.warning(f"🔍 Inline xato xabarini media orqali ko'rsatib bo'lmadi, caption bilan urinildi: {type(e).__name__}: {e}")
-        try:
-            await context.bot.edit_message_caption(
-                inline_message_id=inline_message_id, caption=error_text[:1024], reply_markup=INLINE_MESSAGE_MARKUP,
-            )
-        except Exception:
-            pass
+        # ⚠️ ANIQ sababni to'liq (traceback bilan) logga yozamiz — talab
+        # #11/#20: "muammoni yashirma". Bu chaqiruv muvaffaqiyatsiz bo'lsa,
+        # keyingi urinish(lar)dan OLDIN sabab albatta ko'rinadi.
+        logger.error(f"🔍 Inline xato xabarini media orqali ko'rsatib bo'lmadi (birinchi urinish): {type(e).__name__}: {e}", exc_info=True)
+
+    # 🔁 IKKINCHI urinish — YANGI BytesIO obyekti bilan (birinchisi allaqachon
+    # o'qilgan/tugagan bo'lishi mumkin) va soddaroq (caption'siz) media —
+    # ba'zan aynan caption uzunligi/parse xatosi sabab bo'lishi mumkin.
+    try:
+        await context.bot.edit_message_media(
+            inline_message_id=inline_message_id,
+            media=InputMediaDocument(
+                media=InputFile(io.BytesIO(error_text.encode("utf-8")), filename="xatolik.txt"),
+            ),
+            reply_markup=INLINE_MESSAGE_MARKUP,
+        )
+        return
+    except Exception as e:
+        logger.error(f"🔍 Inline xato xabarini media orqali ko'rsatib bo'lmadi (ikkinchi urinish): {type(e).__name__}: {e}", exc_info=True)
+
+    # 🆘 OXIRGI CHORA: faqat caption'ni yangilaymiz. MUHIM CHEKLOV: bu
+    # holatda foydalanuvchi baribir asl "placeholder.pdf" faylini (xato
+    # matni bilan birga) ko'rishi mumkin — Telegram API'da buni to'liq
+    # oldini olishning boshqa yo'li yo'q (agar edit_message_media ikki
+    # marta ham muvaffaqiyatsiz bo'lsa). Shu sabab bu holat Render
+    # loglarida albatta ko'rinadi (yuqoridagi ikkita logger.error) — admin
+    # aniq sababni topa oladi.
+    try:
+        await context.bot.edit_message_caption(
+            inline_message_id=inline_message_id, caption=error_text[:1024], reply_markup=INLINE_MESSAGE_MARKUP,
+        )
+    except Exception as e:
+        logger.error(f"🔍 Inline xato xabarini caption orqali ham yangilab bo'lmadi: {type(e).__name__}: {e}", exc_info=True)
 
 
 async def _handle_vid(
@@ -1273,14 +1312,4 @@ async def _schedule_inline_pro_revert(context: ContextTypes.DEFAULT_TYPE, inline
             inline_message_id=inline_message_id,
             media=InputMediaDocument(
                 media=f"{PUBLIC_BASE_URL}/placeholder.pdf",
-                caption=pro_tabrik_logic.build_ready_card(),
-            ),
-            reply_markup=_pro_ready_markup(short_id),
-        )
-        logger.info(f"🔍 Inline /pro xabari asl holatga qaytarildi (inline_message_id={inline_message_id}).")
-    except asyncio.CancelledError:
-        raise
-    except Exception as e:
-        logger.warning(f"🔍 Inline /pro xabarini asl holatga qaytarishda xato: {type(e).__name__}: {e}")
-    finally:
-        _INLINE_PRO_REVERT_TASKS.pop(inline_message_id, None)
+              
