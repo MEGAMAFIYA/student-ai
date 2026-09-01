@@ -168,3 +168,89 @@ def search_public_audio(query: str, count: int) -> list[dict]:
 
 def download_public_audio(tg_channel: str, tg_message_id: int, dest_path: str) -> str:
     return asyncio.run(_download_public_audio_async(tg_channel, tg_message_id, dest_path))
+
+
+# ============================================================
+# 🔍 /developer > 🎵 Qo'shiq qidirish > "Tekshirish" uchun.
+# ============================================================
+
+async def _check_telegram_async() -> dict:
+    """Haqiqiy MTProto ulanishini ochib, sessiya tasdiqlanganini va HAR
+    BIR sozlangan kanalga kirish mumkinligini (get_entity — yengil,
+    xabarlarni yuklab olmaydi) tekshiradi. Bitta kanal muammosi
+    qolganlarini to'xtatmaydi."""
+    client = _new_client()
+    await client.connect()
+    try:
+        authorized = await client.is_user_authorized()
+        if not authorized:
+            return {"authorized": False, "ok_channels": 0, "bad_channels": []}
+        ok_channels = 0
+        bad_channels: list[tuple[str, str]] = []
+        for channel in config.TG_SEARCH_CHANNELS:
+            try:
+                await client.get_entity(channel)
+                ok_channels += 1
+            except Exception as e:
+                bad_channels.append((channel, f"{type(e).__name__}: {e}"))
+        return {"authorized": True, "ok_channels": ok_channels, "bad_channels": bad_channels}
+    finally:
+        await client.disconnect()
+
+
+def check_telegram_music_search() -> dict:
+    """Qaytaradi: {"status": "off"|"ok"|"partial"|"error", "lines": [...]}.
+    MAXFIY qiymatlarni (TG_SESSION, TG_API_HASH) HECH QACHON to'liq
+    ko'rsatmaydi — faqat mavjud/mavjud emasligini ("✅ Mavjud" / "❌ Mavjud
+    emas")."""
+    if not config.is_music_source_enabled("telegram"):
+        return {"status": "off", "lines": ["Holati: OFF (admin tomonidan o'chirilgan)"]}
+
+    lines = ["Holati: ON"]
+    missing = []
+    if not config.TG_API_ID:
+        missing.append("TG_API_ID")
+    if not config.TG_API_HASH:
+        missing.append("TG_API_HASH")
+    if not config.TG_SESSION:
+        missing.append("TG_SESSION")
+    if not config.TG_SEARCH_CHANNELS:
+        missing.append("TG_SEARCH_CHANNELS")
+
+    lines.append(f"TG_API_ID: {'✅ Mavjud' if config.TG_API_ID else '❌ Mavjud emas'}")
+    lines.append(f"TG_API_HASH: {'✅ Mavjud' if config.TG_API_HASH else '❌ Mavjud emas'}")
+    lines.append(f"TG_SESSION: {'✅ Mavjud' if config.TG_SESSION else '❌ Mavjud emas'}")
+    lines.append(
+        f"TG_SEARCH_CHANNELS: {len(config.TG_SEARCH_CHANNELS)} ta kanal sozlangan"
+        if config.TG_SEARCH_CHANNELS else "TG_SEARCH_CHANNELS: ❌ Mavjud emas"
+    )
+
+    if missing:
+        lines.append(f"Sabab: {', '.join(missing)} sozlanmagan")
+        return {"status": "error", "lines": lines}
+
+    if not TELETHON_AVAILABLE:
+        lines.append("Sabab: 'telethon' kutubxonasi o'rnatilmagan")
+        return {"status": "error", "lines": lines}
+
+    try:
+        result = asyncio.run(_check_telegram_async())
+    except Exception as e:
+        logger.error(f"📡 Telegram tekshiruvida kutilmagan xato: {type(e).__name__}: {e}", exc_info=True)
+        lines.append(f"Sabab: {type(e).__name__}: {e}")
+        return {"status": "error", "lines": lines}
+
+    if not result["authorized"]:
+        lines.append("Ulanish: ❌\nSabab: sessiya tasdiqlanmagan (TG_SESSION eskirgan/yaroqsiz)")
+        return {"status": "error", "lines": lines}
+
+    lines.append("Ulanish: ✅ OK")
+    ok_channels, bad_channels = result["ok_channels"], result["bad_channels"]
+    if bad_channels:
+        lines.append(f"Qidiruv: 🟡 ({ok_channels} ta kanal OK, {len(bad_channels)} ta muammoli)")
+        for ch, reason in bad_channels:
+            lines.append(f"  ⚠️ @{ch}: {reason}")
+        return {"status": "partial", "lines": lines}
+
+    lines.append(f"Qidiruv: ✅ ({ok_channels} ta kanal)")
+    return {"status": "ok", "lines": lines}
