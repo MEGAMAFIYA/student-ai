@@ -19,3 +19,5 @@ psycopg2-binary==2.9.10
 yt-dlp[default,curl-cffi]>=2026.08.19
 
 imageio-ffmpeg>=0.5.1
+
+telethon>=1.44.0
