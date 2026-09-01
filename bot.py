@@ -19,6 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread, Timer
 
+import telegram.error
 from telegram import BotCommand, BotCommandScopeDefault, BotCommandScopeAllGroupChats, BotCommandScopeChat, InlineQueryResultPhoto
 from telegram.ext import (
     ApplicationBuilder,
@@ -966,7 +967,35 @@ def main():
     app.add_error_handler(_error_handler)
 
     print("✅ Bot tayyor! /start yuboring.")
-    app.run_polling()
+    # drop_pending_updates=True: ishga tushganda (ayniqsa Render'da QAYTA
+    # DEPLOY qilingandan keyin) eski/navbatdagi update'larni tashlab
+    # yuboradi va getUpdates seansini "toza" boshlaydi — bu ba'zida
+    # "Conflict: terminated by other getUpdates request" xatosining oldini
+    # olishga yordam beradi, agar u eski jarayon hali TO'LIQ to'xtamagan
+    # bir lahzali qisqa muddatli overlapdan kelib chiqqan bo'lsa.
+    #
+    # MUHIM: agar bu xato DOIMIY ravishda takrorlansa, sabab kodda EMAS —
+    # bu HAR DOIM bir xil TELEGRAM_TOKEN bilan BIR VAQTNING O'ZIDA IKKITA
+    # (yoki ko'proq) bot jarayoni ishlab turgani (masalan: Render'da bir
+    # xil token bilan ikkita alohida servis/environment, yoki eski deploy
+    # hali to'liq to'xtamagan, yoki kimdir shu tokenni mahalliy kompyuterda
+    # ham ishga tushirgan). Bu holatda Render dashboard'ni tekshiring:
+    # (1) shu TELEGRAM_TOKEN faqat BITTA servisda ishlatilayotganini,
+    # (2) "Instance Count"/scaling 1 taga sozlanganini,
+    # (3) eski deploylar/preview environment'lar to'xtatilganini
+    # tasdiqlang. Bu fayldagi main()/run_polling() FAQAT BIR MARTA,
+    # FAQAT `if __name__ == "__main__":` ostida chaqiriladi — kodda
+    # ikkinchi instansiya yaratadigan joy yo'q.
+    try:
+        app.run_polling(drop_pending_updates=True)
+    except telegram.error.Conflict as e:
+        logger.critical(
+            "🚫 Telegram Conflict: boshqa bir jarayon HAM shu TELEGRAM_TOKEN bilan "
+            "getUpdates so'rovini yubormoqda — ikkita bot instansiyasi bir vaqtda "
+            "ishlab turibdi. Render dashboard'da duplicate servis/deploy yoki "
+            f"boshqa joyda ishlab turgan instansiyani tekshiring. Tafsilot: {e}"
+        )
+        raise
 
 
 if __name__ == "__main__":
