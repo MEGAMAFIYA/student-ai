@@ -209,9 +209,11 @@ def _run_youtube_with_retries(build_opts_fn, url: str) -> None:
     """`build_opts_fn(youtube_opts) -> ydl_opts` — chaqiruvchi o'z asosiy
     ydl_opts'ini (`format`, `outtmpl` va h.k.) shu funksiya orqali
     yig'adi, `youtube_opts` esa har urinishda boshqacha (bitta)
-    player_client bilan almashtiriladi. Bot-tekshiruv xatosiga
-    uchraganda keyingi client bilan qayta urinadi; bot-tekshiruv
-    bo'lmagan xato (masalan private video) darhol ko'tariladi —
+    player_client bilan almashtiriladi. Bot-tekshiruv XATOSIGA ham,
+    "format topilmadi" XATOSIGA ham (ikkalasi ham ko'pincha faqat
+    TANLANGAN client'ga xos — boshqa client bilan yechilishi mumkin)
+    keyingi client bilan qayta urinadi; chindan HAM doimiy xato bo'lsa
+    (masalan private video, o'chirilgan video, DRM) darhol ko'tariladi —
     urinishlarni behuda sarflamaslik uchun. Cookies fayli mavjud bo'lsa
     birinchi urinishning o'zi odatda yetarli bo'ladi."""
     last_exc: Exception | None = None
@@ -223,9 +225,9 @@ def _run_youtube_with_retries(build_opts_fn, url: str) -> None:
             return
         except yt_dlp.utils.DownloadError as e:
             last_exc = e
-            if not _is_bot_check_error(e):
-                raise  # bot-tekshiruv bo'lmagan xato — qayta urinish foydasiz
-            logger.warning(f"🎬 YouTube '{client}' client bilan bot-tekshiruvga uchradi, keyingisi sinaladi ({url}).")
+            if not _is_retryable_per_client_error(e):
+                raise  # doimiy xato — qayta urinish foydasiz
+            logger.warning(f"🎬 YouTube '{client}' client bilan muammoga uchradi ({e}), keyingisi sinaladi ({url}).")
             continue
     raise last_exc
 
@@ -237,6 +239,21 @@ class DownloadError(Exception):
 def _is_bot_check_error(exc: Exception) -> bool:
     msg = str(exc).lower()
     return "sign in to confirm" in msg or "not a bot" in msg
+
+
+def _is_retryable_per_client_error(exc: Exception) -> bool:
+    """True bo'lsa — bu xato ko'pincha FAQAT tanlangan bitta
+    `player_client`ga xos (YouTube ba'zi client'lar uchun ba'zi
+    videolarda, ayniqsa Shorts'da, formatlar RO'YXATINI to'liq
+    bermaydi), shu sabab BOSHQA client bilan qayta urinishga arziydi.
+    False bo'lsa — xato videoning o'zi bilan bog'liq (private,
+    o'chirilgan, DRM va h.k.) va HAR QANDAY client bilan bir xil
+    natija beradi, shu sabab qayta urinish vaqt yo'qotishdan boshqa
+    narsa emas."""
+    if _is_bot_check_error(exc):
+        return True
+    msg = str(exc).lower()
+    return "requested format is not available" in msg
 
 
 def _is_drm_error(exc: Exception) -> bool:
@@ -321,6 +338,31 @@ def _enforce_size_limit(filepath: str, max_mb: int) -> None:
 # 🎬 /vid — video yuklab olish
 # ============================================================
 
+def _log_available_formats_debug(url: str) -> None:
+    """DIAGNOSTIKA UCHUN: hech qanday "format" selectorisiz, videoning
+    O'ZI qanday formatlarni taklif qilishini aniqlab, logga yozadi.
+    Faqat "Requested format is not available" xatosi BARCHA client
+    urinishlaridan keyin ham davom etganda chaqiriladi — maqsad, keyingi
+    safar taxmin qilish o'rniga ANIQ dalil (format_id/kodek/protokol)
+    bilan tuzatish. Bu funksiya hech narsa yuklab olmaydi (skip_download),
+    shu sabab asosiy oqimga xavfsiz — o'zi xato bersa ham jimgina
+    o'tkazib yuboriladi."""
+    try:
+        opts = {"quiet": True, "no_warnings": True, "skip_download": True, "noplaylist": True}
+        if YOUTUBE_COOKIES_FILE:
+            opts["cookiefile"] = YOUTUBE_COOKIES_FILE
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+        formats = (info or {}).get("formats") or []
+        summary = [
+            f"{f.get('format_id')}|{f.get('ext')}|v={f.get('vcodec')}|a={f.get('acodec')}|proto={f.get('protocol')}"
+            for f in formats
+        ]
+        logger.error(f"🔍 Diagnostika — {url}: {len(formats)} ta xom format topildi -> {summary}")
+    except Exception as diag_exc:
+        logger.warning(f"🔍 Diagnostika ham muvaffaqiyatsiz bo'ldi ({url}): {diag_exc}")
+
+
 def download_video(url: str, dest_dir: str, max_mb: int, timeout_sec: int) -> str:
     """`url`dan videoni `dest_dir` ichiga yuklab, tayyor fayl yo'lini
     qaytaradi. Xatolikda `DownloadError` (foydalanuvchiga ko'rsatiladigan
@@ -399,6 +441,8 @@ def download_video(url: str, dest_dir: str, max_mb: int, timeout_sec: int) -> st
     except yt_dlp.utils.DownloadError as e:
         reason = _classify_ytdlp_error(e)
         logger.error(f"🎬 /vid yuklab olishda xato ({url}) — sabab: {reason} | asl xato: {e}")
+        if is_youtube and "requested format is not available" in str(e).lower():
+            _log_available_formats_debug(url)
         raise DownloadError(f"❌ Video yuklab bo'lmadi.\n\nSabab: {reason}.") from e
     except Exception as e:
         logger.error(f"🎬 /vid kutilmagan xato ({url}): {type(e).__name__}: {e}", exc_info=True)
@@ -619,6 +663,8 @@ def download_audio(url: str, dest_dir: str, max_mb: int, timeout_sec: int) -> st
     except yt_dlp.utils.DownloadError as e:
         reason = _classify_ytdlp_error(e)
         logger.error(f"🎵 /qo'shiq audio yuklab olishda xato ({url}) — sabab: {reason} | asl xato: {e}")
+        if is_youtube and "requested format is not available" in str(e).lower():
+            _log_available_formats_debug(url)
         raise DownloadError(f"❌ Bu qo'shiqni yuklab bo'lmadi.\n\nSabab: {reason}.") from e
     except Exception as e:
         logger.error(f"🎵 /qo'shiq audio yuklab olishda kutilmagan xato ({url}): {type(e).__name__}: {e}", exc_info=True)
