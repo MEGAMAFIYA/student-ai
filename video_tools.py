@@ -207,31 +207,6 @@ def _youtube_retry_clients() -> list[str]:
     return _YOUTUBE_CLIENTS_WITH_COOKIES if YOUTUBE_COOKIES_FILE else _YOUTUBE_CLIENTS_NO_COOKIES
 
 
-def _run_youtube_with_retries(build_opts_fn, url: str) -> None:
-    """`build_opts_fn(youtube_opts) -> ydl_opts` — chaqiruvchi o'z asosiy
-    ydl_opts'ini (`format`, `outtmpl` va h.k.) shu funksiya orqali
-    yig'adi, `youtube_opts` esa har urinishda boshqacha (bitta)
-    player_client bilan almashtiriladi. Bot-tekshiruv xatosiga
-    uchraganda keyingi client bilan qayta urinadi; bot-tekshiruv
-    bo'lmagan xato (masalan private video) darhol ko'tariladi —
-    urinishlarni behuda sarflamaslik uchun. Cookies fayli mavjud bo'lsa
-    birinchi urinishning o'zi odatda yetarli bo'ladi."""
-    last_exc: Exception | None = None
-    for client in _youtube_retry_clients():
-        ydl_opts = build_opts_fn(_youtube_extra_opts(player_client=[client]))
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
-            return
-        except yt_dlp.utils.DownloadError as e:
-            last_exc = e
-            if not _is_bot_check_error(e):
-                raise  # bot-tekshiruv bo'lmagan xato — qayta urinish foydasiz
-            logger.warning(f"🎬 YouTube '{client}' client bilan bot-tekshiruvga uchradi, keyingisi sinaladi ({url}).")
-            continue
-    raise last_exc
-
-
 class DownloadError(Exception):
     """Foydalanuvchiga ko'rsatsa bo'ladigan, tushunarli xabar bilan xato."""
 
@@ -241,8 +216,79 @@ def _is_bot_check_error(exc: Exception) -> bool:
     return "sign in to confirm" in msg or "not a bot" in msg
 
 
+def _is_no_formats_error(exc: Exception) -> bool:
+    """YouTube'ning 2024-2025'dagi "PO Token"/SABR o'zgarishlaridan beri
+    ba'zi innertube client'lar (ayniqsa "android"/"ios") ko'p videolar
+    uchun formatlar ro'yxatini BUTUNLAY BO'SH qaytarmoqda (bot-tekshiruv
+    xatosi CHIQARMASDAN) — natijada yt-dlp "Requested format is not
+    available"/"No video formats found" bilan yiqiladi, garchi video
+    o'zi ochiq va boshqa client (masalan "tv"/"mweb"/"web_safari")
+    orqali SO'RALGANDA formatlar to'liq kelishi mumkin bo'lsa ham. Shu
+    sabab bu ham (bot-tekshiruv kabi) "keyingi client'ni sinab ko'rish
+    kerak" degan signal — client-SPETSIFIK muammo, videoning o'zidagi
+    muammo emas."""
+    msg = str(exc).lower()
+    return (
+        "requested format is not available" in msg
+        or "no video formats found" in msg
+        or "no formats found" in msg
+    )
+
+
 def _is_drm_error(exc: Exception) -> bool:
     return "drm protected" in str(exc).lower()
+
+
+def _is_retryable_client_error(exc: Exception) -> bool:
+    """True bo'lsa — bu xato ANIQ shu client'ga xos (bot-tekshiruv yoki
+    formatlar ro'yxati bo'sh qaytishi) va KEYINGI client bilan qayta
+    urinish ma'noli. False bo'lsa — xato videoning o'zida (private,
+    DRM, geo-blok va h.k.) — boshqa client bilan urinish FOYDASIZ,
+    darhol yuqoriga ko'tariladi (vaqt/log isrof qilmaslik uchun)."""
+    return _is_bot_check_error(exc) or _is_no_formats_error(exc)
+
+
+def _youtube_run_with_client_retries(action_fn, log_context: str):
+    """UMUMIY qayta urinish mantig'i — download (`_run_youtube_with_retries`),
+    qidiruv (`_search_one_source`) VA health-check (`check_youtube_music_search`)
+    UCHALASI HAM shu bitta funksiya orqali ishlaydi (duplicate yo'q).
+
+    `action_fn(youtube_opts) -> natija` — chaqiruvchi o'z amalini
+    (`ydl.download(...)` yoki `ydl.extract_info(...)`) shu yerda
+    bajaradi, `youtube_opts` esa har urinishda BOSHQACHA (bitta)
+    player_client bilan to'ldirilgan bo'ladi.
+
+    Har urinishda `_is_retryable_client_error` True bo'lsa (bot-tekshiruv
+    YOKI formatlar ro'yxati bo'sh) — bu ANIQ o'sha CLIENT'ning
+    cheklovi deb hisoblanadi va KEYINGI client sinaladi. Boshqa har
+    qanday xato (private video, DRM va h.k.) — bu videoning o'zidagi
+    muammo, DARHOL ko'tariladi."""
+    last_exc: Exception | None = None
+    for client in _youtube_retry_clients():
+        try:
+            return action_fn(_youtube_extra_opts(player_client=[client]))
+        except yt_dlp.utils.DownloadError as e:
+            last_exc = e
+            if not _is_retryable_client_error(e):
+                raise  # videoning o'zidagi muammo — qayta urinish foydasiz
+            logger.warning(
+                f"🎬 YouTube '{client}' client bilan muammo ({log_context}): "
+                f"{_classify_ytdlp_error(e)} — keyingi client sinaladi."
+            )
+            continue
+    raise last_exc
+
+
+def _run_youtube_with_retries(build_opts_fn, url: str) -> None:
+    """`build_opts_fn(youtube_opts) -> ydl_opts` — chaqiruvchi o'z asosiy
+    ydl_opts'ini (`format`, `outtmpl` va h.k.) shu funksiya orqali
+    yig'adi. Qolgani — qarang: `_youtube_run_with_client_retries`."""
+    def action(youtube_opts: dict):
+        ydl_opts = build_opts_fn(youtube_opts)
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+        return None
+    _youtube_run_with_client_retries(action, url)
 
 
 def _classify_ytdlp_error(exc: Exception) -> str:
@@ -265,10 +311,12 @@ def _classify_ytdlp_error(exc: Exception) -> str:
         return "Bu havola/manba qo'llab-quvvatlanmaydi yoki sahifa tuzilishi o'zgargan"
     if "login" in low or "log in" in low or "authentication" in low:
         return "Bu kontentni ko'rish uchun manba tizimga kirishni (login/cookies) talab qilmoqda"
-    if "requested format is not available" in low:
+    if "requested format is not available" in low or "no video formats found" in low or "no formats found" in low:
         return (
-            "Bu video uchun mos video/audio format topilmadi (manba "
-            "tomonidan cheklangan yoki login/cookies talab qilinishi mumkin)"
+            "Bu video/audio uchun mos format topilmadi — barcha mavjud usullar "
+            "(YouTube bo'lsa, bir nechta client) bilan urinildi, lekin formatlar "
+            "ro'yxati bo'sh qaytdi (login/cookies talabi, mintaqaviy blok yoki "
+            "manba tomonidan cheklangan bo'lishi mumkin)"
         )
     if "age" in low and "restrict" in low:
         return "Video yosh chegarasi (age-restricted) bilan himoyalangan"
@@ -346,16 +394,27 @@ def download_video(url: str, dest_dir: str, max_mb: int, timeout_sec: int) -> st
             # progressiv "best"ga, oxirida cheklovsiz "best"ga tushamiz —
             # shu orqali YouTube'da MAVJUD bo'lgan eng yaxshi format
             # AVTOMATIK topiladi.
+            #
+            # MUHIM: `[filesize<NM]` filtri faylning ANIQ "filesize"
+            # maydoni bo'lishini talab qiladi — ko'p YouTube adaptiv
+            # oqimlarida bu maydon YO'Q, faqat taxminiy "filesize_approx"
+            # beriladi. yt-dlp bunday holda formatni SHUNCHAKI RAD ETADI
+            # (xato bermaydi, jimgina "mos emas" deydi) — natijada butun
+            # "/" zanjiridagi BIRINCHI variant hamisha bo'sh chiqib,
+            # keyingi variantga tushib qolaverishi mumkin edi. Shu sabab
+            # HAR BIR hajm-cheklovli variantdan keyin xuddi shunday, lekin
+            # "filesize_approx" bilan variant HAM qo'shildi.
             "format": (
                 f"bestvideo*[filesize<{max_mb}M]+bestaudio[filesize<{max_mb}M]/"
+                f"bestvideo*[filesize_approx<{max_mb}M]+bestaudio[filesize_approx<{max_mb}M]/"
                 "bestvideo*+bestaudio/"
-                f"best[filesize<{max_mb}M]/best"
+                f"best[filesize<{max_mb}M]/best[filesize_approx<{max_mb}M]/best"
                 if FFMPEG_AVAILABLE
                 # ffmpeg bo'lmasa video+audio'ni birlashtira olmaymiz —
                 # faqat allaqachon birlashtirilgan (progressiv) formatni
                 # so'raymiz, aks holda yuklab olingan fayl ovozsiz qolishi
                 # mumkin.
-                else f"best[filesize<{max_mb}M]/best"
+                else f"best[filesize<{max_mb}M]/best[filesize_approx<{max_mb}M]/best"
             ),
             "noplaylist": True,
             "quiet": True,
@@ -456,21 +515,11 @@ def _search_one_source(prefix: str, query: str, count: int) -> tuple[list[dict],
     is_youtube = prefix == "ytsearch"
     try:
         if is_youtube:
-            info = None
-            last_exc: Exception | None = None
-            for client in _youtube_retry_clients():
-                opts = {**base_opts, **_youtube_extra_opts(player_client=[client])}
-                try:
-                    with yt_dlp.YoutubeDL(opts) as ydl:
-                        info = ydl.extract_info(query, download=False)
-                    break
-                except Exception as e:
-                    last_exc = e
-                    if not _is_bot_check_error(e):
-                        raise
-                    continue
-            if info is None and last_exc is not None:
-                raise last_exc
+            def action(youtube_opts: dict):
+                opts = {**base_opts, **youtube_opts}
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    return ydl.extract_info(query, download=False)
+            info = _youtube_run_with_client_retries(action, f"qidiruv: '{query}'")
         else:
             with yt_dlp.YoutubeDL(base_opts) as ydl:
                 info = ydl.extract_info(query, download=False)
@@ -611,6 +660,7 @@ def check_youtube_music_search() -> dict:
 
     lines = ["Holati: ON", "yt-dlp: ✅ o'rnatilgan"]
     lines.append(f"Cookies: {'✅ topildi' if YOUTUBE_COOKIES_FILE else '⚠️ topilmadi (faqat player_client almashtirish bilan urinadi)'}")
+    lines.append(f"ffmpeg: {'✅ topildi' if FFMPEG_AVAILABLE else '❌ topilmadi'}")
 
     entries, err = _search_one_source("ytsearch", "test", 1)
     if err:
@@ -621,43 +671,61 @@ def check_youtube_music_search() -> dict:
         return {"status": "partial", "lines": lines}
     lines.append("Qidiruv: ✅")
 
-    if not FFMPEG_AVAILABLE:
-        lines.append("Yuklab olish: ❌\nSabab: ffmpeg topilmadi (MP3'ga o'tkazib bo'lmaydi)")
-        return {"status": "partial", "lines": lines}
-
     raw_ref = entries[0].get("webpage_url") or entries[0].get("url") or entries[0].get("id")
     test_url = raw_ref if (raw_ref and raw_ref.startswith("http")) else (f"https://www.youtube.com/watch?v={raw_ref}" if raw_ref else None)
     if not test_url:
-        lines.append("Yuklab olish: ⚠️ test video havolasi aniqlanmadi")
+        lines.append("Format olish: ⚠️ test video havolasi aniqlanmadi")
         return {"status": "partial", "lines": lines}
 
-    # Haqiqiy faylni yuklamasdan (trafik sarflamasdan), faqat format/kirish
-    # imkoniyatini tekshiramiz — bot-tekshiruv yoki login talabi kabi
-    # muammolarni aniqlash uchun bu yetarli.
-    probe_opts = {"quiet": True, "no_warnings": True, "skip_download": True, "noplaylist": True, "format": "bestaudio/best"}
+    # 1-QADAM: formatlar RO'YXATINI olamiz (hali yuklamasdan) — bu
+    # `download_audio()`'dagi bilan ALOHIDA tekshiruv, chunki "qidiruv
+    # ishlaydi" va "shu video uchun formatlar olinadi" ikki xil narsa
+    # (extract_flat qidiruv ba'zan formatlarsiz ham natija qaytaradi).
+    def probe_formats(youtube_opts: dict):
+        opts = {"quiet": True, "no_warnings": True, "skip_download": True, "noplaylist": True, **youtube_opts}
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            return ydl.extract_info(test_url, download=False)
+
     try:
-        last_exc: Exception | None = None
-        ok = False
-        for client in _youtube_retry_clients():
-            opts = {**probe_opts, **_youtube_extra_opts(player_client=[client])}
-            try:
-                with yt_dlp.YoutubeDL(opts) as ydl:
-                    ydl.extract_info(test_url, download=False)
-                ok = True
-                break
-            except Exception as e:
-                last_exc = e
-                if not _is_bot_check_error(e):
-                    raise
-                continue
-        if not ok and last_exc:
-            raise last_exc
+        info = _youtube_run_with_client_retries(probe_formats, f"format tekshiruvi: {test_url}")
     except Exception as e:
         reason = _classify_ytdlp_error(e)
-        lines.append(f"Yuklab olish: ❌\nSabab: {reason}")
+        logger.error(f"🎬 YouTube health-check: formatlar olinmadi ({test_url}) — sabab: {reason} | asl xato: {e}")
+        lines.append(f"Format olish: ❌\nSabab: {reason}")
         return {"status": "partial", "lines": lines}
 
-    lines.append("Yuklab olish: ✅")
+    all_formats = (info or {}).get("formats") or []
+    audio_formats = [f for f in all_formats if f.get("acodec") not in (None, "none")]
+    if not audio_formats and not all_formats:
+        lines.append("Format olish: ❌\nSabab: bu video uchun formatlar ro'yxati bo'sh qaytdi")
+        return {"status": "partial", "lines": lines}
+    lines.append(f"Audio formatlarni olish: ✅ ({len(audio_formats)} ta audio format topildi)")
+
+    if not FFMPEG_AVAILABLE:
+        lines.append("Test audio download: ❌\nSabab: ffmpeg topilmadi (MP3'ga o'tkazib bo'lmaydi)")
+        return {"status": "partial", "lines": lines}
+
+    # 2-QADAM: HAQIQIY mini test-yuklab olish — ishlab chiqarishda
+    # ishlatiladigan xuddi shu `download_audio()` funksiyasi orqali
+    # (alohida, soddalashtirilgan probe emas) — shu orqali format
+    # tanlash HAMDA ffmpeg orqali MP3'ga o'tkazishning o'zi ham real
+    # ishlashi tasdiqlanadi, keyin darhol o'chiriladi (foydalanuvchiga
+    # yuborilmaydi, faqat tekshiruv uchun).
+    test_dir = tempfile.mkdtemp(prefix="ytcheck_")
+    try:
+        download_audio(test_url, test_dir, max_mb=15, timeout_sec=30)
+        lines.append("Test audio download: ✅")
+    except DownloadError as e:
+        lines.append(f"Test audio download: ❌\nSabab: {e}")
+        return {"status": "partial", "lines": lines}
+    except Exception as e:
+        reason = _classify_ytdlp_error(e) if isinstance(e, yt_dlp.utils.DownloadError) else f"{type(e).__name__}: {e}"
+        logger.error(f"🎬 YouTube health-check: test yuklab olish muvaffaqiyatsiz ({test_url}): {type(e).__name__}: {e}", exc_info=True)
+        lines.append(f"Test audio download: ❌\nSabab: {reason}")
+        return {"status": "partial", "lines": lines}
+    finally:
+        shutil.rmtree(test_dir, ignore_errors=True)
+
     return {"status": "ok", "lines": lines}
 
 
@@ -728,7 +796,21 @@ def download_audio(url: str, dest_dir: str, max_mb: int, timeout_sec: int) -> st
     def build_opts(youtube_opts: dict) -> dict:
         opts = {
             "outtmpl": out_tmpl,
-            "format": f"bestaudio[filesize<{max_mb}M]/bestaudio/best",
+            # QATTIQ (bitta) formatga bog'lanmaymiz — moslashuvchan
+            # zanjir: avval hajm chegarasidan pastroq "bestaudio", keyin
+            # xuddi shu, lekin "filesize_approx" bilan (ko'p YouTube
+            # adaptiv audio oqimlarida ANIQ "filesize" YO'Q, faqat
+            # taxminiy qiymat bor — shu sabab faqat "filesize<NM]" bilan
+            # cheklansa bunday formatlar SHUNCHAKI o'tkazib yuborilardi),
+            # keyin hajm cheklovisiz "bestaudio", oxirida (agar audio-only
+            # format umuman topilmasa) allaqachon audio+video birga
+            # kelgan "best"ga tushamiz — shu orqali YouTube'da (yoki
+            # boshqa manbada) MAVJUD bo'lgan audio format AVTOMATIK
+            # tanlanadi, bitta qattiq formatga qaram bo'lib qolinmaydi.
+            "format": (
+                f"bestaudio[filesize<{max_mb}M]/bestaudio[filesize_approx<{max_mb}M]/"
+                f"bestaudio/best[filesize<{max_mb}M]/best[filesize_approx<{max_mb}M]/best"
+            ),
             "noplaylist": True,
             "quiet": True,
             "no_warnings": True,
