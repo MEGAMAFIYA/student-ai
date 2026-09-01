@@ -35,6 +35,7 @@ from handlers.vid import vid_cmd
 from handlers.qoshiq import qoshiq_cmd
 from handlers.pro_tabrik import pro_cmd
 from handlers.my_cabinet import my_cabinet_cmd, on_personal_key_text
+import pending_input
 import storage
 
 logger = logging.getLogger(__name__)
@@ -109,9 +110,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # yo'naltiramiz. Bu tekshiruv guruh "dase"/faollik holatidan MUSTAQIL
     # ishlaydi — xuddi /tabrik va /rasim (alohida CommandHandler) kabi,
     # bu 4 ta funksiya universal chatning yoqilgan/o'chirilganiga bog'liq
-    # emas.
+    # emas. MUHIM: bu tekshiruv pastdagi "kutish holati"dan OLDIN turadi —
+    # shunda foydalanuvchi "/vid" javobini kutayotgan bo'lsa-yu, o'rniga
+    # apostrofli "/qo'shiq ..." (Telegram buni bot_command deb
+    # belgilamagani uchun ham shu yerga tushadi) yuborsa, bu ANIQ "boshqa
+    # buyruq" sifatida tan olinadi (eski kutish holati bekor qilinib, YANGI
+    # buyruqqa o'tiladi) — pending javobi sifatida NOTO'G'RI talqin qilinmaydi.
     status, payload = mention_dispatch.resolve(user_text)
     if status == "command":
+        pending_input.clear_pending(chat.id, update.effective_user.id)
         handler_fn = SPECIAL_COMMAND_HANDLERS.get(payload.command)
         if handler_fn:
             logger.info(
@@ -120,6 +127,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             await handler_fn(update, context, override_text=payload.remainder_text)
             return
+
+    # ⏳ foydalanuvchi "/qo'shiq" yoki "/vid"ni argumentsiz yuborib, bot
+    # so'ragan navbatdagi so'rov/havolani kutayaptimi? (Yuqoridagi
+    # tekshiruvdan o'tgan bo'lsa — bu boshqa maxsus buyruq EMAS.) Bo'lsa —
+    # bu xabar to'g'ridan-to'g'ri o'sha buyruqning ASOSIY funksiyasiga
+    # yuboriladi (xuddi foydalanuvchi bir bosqichda "/qo'shiq <matn>"
+    # yozgandek), pastdagi "dase"/guruh faollik tekshiruvlaridan MUSTAQIL —
+    # chunki bu foydalanuvchining O'ZI boshlagan buyruqni yakunlash, guruh
+    # sozlamalariga bog'liq bo'lmasligi kerak. Holat FAQAT shu (chat_id,
+    # user_id) uchun va BIR MARTA ishlatiladi (qarang: pending_input.py) —
+    # parallel foydalanuvchilar/so'rovlar aralashmaydi.
+    pending_kind = pending_input.pop_pending(chat.id, update.effective_user.id)
+    if pending_kind == "qoshiq":
+        await qoshiq_cmd(update, context, override_text=user_text)
+        return
+    if pending_kind == "vid":
+        await vid_cmd(update, context, override_text=user_text)
+        return
 
     # Agar bot mention qilingan bo'lsa-yu, undan keyingi matn maxsus buyruq
     # bo'lmasa (masalan "@Bot 4+3=?") — mention qismini olib tashlab, AI
