@@ -149,6 +149,18 @@ async def _search_public_audio_async(query: str, count: int) -> list[dict]:
         per_channel = max(1, -(-count // max(1, len(config.TG_SEARCH_CHANNELS))))
         results: list[dict] = []
         for channel in config.TG_SEARCH_CHANNELS:
+            # 🔌 Render loglarida ko'ringan "Disconnecting.../Disconnection
+            # complete!" — Telethon ulanishi qidiruv davomida uzilib
+            # qolishi mumkin. Bitta bunday uzilish QOLGAN 19 ta kanalni
+            # qidirishni to'xtatib qo'ymasligi kerak (talab #12/#13) — shu
+            # sabab har bir kanaldan OLDIN ulanish holatini tekshirib,
+            # kerak bo'lsa qayta ulanamiz.
+            if not client.is_connected():
+                try:
+                    await client.connect()
+                except Exception as e:
+                    logger.warning(f"📡 Telegram qidiruv: qayta ulanib bo'lmadi ('{channel}' oldidan): {type(e).__name__}: {e} — bu kanal o'tkazib yuboriladi.")
+                    continue
             channel_title = await _channel_display_title(client, channel)
             results.extend(await _search_channel(client, channel, query, per_channel, channel_title))
         return results[:count]
