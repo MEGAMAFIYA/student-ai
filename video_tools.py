@@ -1012,4 +1012,7 @@ def download_telegram_audio(track: dict, dest_dir: str, max_mb: int) -> str:
         raise DownloadError(f"❌ Audio yuklab olishda kutilmagan xatolik yuz berdi.\n\nSabab: {type(e).__name__}: {e}") from e
 
     if not filepath or not os.path.isfile(filepath):
-        raise DownloadError("❌ Qo's
+        raise DownloadError("❌ Qo'shiq yuklab olindi, lekin fayl topilmadi.")
+
+    _enforce_size_limit(filepath, max_mb)
+    return filepath
