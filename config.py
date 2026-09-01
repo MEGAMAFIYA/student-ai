@@ -118,6 +118,50 @@ TG_SEARCH_CHANNELS = [
 TG_SEARCH_TIMEOUT_SEC = int(os.getenv("TG_SEARCH_TIMEOUT_SEC", "15"))
 TG_SEARCH_ENABLED = bool(TG_API_ID and TG_API_HASH and TG_SESSION and TG_SEARCH_CHANNELS)
 
+# ============================================================
+# 🎵 /qo'shiq — qidiruv manbalarini alohida YOQISH/O'CHIRISH
+# (/developer > 🎵 Qo'shiq qidirish)
+# ============================================================
+# Admin har bir manbani (YouTube, Web — hozircha SoundCloud, Telegram)
+# mustaqil yoqib/o'chira oladi. Bu FAQAT ko'rinish emas — video_tools.py
+# ichidagi search_tracks() OFF qilingan manbaga UMUMAN so'rov yubormaydi
+# (qarang: video_tools.py > SEARCH_SOURCES va search_tracks()).
+#
+# MUHIM: Telegram manbasi bu yerda ON bo'lsa ham, u baribir
+# TG_SEARCH_ENABLED (yuqoridagi 4 ta ENV to'liq sozlanganmi) bilan BIRGA
+# ishlaydi — ikkalasi ham True bo'lgandagina haqiqatan qidiriladi.
+#
+# Qiymatlar boshqa runtime AI sozlamalari bilan bir xil mexanizm orqali
+# (_load_runtime_overrides/_save_runtime_overrides, pastga qarang) doimiy
+# saqlanadi — bot restart/redeploy qilinganda yo'qolmaydi (agar Upstash/
+# Neon/GitHub sozlangan bo'lsa).
+MUSIC_SEARCH_SOURCE_IDS = ("youtube", "web", "telegram")
+MUSIC_SEARCH_SOURCE_LABELS = {
+    "youtube": "🎬 YouTube",
+    "web": "🌐 Web",
+    "telegram": "📱 Telegram",
+}
+# Default holat — hammasi YOQILGAN.
+MUSIC_SEARCH_SOURCES: dict[str, bool] = {sid: True for sid in MUSIC_SEARCH_SOURCE_IDS}
+
+
+def is_music_source_enabled(source_id: str) -> bool:
+    """Noma'lum source_id uchun ham xavfsiz — ON deb hisoblaydi (yangi
+    manba qo'shilib, sozlama hali saqlanmagan bo'lsa ham /qo'shiq
+    ishlashda davom etishi uchun)."""
+    return bool(MUSIC_SEARCH_SOURCES.get(source_id, True))
+
+
+def set_music_search_source(source_id: str, enabled: bool) -> bool:
+    """/developer > 🎵 Qo'shiq qidirish orqali bitta manbani yoqadi/
+    o'chiradi va darhol doimiy saqlashga yozadi. Muvaffaqiyatli bo'lsa True."""
+    if source_id not in MUSIC_SEARCH_SOURCES:
+        return False
+    MUSIC_SEARCH_SOURCES[source_id] = bool(enabled)
+    _save_runtime_overrides()
+    logger.info(f"[DEVELOPER] Qo'shiq qidirish manbasi '{source_id}' -> {'ON' if enabled else 'OFF'}.")
+    return True
+
 
 def _cfg(prefix: str, default_model: str, default_provider: str = "gemini") -> dict:
     """
@@ -645,12 +689,18 @@ def _load_runtime_overrides() -> None:
         logger.error(f"Runtime konfiguratsiyani JSON qilib o'qishda xato: {e} — .env qiymatlari ishlatiladi.")
         return
 
-    if "functions" in data or "key_pools" in data:
+    if "functions" in data or "key_pools" in data or "music_search_sources" in data:
         functions_data = data.get("functions", {})
         pools_data = data.get("key_pools", {})
+        music_data = data.get("music_search_sources", {})
     else:
         functions_data = data  # eski format
         pools_data = {}
+        music_data = {}
+
+    for sid, enabled in music_data.items():
+        if sid in MUSIC_SEARCH_SOURCES and isinstance(enabled, bool):
+            MUSIC_SEARCH_SOURCES[sid] = enabled
 
     for prefix, values in functions_data.items():
         cfg = AI_FUNCTIONS.get(prefix)
@@ -684,6 +734,7 @@ def _save_runtime_overrides() -> None:
             provider: [{"key": e.get("key", ""), "model": e.get("model", "")} for e in entries]
             for provider, entries in KEY_POOLS.items()
         },
+        "music_search_sources": dict(MUSIC_SEARCH_SOURCES),
     }
     raw = json.dumps(data, ensure_ascii=False)
     persist_write(_RUNTIME_CONFIG_FILENAME, _UPSTASH_KEY, raw, commit_message="🔧 /developer: AI sozlamalari/kalitlari yangilandi")
