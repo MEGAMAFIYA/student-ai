@@ -1,0 +1,5659 @@
+{
+  "source": "Telegram MTProto messages.getAvailableEffects",
+  "generated_at": "2026-09-01T17:36:20.063803+00:00",
+  "total_effects": 697,
+  "part": 1,
+  "of_parts": 6,
+  "range": [
+    0,
+    116
+  ],
+  "effects": [
+    {
+      "emoji": "👍",
+      "effect_id": "5107584321108051014",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991652",
+      "effect_sticker_id": "5181593617004757506",
+      "effect_animation_id": "5107584321108051014"
+    },
+    {
+      "emoji": "👎",
+      "effect_id": "5104858069142078462",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991644",
+      "effect_sticker_id": "5181852277115192162",
+      "effect_animation_id": "5104858069142078462"
+    },
+    {
+      "emoji": "❤",
+      "effect_id": "5159385139981059251",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991651",
+      "effect_sticker_id": "4909424820812251759",
+      "effect_animation_id": "5159385139981059251"
+    },
+    {
+      "emoji": "🔥",
+      "effect_id": "5104841245755180586",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991648",
+      "effect_sticker_id": "4906965037207257780",
+      "effect_animation_id": "5104841245755180586"
+    },
+    {
+      "emoji": "🎉",
+      "effect_id": "5046509860389126442",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991657",
+      "effect_sticker_id": "4909118808687378938",
+      "effect_animation_id": "5046509860389126442"
+    },
+    {
+      "emoji": "💩",
+      "effect_id": "5046589136895476101",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991654",
+      "effect_sticker_id": "5129959528762180081",
+      "effect_animation_id": "5046589136895476101"
+    },
+    {
+      "emoji": "🥰",
+      "effect_id": "5170169077011841524",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991646",
+      "effect_sticker_id": "5127435509626308100",
+      "effect_animation_id": "5170169077011841524"
+    },
+    {
+      "emoji": "👏",
+      "effect_id": "5170166362592510656",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991642",
+      "effect_sticker_id": "5183884724359135908",
+      "effect_animation_id": "5170166362592510656"
+    },
+    {
+      "emoji": "😁",
+      "effect_id": "5048771083361059460",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991649",
+      "effect_sticker_id": "5130019946067133023",
+      "effect_animation_id": "5048771083361059460"
+    },
+    {
+      "emoji": "🤔",
+      "effect_id": "5170257231215591956",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991658",
+      "effect_sticker_id": "5127352539448082997",
+      "effect_animation_id": "5170257231215591956"
+    },
+    {
+      "emoji": "🤯",
+      "effect_id": "5158936234294248618",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991645",
+      "effect_sticker_id": "5129967225343574495",
+      "effect_animation_id": "5158936234294248618"
+    },
+    {
+      "emoji": "😱",
+      "effect_id": "4967494041374556629",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991647",
+      "effect_sticker_id": "5127413407724601904",
+      "effect_animation_id": "4967494041374556629"
+    },
+    {
+      "emoji": "🤬",
+      "effect_id": "5170149264327704981",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991656",
+      "effect_sticker_id": "5130054881331118568",
+      "effect_animation_id": "5170149264327704981"
+    },
+    {
+      "emoji": "😢",
+      "effect_id": "5046551865169281494",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991643",
+      "effect_sticker_id": "5127442785300906624",
+      "effect_animation_id": "5046551865169281494"
+    },
+    {
+      "emoji": "🤩",
+      "effect_id": "5161554034041029689",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991655",
+      "effect_sticker_id": "5129973796643537588",
+      "effect_animation_id": "5161554034041029689"
+    },
+    {
+      "emoji": "🤮",
+      "effect_id": "5125503964049048317",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991659",
+      "effect_sticker_id": "5129633729722974675",
+      "effect_animation_id": "5125503964049048317"
+    },
+    {
+      "emoji": "🙏",
+      "effect_id": "5066712811023894584",
+      "premium_required": false,
+      "static_icon_id": "4963140636753527168",
+      "effect_sticker_id": "5181833310539612725",
+      "effect_animation_id": "5066712811023894584"
+    },
+    {
+      "emoji": "👌",
+      "effect_id": "5066947642655769508",
+      "premium_required": false,
+      "static_icon_id": "4925196378809828186",
+      "effect_sticker_id": "5183799439193539297",
+      "effect_animation_id": "5066947642655769508"
+    },
+    {
+      "emoji": "🕊",
+      "effect_id": "5095856784057303751",
+      "premium_required": false,
+      "static_icon_id": "4925196378809828188",
+      "effect_sticker_id": "4909440561867391667",
+      "effect_animation_id": "5095856784057303751"
+    },
+    {
+      "emoji": "🤡",
+      "effect_id": "4988252812317033130",
+      "premium_required": false,
+      "static_icon_id": "5316514066078899738",
+      "effect_sticker_id": "5127512982246392449",
+      "effect_animation_id": "4988252812317033130"
+    },
+    {
+      "emoji": "🥱",
+      "effect_id": "4988134357119009237",
+      "premium_required": false,
+      "static_icon_id": "4925196378809828191",
+      "effect_sticker_id": "5127886957933756781",
+      "effect_animation_id": "4988134357119009237"
+    },
+    {
+      "emoji": "🥴",
+      "effect_id": "4927250902185673331",
+      "premium_required": false,
+      "static_icon_id": "4925196378809828190",
+      "effect_sticker_id": "5129823378298897000",
+      "effect_animation_id": "4927250902185673331"
+    },
+    {
+      "emoji": "😍",
+      "effect_id": "5066779159678682060",
+      "premium_required": false,
+      "static_icon_id": "4925196378809828189",
+      "effect_sticker_id": "5130137765609996918",
+      "effect_animation_id": "5066779159678682060"
+    },
+    {
+      "emoji": "🐳",
+      "effect_id": "5075655057488217321",
+      "premium_required": false,
+      "static_icon_id": "4925196378809828193",
+      "effect_sticker_id": "4906680246515794715",
+      "effect_animation_id": "5075655057488217321"
+    },
+    {
+      "emoji": "❤‍🔥",
+      "effect_id": "5066576334143095943",
+      "premium_required": false,
+      "static_icon_id": "4963140636753527164",
+      "effect_sticker_id": "4907155381567881876",
+      "effect_animation_id": "5066576334143095943"
+    },
+    {
+      "emoji": "🌚",
+      "effect_id": "4961155507164283482",
+      "premium_required": false,
+      "static_icon_id": "4963140636753527165",
+      "effect_sticker_id": "4907196909606666791",
+      "effect_animation_id": "4961155507164283482"
+    },
+    {
+      "emoji": "🌭",
+      "effect_id": "4961017943656759969",
+      "premium_required": false,
+      "static_icon_id": "4963140636753527166",
+      "effect_sticker_id": "4909299098529563381",
+      "effect_animation_id": "4961017943656759969"
+    },
+    {
+      "emoji": "💯",
+      "effect_id": "4962976753686414048",
+      "premium_required": false,
+      "static_icon_id": "4963140636753527167",
+      "effect_sticker_id": "4909335412478051032",
+      "effect_animation_id": "4962976753686414048"
+    },
+    {
+      "emoji": "🤣",
+      "effect_id": "5066993302453093673",
+      "premium_required": false,
+      "static_icon_id": "5005920125929390907",
+      "effect_sticker_id": "5129961152259818018",
+      "effect_animation_id": "5066993302453093673"
+    },
+    {
+      "emoji": "⚡",
+      "effect_id": "5123236135417415011",
+      "premium_required": false,
+      "static_icon_id": "5125212563402916292",
+      "effect_sticker_id": "4909292076258034219",
+      "effect_animation_id": "5123236135417415011"
+    },
+    {
+      "emoji": "🍌",
+      "effect_id": "5123233223429587601",
+      "premium_required": false,
+      "static_icon_id": "5125212563402916293",
+      "effect_sticker_id": "4909049621059207722",
+      "effect_animation_id": "5123233223429587601"
+    },
+    {
+      "emoji": "🏆",
+      "effect_id": "5123046001510188023",
+      "premium_required": false,
+      "static_icon_id": "5125212563402916294",
+      "effect_sticker_id": "4908957081693848377",
+      "effect_animation_id": "5123046001510188023"
+    },
+    {
+      "emoji": "💔",
+      "effect_id": "5123265598893064880",
+      "premium_required": false,
+      "static_icon_id": "5125212563402916295",
+      "effect_sticker_id": "4907190802163172128",
+      "effect_animation_id": "5123265598893064880"
+    },
+    {
+      "emoji": "🤨",
+      "effect_id": "5122846324185629167",
+      "premium_required": false,
+      "static_icon_id": "5125212563402916296",
+      "effect_sticker_id": "5130064437633352245",
+      "effect_animation_id": "5122846324185629167"
+    },
+    {
+      "emoji": "😐",
+      "effect_id": "5066978240002786236",
+      "premium_required": false,
+      "static_icon_id": "5125212563402916297",
+      "effect_sticker_id": "5129653108615414540",
+      "effect_animation_id": "5066978240002786236"
+    },
+    {
+      "emoji": "🍓",
+      "effect_id": "4961016393173566021",
+      "premium_required": false,
+      "static_icon_id": "4963178024443839281",
+      "effect_sticker_id": "4909386771696976395",
+      "effect_animation_id": "4961016393173566021"
+    },
+    {
+      "emoji": "🍾",
+      "effect_id": "4961122255527478034",
+      "premium_required": false,
+      "static_icon_id": "4963178024443839280",
+      "effect_sticker_id": "4909209600001049317",
+      "effect_animation_id": "4961122255527478034"
+    },
+    {
+      "emoji": "💋",
+      "effect_id": "4963232093787128618",
+      "premium_required": false,
+      "static_icon_id": "4963178024443839279",
+      "effect_sticker_id": "4909064872488075979",
+      "effect_animation_id": "4963232093787128618"
+    },
+    {
+      "emoji": "🖕",
+      "effect_id": "4961092903720977544",
+      "premium_required": false,
+      "static_icon_id": "4963178024443839278",
+      "effect_sticker_id": "5181659450263470849",
+      "effect_animation_id": "4961092903720977544"
+    },
+    {
+      "emoji": "😈",
+      "effect_id": "4960944078809203417",
+      "premium_required": false,
+      "static_icon_id": "4963178024443839277",
+      "effect_sticker_id": "5127572991529452285",
+      "effect_animation_id": "4960944078809203417"
+    },
+    {
+      "emoji": "😴",
+      "effect_id": "5109477370893435421",
+      "premium_required": false,
+      "static_icon_id": "5107577036843516381",
+      "effect_sticker_id": "5130139268848550318",
+      "effect_animation_id": "5109477370893435421"
+    },
+    {
+      "emoji": "😭",
+      "effect_id": "5069111056337470630",
+      "premium_required": false,
+      "static_icon_id": "5107577036843516382",
+      "effect_sticker_id": "5127504688664543876",
+      "effect_animation_id": "5069111056337470630"
+    },
+    {
+      "emoji": "🤓",
+      "effect_id": "5107633812016202563",
+      "premium_required": false,
+      "static_icon_id": "5107577036843516383",
+      "effect_sticker_id": "5130116312248353364",
+      "effect_animation_id": "5107633812016202563"
+    },
+    {
+      "emoji": "👻",
+      "effect_id": "5107144215809229474",
+      "premium_required": false,
+      "static_icon_id": "5107577036843516384",
+      "effect_sticker_id": "5129679273556181537",
+      "effect_animation_id": "5107144215809229474"
+    },
+    {
+      "emoji": "👨‍💻",
+      "effect_id": "5107153978269893301",
+      "premium_required": false,
+      "static_icon_id": "5107577036843516385",
+      "effect_sticker_id": "4907007900980871941",
+      "effect_animation_id": "5107153978269893301"
+    },
+    {
+      "emoji": "👀",
+      "effect_id": "5107400329004058326",
+      "premium_required": false,
+      "static_icon_id": "5107577036843516386",
+      "effect_sticker_id": "4906904890485244443",
+      "effect_animation_id": "5107400329004058326"
+    },
+    {
+      "emoji": "🎃",
+      "effect_id": "5107491876231971605",
+      "premium_required": false,
+      "static_icon_id": "5107577036843516387",
+      "effect_sticker_id": "5129972598347661778",
+      "effect_animation_id": "5107491876231971605"
+    },
+    {
+      "emoji": "🙈",
+      "effect_id": "4913625371842183765",
+      "premium_required": false,
+      "static_icon_id": "4913431256500274107",
+      "effect_sticker_id": "4909357540149560027",
+      "effect_animation_id": "4913625371842183765"
+    },
+    {
+      "emoji": "😇",
+      "effect_id": "4913435779100836551",
+      "premium_required": false,
+      "static_icon_id": "4913431256500274108",
+      "effect_sticker_id": "5127690222661796498",
+      "effect_animation_id": "4913435779100836551"
+    },
+    {
+      "emoji": "😨",
+      "effect_id": "4913510691920413388",
+      "premium_required": false,
+      "static_icon_id": "4913431256500274109",
+      "effect_sticker_id": "5129715527375127060",
+      "effect_animation_id": "4913510691920413388"
+    },
+    {
+      "emoji": "🤝",
+      "effect_id": "4916165059018752691",
+      "premium_required": false,
+      "static_icon_id": "4913431256500274110",
+      "effect_sticker_id": "4963195715414131468",
+      "effect_animation_id": "4916165059018752691"
+    },
+    {
+      "emoji": "✍",
+      "effect_id": "4913460264709391187",
+      "premium_required": false,
+      "static_icon_id": "4913431256500274111",
+      "effect_sticker_id": "5181902103030793161",
+      "effect_animation_id": "4913460264709391187"
+    },
+    {
+      "emoji": "🤗",
+      "effect_id": "4913445953878360935",
+      "premium_required": false,
+      "static_icon_id": "4913431256500274112",
+      "effect_sticker_id": "5129601143806100328",
+      "effect_animation_id": "4913445953878360935"
+    },
+    {
+      "emoji": "🫡",
+      "effect_id": "4913930782671635058",
+      "premium_required": false,
+      "static_icon_id": "4913431256500274113",
+      "effect_sticker_id": "5129867650821784171",
+      "effect_animation_id": "4913930782671635058"
+    },
+    {
+      "emoji": "🎅",
+      "effect_id": "4990285736302346915",
+      "premium_required": false,
+      "static_icon_id": "4990112567515939494",
+      "effect_sticker_id": "4908949136004350823",
+      "effect_animation_id": "4990285736302346915"
+    },
+    {
+      "emoji": "🎄",
+      "effect_id": "5066610182780355771",
+      "premium_required": false,
+      "static_icon_id": "5006283127975314083",
+      "effect_sticker_id": "4906829303355802062",
+      "effect_animation_id": "5066610182780355771"
+    },
+    {
+      "emoji": "☃",
+      "effect_id": "4989997728680380153",
+      "premium_required": false,
+      "static_icon_id": "5006283127975314084",
+      "effect_sticker_id": "4909109437068739325",
+      "effect_animation_id": "4989997728680380153"
+    },
+    {
+      "emoji": "💅",
+      "effect_id": "5003596415478268711",
+      "premium_required": false,
+      "static_icon_id": "5005914529587004234",
+      "effect_sticker_id": "5024065533826302746",
+      "effect_animation_id": "5003596415478268711"
+    },
+    {
+      "emoji": "🤪",
+      "effect_id": "5006239241999483552",
+      "premium_required": false,
+      "static_icon_id": "5005914529587004236",
+      "effect_sticker_id": "5127684445930783362",
+      "effect_animation_id": "5006239241999483552"
+    },
+    {
+      "emoji": "🗿",
+      "effect_id": "5006084210859967333",
+      "premium_required": false,
+      "static_icon_id": "5005914529587004235",
+      "effect_sticker_id": "4909234077019669180",
+      "effect_animation_id": "5006084210859967333"
+    },
+    {
+      "emoji": "🆒",
+      "effect_id": "5006150512270115734",
+      "premium_required": false,
+      "static_icon_id": "5005914529587004237",
+      "effect_sticker_id": "5089170894366966396",
+      "effect_animation_id": "5006150512270115734"
+    },
+    {
+      "emoji": "💘",
+      "effect_id": "5089139004234793667",
+      "premium_required": false,
+      "static_icon_id": "5089164786923471992",
+      "effect_sticker_id": "4909273122567357168",
+      "effect_animation_id": "5089139004234793667"
+    },
+    {
+      "emoji": "🙉",
+      "effect_id": "5089358816366035753",
+      "premium_required": false,
+      "static_icon_id": "5089164786923471993",
+      "effect_sticker_id": "4909165731205088154",
+      "effect_animation_id": "5089358816366035753"
+    },
+    {
+      "emoji": "🦄",
+      "effect_id": "5089416218603946547",
+      "premium_required": false,
+      "static_icon_id": "5089164786923471994",
+      "effect_sticker_id": "4913514935348102286",
+      "effect_animation_id": "5089416218603946547"
+    },
+    {
+      "emoji": "😘",
+      "effect_id": "5159305906424382943",
+      "premium_required": false,
+      "static_icon_id": "5089164786923471995",
+      "effect_sticker_id": "5129608062998413793",
+      "effect_animation_id": "5159305906424382943"
+    },
+    {
+      "emoji": "💊",
+      "effect_id": "5089598484131087029",
+      "premium_required": false,
+      "static_icon_id": "5089164786923471996",
+      "effect_sticker_id": "4909073260559204904",
+      "effect_animation_id": "5089598484131087029"
+    },
+    {
+      "emoji": "🙊",
+      "effect_id": "5089447945527362129",
+      "premium_required": false,
+      "static_icon_id": "5089164786923471999",
+      "effect_sticker_id": "4909334690923545222",
+      "effect_animation_id": "5089447945527362129"
+    },
+    {
+      "emoji": "😎",
+      "effect_id": "4925230459375322151",
+      "premium_required": false,
+      "static_icon_id": "4924779393319961212",
+      "effect_sticker_id": "5127354905975063095",
+      "effect_animation_id": "4925230459375322151"
+    },
+    {
+      "emoji": "👾",
+      "effect_id": "4927184970142712981",
+      "premium_required": false,
+      "static_icon_id": "4924779393319961213",
+      "effect_sticker_id": "5127441853293003483",
+      "effect_animation_id": "4927184970142712981"
+    },
+    {
+      "emoji": "🤷",
+      "effect_id": "5068838802655544199",
+      "premium_required": false,
+      "static_icon_id": "4924779393319961215",
+      "effect_sticker_id": "4925168092155216450",
+      "effect_animation_id": "5068838802655544199"
+    },
+    {
+      "emoji": "🤷‍♂",
+      "effect_id": "5069188799540495289",
+      "premium_required": false,
+      "static_icon_id": "4924779393319961214",
+      "effect_sticker_id": "4909483932447146746",
+      "effect_animation_id": "5069188799540495289"
+    },
+    {
+      "emoji": "🤷‍♀",
+      "effect_id": "5066849184825475891",
+      "premium_required": false,
+      "static_icon_id": "4924779393319961216",
+      "effect_sticker_id": "4907133631853495259",
+      "effect_animation_id": "5066849184825475891"
+    },
+    {
+      "emoji": "😡",
+      "effect_id": "4925068178331010095",
+      "premium_required": false,
+      "static_icon_id": "4924779393319961217",
+      "effect_sticker_id": "5129791445217051348",
+      "effect_animation_id": "4925068178331010095"
+    },
+    {
+      "emoji": "😂",
+      "effect_id": "5127791914602463817",
+      "premium_required": false,
+      "static_icon_id": "5051344365771817404",
+      "effect_sticker_id": "5130017893072765649",
+      "effect_animation_id": "5127791914602463817"
+    },
+    {
+      "emoji": "☝",
+      "effect_id": "5071394291016795490",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5181867691752817340",
+      "effect_animation_id": "5071394291016795490"
+    },
+    {
+      "emoji": "✅",
+      "effect_id": "5087137729863484424",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5086854541194822683",
+      "effect_animation_id": "5087137729863484424"
+    },
+    {
+      "emoji": "✌",
+      "effect_id": "5067074180982244082",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5181876865802961791",
+      "effect_animation_id": "5067074180982244082"
+    },
+    {
+      "emoji": "✨",
+      "effect_id": "5089460564141278042",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5089591590708577421",
+      "effect_animation_id": "5089460564141278042"
+    },
+    {
+      "emoji": "❄",
+      "effect_id": "5066795381770158548",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "4909009518949565168",
+      "effect_animation_id": "5066795381770158548"
+    },
+    {
+      "emoji": "🎂",
+      "effect_id": "5134366251107222485",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "4907156270626112234",
+      "effect_animation_id": "5134366251107222485"
+    },
+    {
+      "emoji": "🎆",
+      "effect_id": "5044101728060834560",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "4909325400909283859",
+      "effect_animation_id": "5044101728060834560"
+    },
+    {
+      "emoji": "🎈",
+      "effect_id": "5046284769743077765",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "4909395550610129529",
+      "effect_animation_id": "5046284769743077765"
+    },
+    {
+      "emoji": "🎊",
+      "effect_id": "5041819580008236993",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "4906686942369809152",
+      "effect_animation_id": "5041819580008236993"
+    },
+    {
+      "emoji": "🏴‍☠",
+      "effect_id": "5089131707085358138",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5089220114692179134",
+      "effect_animation_id": "5089131707085358138"
+    },
+    {
+      "emoji": "🐾",
+      "effect_id": "5091878604959122376",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "4907015765065990875",
+      "effect_animation_id": "5091878604959122376"
+    },
+    {
+      "emoji": "👅",
+      "effect_id": "5071259338849387492",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "4906817144303387349",
+      "effect_animation_id": "5071259338849387492"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5089234812070265877",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5183922747704607397",
+      "effect_animation_id": "5089234812070265877"
+    },
+    {
+      "emoji": "👑",
+      "effect_id": "5089422278802801345",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5089141873272947496",
+      "effect_animation_id": "5089422278802801345"
+    },
+    {
+      "emoji": "👮‍♂",
+      "effect_id": "5026104105693611449",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5103020312765661793",
+      "effect_animation_id": "5026104105693611449"
+    },
+    {
+      "emoji": "💃",
+      "effect_id": "5026437541184668623",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "4907063202979775231",
+      "effect_animation_id": "5026437541184668623"
+    },
+    {
+      "emoji": "💎",
+      "effect_id": "4965608262968804599",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "4907219728767910669",
+      "effect_animation_id": "4965608262968804599"
+    },
+    {
+      "emoji": "💐",
+      "effect_id": "5026421185949205937",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "4902237914596902023",
+      "effect_animation_id": "5026421185949205937"
+    },
+    {
+      "emoji": "💥",
+      "effect_id": "5121096477199827757",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "4909057605403411410",
+      "effect_animation_id": "5121096477199827757"
+    },
+    {
+      "emoji": "💸",
+      "effect_id": "5125520873335292348",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "4906746586580648654",
+      "effect_animation_id": "5125520873335292348"
+    },
+    {
+      "emoji": "🔝",
+      "effect_id": "5089434807222403861",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5089280772515300325",
+      "effect_animation_id": "5089434807222403861"
+    },
+    {
+      "emoji": "🔞",
+      "effect_id": "5089216884876772391",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5086942008203805589",
+      "effect_animation_id": "5089216884876772391"
+    },
+    {
+      "emoji": "🕺",
+      "effect_id": "5026494110198924646",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "4909344436204339787",
+      "effect_animation_id": "5026494110198924646"
+    },
+    {
+      "emoji": "🖖",
+      "effect_id": "5091606991227323336",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5181529467373224520",
+      "effect_animation_id": "5091606991227323336"
+    },
+    {
+      "emoji": "😊",
+      "effect_id": "4965357582907606094",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5129793223333511699",
+      "effect_animation_id": "4965357582907606094"
+    },
+    {
+      "emoji": "😫",
+      "effect_id": "5089524022283076814",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5127401179952710437",
+      "effect_animation_id": "5089524022283076814"
+    },
+    {
+      "emoji": "😵‍💫",
+      "effect_id": "5089594618660520655",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5127575160487936716",
+      "effect_animation_id": "5089594618660520655"
+    },
+    {
+      "emoji": "🤌",
+      "effect_id": "5041854420782941263",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5181932056132714927",
+      "effect_animation_id": "5041854420782941263"
+    },
+    {
+      "emoji": "🤍",
+      "effect_id": "5055413967543861653",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "4908958404543775326",
+      "effect_animation_id": "5055413967543861653"
+    },
+    {
+      "emoji": "🤎",
+      "effect_id": "5055664432856695007",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "4909264863345246973",
+      "effect_animation_id": "5055664432856695007"
+    },
+    {
+      "emoji": "🤑",
+      "effect_id": "5026331292283700185",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5129871460457775528",
+      "effect_animation_id": "5026331292283700185"
+    },
+    {
+      "emoji": "🤒",
+      "effect_id": "5071299733016806207",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5129745695225414976",
+      "effect_animation_id": "5071299733016806207"
+    },
+    {
+      "emoji": "🤕",
+      "effect_id": "5086991627960976320",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5086907347817726977",
+      "effect_animation_id": "5086991627960976320"
+    },
+    {
+      "emoji": "🤘",
+      "effect_id": "5071309894909428639",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5181697920285540874",
+      "effect_animation_id": "5071309894909428639"
+    },
+    {
+      "emoji": "🤥",
+      "effect_id": "5066635132245378011",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5089564742868009763",
+      "effect_animation_id": "5066635132245378011"
+    },
+    {
+      "emoji": "🤦‍♂",
+      "effect_id": "5091342528616072685",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5003929537436713911",
+      "effect_animation_id": "5091342528616072685"
+    },
+    {
+      "emoji": "🤭",
+      "effect_id": "5120906893048415743",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5129767767062348409",
+      "effect_animation_id": "5120906893048415743"
+    },
+    {
+      "emoji": "🥳",
+      "effect_id": "5089343350188802996",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5087140525887193777",
+      "effect_animation_id": "5089343350188802996"
+    },
+    {
+      "emoji": "🥵",
+      "effect_id": "5120948558526153760",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5127473825029554622",
+      "effect_animation_id": "5120948558526153760"
+    },
+    {
+      "emoji": "🥶",
+      "effect_id": "5026486074315113392",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5127459849205973610",
+      "effect_animation_id": "5026486074315113392"
+    },
+    {
+      "emoji": "🪩",
+      "effect_id": "5136788470928245857",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5104949616369992232",
+      "effect_animation_id": "5136788470928245857"
+    },
+    {
+      "emoji": "🫠",
+      "effect_id": "5068809425079239498",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5129935717463491166",
+      "effect_animation_id": "5068809425079239498"
+    },
+    {
+      "emoji": "🫦",
+      "effect_id": "5091663800759747631",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "4906850284271043428",
+      "effect_animation_id": "5091663800759747631"
+    }
+  ]
+}
+
+{
+  "source": "Telegram MTProto messages.getAvailableEffects",
+  "generated_at": "2026-09-01T17:36:20.063803+00:00",
+  "total_effects": 697,
+  "part": 2,
+  "of_parts": 6,
+  "range": [
+    117,
+    233
+  ],
+  "effects": [
+    {
+      "emoji": "🫨",
+      "effect_id": "5089613774214660825",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5089385217530004183",
+      "effect_animation_id": "5089613774214660825"
+    },
+    {
+      "emoji": "🫵",
+      "effect_id": "5026435775953109827",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "4960819554822390815",
+      "effect_animation_id": "5026435775953109827"
+    },
+    {
+      "emoji": "🫶",
+      "effect_id": "4967721189309940952",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "4963062326614819495",
+      "effect_animation_id": "4967721189309940952"
+    },
+    {
+      "emoji": "🍑",
+      "effect_id": "5089178556588622814",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5091582200676090711",
+      "effect_animation_id": "5089178556588622814"
+    },
+    {
+      "emoji": "🍆",
+      "effect_id": "5091705285848859672",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5091734787979216226",
+      "effect_animation_id": "5091705285848859672"
+    },
+    {
+      "emoji": "🍆",
+      "effect_id": "4940650246666453485",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5109521175264889099",
+      "effect_animation_id": "4940650246666453485"
+    },
+    {
+      "emoji": "👍",
+      "effect_id": "5287781207315078357",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991652",
+      "effect_sticker_id": "5287781207315078357",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👍",
+      "effect_id": "5204257609669942785",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991652",
+      "effect_sticker_id": "5204257609669942785",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👍",
+      "effect_id": "5276162088123767055",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991652",
+      "effect_sticker_id": "5276162088123767055",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👍",
+      "effect_id": "5298813045563201938",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991652",
+      "effect_sticker_id": "5298813045563201938",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👍",
+      "effect_id": "5449793090321665071",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991652",
+      "effect_sticker_id": "5449793090321665071",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👍",
+      "effect_id": "5350399176200952969",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991652",
+      "effect_sticker_id": "5350399176200952969",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👍",
+      "effect_id": "5201744267822767308",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991652",
+      "effect_sticker_id": "5201744267822767308",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👍",
+      "effect_id": "5287288621810857823",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991652",
+      "effect_sticker_id": "5287288621810857823",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👍",
+      "effect_id": "5418029475000500877",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991652",
+      "effect_sticker_id": "5418029475000500877",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👍",
+      "effect_id": "5285142572681928064",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991652",
+      "effect_sticker_id": "5285142572681928064",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👍",
+      "effect_id": "5461008705925429632",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991652",
+      "effect_sticker_id": "5461008705925429632",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👍",
+      "effect_id": "5384193525074112686",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991652",
+      "effect_sticker_id": "5384193525074112686",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👍",
+      "effect_id": "5285154392431925129",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991652",
+      "effect_sticker_id": "5285154392431925129",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👍",
+      "effect_id": "5332716319101963344",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991652",
+      "effect_sticker_id": "5332716319101963344",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👍",
+      "effect_id": "5350288151296350691",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991652",
+      "effect_sticker_id": "5350288151296350691",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👍",
+      "effect_id": "5264848173603494889",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991652",
+      "effect_sticker_id": "5264848173603494889",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👍",
+      "effect_id": "5229113465880198444",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991652",
+      "effect_sticker_id": "5229113465880198444",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👍",
+      "effect_id": "5312098066604504779",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991652",
+      "effect_sticker_id": "5312098066604504779",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👍",
+      "effect_id": "5440802804648131487",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991652",
+      "effect_sticker_id": "5440802804648131487",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👍",
+      "effect_id": "5199964235806808385",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991652",
+      "effect_sticker_id": "5199964235806808385",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👎",
+      "effect_id": "5370977932179161211",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991644",
+      "effect_sticker_id": "5370977932179161211",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👎",
+      "effect_id": "5319095899769556468",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991644",
+      "effect_sticker_id": "5319095899769556468",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👎",
+      "effect_id": "5005992964279763916",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991644",
+      "effect_sticker_id": "5005992964279763916",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👎",
+      "effect_id": "5453974842279743084",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991644",
+      "effect_sticker_id": "5453974842279743084",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👎",
+      "effect_id": "5454219397717579175",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991644",
+      "effect_sticker_id": "5454219397717579175",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👎",
+      "effect_id": "5436072280423682305",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991644",
+      "effect_sticker_id": "5436072280423682305",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👎",
+      "effect_id": "5233450571100345621",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991644",
+      "effect_sticker_id": "5233450571100345621",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👎",
+      "effect_id": "5451712008695073016",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991644",
+      "effect_sticker_id": "5451712008695073016",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👎",
+      "effect_id": "5391345977061822285",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991644",
+      "effect_sticker_id": "5391345977061822285",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👎",
+      "effect_id": "5400116231560780632",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991644",
+      "effect_sticker_id": "5400116231560780632",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👎",
+      "effect_id": "5244583564418241559",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991644",
+      "effect_sticker_id": "5244583564418241559",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👎",
+      "effect_id": "5393224904994738875",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991644",
+      "effect_sticker_id": "5393224904994738875",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👎",
+      "effect_id": "5352663577448698346",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991644",
+      "effect_sticker_id": "5352663577448698346",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👎",
+      "effect_id": "5237995080291207428",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991644",
+      "effect_sticker_id": "5237995080291207428",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👎",
+      "effect_id": "5407120103449842634",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991644",
+      "effect_sticker_id": "5407120103449842634",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👎",
+      "effect_id": "5197595780386415999",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991644",
+      "effect_sticker_id": "5197595780386415999",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👎",
+      "effect_id": "5343738579573039183",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991644",
+      "effect_sticker_id": "5343738579573039183",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👎",
+      "effect_id": "5474553821596244457",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991644",
+      "effect_sticker_id": "5474553821596244457",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👎",
+      "effect_id": "5274004129050546755",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991644",
+      "effect_sticker_id": "5274004129050546755",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👎",
+      "effect_id": "5278688898988396674",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991644",
+      "effect_sticker_id": "5278688898988396674",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👎",
+      "effect_id": "5280502418864364941",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991644",
+      "effect_sticker_id": "5280502418864364941",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👎",
+      "effect_id": "5402160120597595491",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991644",
+      "effect_sticker_id": "5402160120597595491",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👎",
+      "effect_id": "5242471217897691488",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991644",
+      "effect_sticker_id": "5242471217897691488",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👎",
+      "effect_id": "5215171091504319975",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991644",
+      "effect_sticker_id": "5215171091504319975",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👎",
+      "effect_id": "5449385072723517170",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991644",
+      "effect_sticker_id": "5449385072723517170",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👎",
+      "effect_id": "5386460112460210613",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991644",
+      "effect_sticker_id": "5386460112460210613",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "❤",
+      "effect_id": "4911541397875589667",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991651",
+      "effect_sticker_id": "4911541397875589667",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "❤",
+      "effect_id": "5199725328250969763",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991651",
+      "effect_sticker_id": "5199725328250969763",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "❤",
+      "effect_id": "5272010757419047798",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991651",
+      "effect_sticker_id": "5272010757419047798",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "❤",
+      "effect_id": "5235577524804664467",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991651",
+      "effect_sticker_id": "5235577524804664467",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "❤",
+      "effect_id": "5265002324274726737",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991651",
+      "effect_sticker_id": "5265002324274726737",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "❤",
+      "effect_id": "5309811052353959795",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991651",
+      "effect_sticker_id": "5309811052353959795",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "❤",
+      "effect_id": "5199595396900330332",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991651",
+      "effect_sticker_id": "5199595396900330332",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "❤",
+      "effect_id": "5276194729875217464",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991651",
+      "effect_sticker_id": "5276194729875217464",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "❤",
+      "effect_id": "5330116712836642577",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991651",
+      "effect_sticker_id": "5330116712836642577",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "❤",
+      "effect_id": "4911386156282675749",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991651",
+      "effect_sticker_id": "4911386156282675749",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "❤",
+      "effect_id": "5274264700421413486",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991651",
+      "effect_sticker_id": "5274264700421413486",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "❤",
+      "effect_id": "5226506618300013474",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991651",
+      "effect_sticker_id": "5226506618300013474",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🔥",
+      "effect_id": "5467738889613490137",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991648",
+      "effect_sticker_id": "5467738889613490137",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🔥",
+      "effect_id": "5330377864028109649",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991648",
+      "effect_sticker_id": "5330377864028109649",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥰",
+      "effect_id": "5343737583140620461",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991646",
+      "effect_sticker_id": "5343737583140620461",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥰",
+      "effect_id": "5449765774329663898",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991646",
+      "effect_sticker_id": "5449765774329663898",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥰",
+      "effect_id": "5269395453048265045",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991646",
+      "effect_sticker_id": "5269395453048265045",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥰",
+      "effect_id": "5233410992976710895",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991646",
+      "effect_sticker_id": "5233410992976710895",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥰",
+      "effect_id": "5400083151722659509",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991646",
+      "effect_sticker_id": "5400083151722659509",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥰",
+      "effect_id": "5303263761258271050",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991646",
+      "effect_sticker_id": "5303263761258271050",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👏",
+      "effect_id": "5296669762393217791",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991642",
+      "effect_sticker_id": "5296669762393217791",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👏",
+      "effect_id": "5265228261029327858",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991642",
+      "effect_sticker_id": "5265228261029327858",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤔",
+      "effect_id": "5226433260258612177",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991658",
+      "effect_sticker_id": "5226433260258612177",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤔",
+      "effect_id": "5413443781368239985",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991658",
+      "effect_sticker_id": "5413443781368239985",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤔",
+      "effect_id": "5406864625910176081",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991658",
+      "effect_sticker_id": "5406864625910176081",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤔",
+      "effect_id": "5353078329555571789",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991658",
+      "effect_sticker_id": "5353078329555571789",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤔",
+      "effect_id": "5381830270859104119",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991658",
+      "effect_sticker_id": "5381830270859104119",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤔",
+      "effect_id": "5197604215702183380",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991658",
+      "effect_sticker_id": "5197604215702183380",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤔",
+      "effect_id": "5402207579986219491",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991658",
+      "effect_sticker_id": "5402207579986219491",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤔",
+      "effect_id": "5278548517982327354",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991658",
+      "effect_sticker_id": "5278548517982327354",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤔",
+      "effect_id": "5228729693372438887",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991658",
+      "effect_sticker_id": "5228729693372438887",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤔",
+      "effect_id": "5271900157716221502",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991658",
+      "effect_sticker_id": "5271900157716221502",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤔",
+      "effect_id": "5301147038166045393",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991658",
+      "effect_sticker_id": "5301147038166045393",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤔",
+      "effect_id": "5440471112913804372",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991658",
+      "effect_sticker_id": "5440471112913804372",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤔",
+      "effect_id": "5359400791998224519",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991658",
+      "effect_sticker_id": "5359400791998224519",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤔",
+      "effect_id": "5298798245105916829",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991658",
+      "effect_sticker_id": "5298798245105916829",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤔",
+      "effect_id": "5242687482385947054",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991658",
+      "effect_sticker_id": "5242687482385947054",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤔",
+      "effect_id": "5296379100481476100",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991658",
+      "effect_sticker_id": "5296379100481476100",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤔",
+      "effect_id": "5294039833658803832",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991658",
+      "effect_sticker_id": "5294039833658803832",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤔",
+      "effect_id": "5188230385154149088",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991658",
+      "effect_sticker_id": "5188230385154149088",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤔",
+      "effect_id": "5438619054296287587",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991658",
+      "effect_sticker_id": "5438619054296287587",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤔",
+      "effect_id": "5447655601062561933",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991658",
+      "effect_sticker_id": "5447655601062561933",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤔",
+      "effect_id": "5199437561147185833",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991658",
+      "effect_sticker_id": "5199437561147185833",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤔",
+      "effect_id": "5393431772094551961",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991658",
+      "effect_sticker_id": "5393431772094551961",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤔",
+      "effect_id": "5296469350629264898",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991658",
+      "effect_sticker_id": "5296469350629264898",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤔",
+      "effect_id": "5228705087504796233",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991658",
+      "effect_sticker_id": "5228705087504796233",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤔",
+      "effect_id": "5213420806431853909",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991658",
+      "effect_sticker_id": "5213420806431853909",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤔",
+      "effect_id": "5296795102423816510",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991658",
+      "effect_sticker_id": "5296795102423816510",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤔",
+      "effect_id": "5454024994612861657",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991658",
+      "effect_sticker_id": "5454024994612861657",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤔",
+      "effect_id": "5188598734434365507",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991658",
+      "effect_sticker_id": "5188598734434365507",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤔",
+      "effect_id": "5215274136359688514",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991658",
+      "effect_sticker_id": "5215274136359688514",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤔",
+      "effect_id": "5467793998338872715",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991658",
+      "effect_sticker_id": "5467793998338872715",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤔",
+      "effect_id": "5237935702368342717",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991658",
+      "effect_sticker_id": "5237935702368342717",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤯",
+      "effect_id": "5251246888350398100",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991645",
+      "effect_sticker_id": "5251246888350398100",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤯",
+      "effect_id": "5237912737178206592",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991645",
+      "effect_sticker_id": "5237912737178206592",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤯",
+      "effect_id": "5343739013364729462",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991645",
+      "effect_sticker_id": "5343739013364729462",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤯",
+      "effect_id": "5199582731041773705",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991645",
+      "effect_sticker_id": "5199582731041773705",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤯",
+      "effect_id": "5418054291321538483",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991645",
+      "effect_sticker_id": "5418054291321538483",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤯",
+      "effect_id": "5355022480861848696",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991645",
+      "effect_sticker_id": "5355022480861848696",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤯",
+      "effect_id": "5402177476560434979",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991645",
+      "effect_sticker_id": "5402177476560434979",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤯",
+      "effect_id": "5377476093143957015",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991645",
+      "effect_sticker_id": "5377476093143957015",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤯",
+      "effect_id": "5285410247928726633",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991645",
+      "effect_sticker_id": "5285410247928726633",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😱",
+      "effect_id": "5296789312807901666",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991647",
+      "effect_sticker_id": "5296789312807901666",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😱",
+      "effect_id": "5447129368784553154",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991647",
+      "effect_sticker_id": "5447129368784553154",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😱",
+      "effect_id": "5422822731517283238",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991647",
+      "effect_sticker_id": "5422822731517283238",
+      "effect_animation_id": "None"
+    }
+  ]
+}
+
+{
+  "source": "Telegram MTProto messages.getAvailableEffects",
+  "generated_at": "2026-09-01T17:36:20.063803+00:00",
+  "total_effects": 697,
+  "part": 3,
+  "of_parts": 6,
+  "range": [
+    234,
+    350
+  ],
+  "effects": [
+    {
+      "emoji": "😱",
+      "effect_id": "5274189087522178220",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991647",
+      "effect_sticker_id": "5274189087522178220",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😱",
+      "effect_id": "5192811251243179335",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991647",
+      "effect_sticker_id": "5192811251243179335",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😱",
+      "effect_id": "5458649175447068117",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991647",
+      "effect_sticker_id": "5458649175447068117",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😱",
+      "effect_id": "5258138266456045276",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991647",
+      "effect_sticker_id": "5258138266456045276",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😱",
+      "effect_id": "5273953250867955597",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991647",
+      "effect_sticker_id": "5273953250867955597",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😱",
+      "effect_id": "5357427782806680828",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991647",
+      "effect_sticker_id": "5357427782806680828",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤬",
+      "effect_id": "5199750359320370821",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991656",
+      "effect_sticker_id": "5199750359320370821",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤬",
+      "effect_id": "5204326728578649609",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991656",
+      "effect_sticker_id": "5204326728578649609",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤬",
+      "effect_id": "5240007783570486716",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991656",
+      "effect_sticker_id": "5240007783570486716",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤬",
+      "effect_id": "5305638199568123955",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991656",
+      "effect_sticker_id": "5305638199568123955",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤬",
+      "effect_id": "5456260417716243300",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991656",
+      "effect_sticker_id": "5456260417716243300",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤬",
+      "effect_id": "5386436610399160058",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991656",
+      "effect_sticker_id": "5386436610399160058",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤬",
+      "effect_id": "5287739803830327916",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991656",
+      "effect_sticker_id": "5287739803830327916",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😢",
+      "effect_id": "5208571517771723025",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991643",
+      "effect_sticker_id": "5208571517771723025",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😢",
+      "effect_id": "5199907928785557571",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991643",
+      "effect_sticker_id": "5199907928785557571",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😢",
+      "effect_id": "5404624847709943130",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991643",
+      "effect_sticker_id": "5404624847709943130",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😢",
+      "effect_id": "5411406717034448891",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991643",
+      "effect_sticker_id": "5411406717034448891",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎉",
+      "effect_id": "4970183764643676852",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991657",
+      "effect_sticker_id": "4970183764643676852",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎉",
+      "effect_id": "5298766204649872471",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991657",
+      "effect_sticker_id": "5298766204649872471",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤩",
+      "effect_id": "5309974729262642571",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991655",
+      "effect_sticker_id": "5309974729262642571",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤩",
+      "effect_id": "5276244100524283683",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991655",
+      "effect_sticker_id": "5276244100524283683",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤩",
+      "effect_id": "5202172110989957559",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991655",
+      "effect_sticker_id": "5202172110989957559",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤩",
+      "effect_id": "5335006395664179964",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991655",
+      "effect_sticker_id": "5335006395664179964",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤩",
+      "effect_id": "5377425485544311706",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991655",
+      "effect_sticker_id": "5377425485544311706",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤮",
+      "effect_id": "5399979303708410516",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991659",
+      "effect_sticker_id": "5399979303708410516",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "💩",
+      "effect_id": "5197248197273078492",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991654",
+      "effect_sticker_id": "5197248197273078492",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "💩",
+      "effect_id": "5373136032986316091",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991654",
+      "effect_sticker_id": "5373136032986316091",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "💩",
+      "effect_id": "5377426593645880390",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991654",
+      "effect_sticker_id": "5377426593645880390",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "💩",
+      "effect_id": "5427385455664448590",
+      "premium_required": false,
+      "static_icon_id": "4988077362902991654",
+      "effect_sticker_id": "5427385455664448590",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👌",
+      "effect_id": "5429481068992404622",
+      "premium_required": false,
+      "static_icon_id": "4925196378809828186",
+      "effect_sticker_id": "5429481068992404622",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👌",
+      "effect_id": "5278525600036823830",
+      "premium_required": false,
+      "static_icon_id": "4925196378809828186",
+      "effect_sticker_id": "5278525600036823830",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👌",
+      "effect_id": "5199501195382627206",
+      "premium_required": false,
+      "static_icon_id": "4925196378809828186",
+      "effect_sticker_id": "5199501195382627206",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤡",
+      "effect_id": "5267111900541367075",
+      "premium_required": false,
+      "static_icon_id": "5316514066078899738",
+      "effect_sticker_id": "5267111900541367075",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤡",
+      "effect_id": "5474623339936895299",
+      "premium_required": false,
+      "static_icon_id": "5316514066078899738",
+      "effect_sticker_id": "5474623339936895299",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤡",
+      "effect_id": "5237736742303321114",
+      "premium_required": false,
+      "static_icon_id": "5316514066078899738",
+      "effect_sticker_id": "5237736742303321114",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤡",
+      "effect_id": "5402152698894109903",
+      "premium_required": false,
+      "static_icon_id": "5316514066078899738",
+      "effect_sticker_id": "5402152698894109903",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤡",
+      "effect_id": "5386831648606141666",
+      "premium_required": false,
+      "static_icon_id": "5316514066078899738",
+      "effect_sticker_id": "5386831648606141666",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥴",
+      "effect_id": "5292129900356966544",
+      "premium_required": false,
+      "static_icon_id": "4925196378809828190",
+      "effect_sticker_id": "5292129900356966544",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥴",
+      "effect_id": "5276411063082960926",
+      "premium_required": false,
+      "static_icon_id": "4925196378809828190",
+      "effect_sticker_id": "5276411063082960926",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥴",
+      "effect_id": "5458920707574480084",
+      "premium_required": false,
+      "static_icon_id": "4925196378809828190",
+      "effect_sticker_id": "5458920707574480084",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥴",
+      "effect_id": "5397830067713754992",
+      "premium_required": false,
+      "static_icon_id": "4925196378809828190",
+      "effect_sticker_id": "5397830067713754992",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😍",
+      "effect_id": "5276499466394811467",
+      "premium_required": false,
+      "static_icon_id": "4925196378809828189",
+      "effect_sticker_id": "5276499466394811467",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😍",
+      "effect_id": "5307532739707158053",
+      "premium_required": false,
+      "static_icon_id": "4925196378809828189",
+      "effect_sticker_id": "5307532739707158053",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😍",
+      "effect_id": "5402332018073679834",
+      "premium_required": false,
+      "static_icon_id": "4925196378809828189",
+      "effect_sticker_id": "5402332018073679834",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😍",
+      "effect_id": "5474525680970525814",
+      "premium_required": false,
+      "static_icon_id": "4925196378809828189",
+      "effect_sticker_id": "5474525680970525814",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😍",
+      "effect_id": "5267353844639078745",
+      "premium_required": false,
+      "static_icon_id": "4925196378809828189",
+      "effect_sticker_id": "5267353844639078745",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😍",
+      "effect_id": "5278632540427537535",
+      "premium_required": false,
+      "static_icon_id": "4925196378809828189",
+      "effect_sticker_id": "5278632540427537535",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😍",
+      "effect_id": "5305402341439058363",
+      "premium_required": false,
+      "static_icon_id": "4925196378809828189",
+      "effect_sticker_id": "5305402341439058363",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😍",
+      "effect_id": "5318898808015296420",
+      "premium_required": false,
+      "static_icon_id": "4925196378809828189",
+      "effect_sticker_id": "5318898808015296420",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😍",
+      "effect_id": "5278479154260495753",
+      "premium_required": false,
+      "static_icon_id": "4925196378809828189",
+      "effect_sticker_id": "5278479154260495753",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😍",
+      "effect_id": "5325995584341940846",
+      "premium_required": false,
+      "static_icon_id": "4925196378809828189",
+      "effect_sticker_id": "5325995584341940846",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😍",
+      "effect_id": "5258502780330460137",
+      "premium_required": false,
+      "static_icon_id": "4925196378809828189",
+      "effect_sticker_id": "5258502780330460137",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😍",
+      "effect_id": "5422665269426265106",
+      "premium_required": false,
+      "static_icon_id": "4925196378809828189",
+      "effect_sticker_id": "5422665269426265106",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😍",
+      "effect_id": "5355055934362107020",
+      "premium_required": false,
+      "static_icon_id": "4925196378809828189",
+      "effect_sticker_id": "5355055934362107020",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😍",
+      "effect_id": "5199645609362987873",
+      "premium_required": false,
+      "static_icon_id": "4925196378809828189",
+      "effect_sticker_id": "5199645609362987873",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😍",
+      "effect_id": "5255906459715115520",
+      "premium_required": false,
+      "static_icon_id": "4925196378809828189",
+      "effect_sticker_id": "5255906459715115520",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😍",
+      "effect_id": "5316818540605478829",
+      "premium_required": false,
+      "static_icon_id": "4925196378809828189",
+      "effect_sticker_id": "5316818540605478829",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😍",
+      "effect_id": "5237839791453655371",
+      "premium_required": false,
+      "static_icon_id": "4925196378809828189",
+      "effect_sticker_id": "5237839791453655371",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😍",
+      "effect_id": "5298765568994712160",
+      "premium_required": false,
+      "static_icon_id": "4925196378809828189",
+      "effect_sticker_id": "5298765568994712160",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😍",
+      "effect_id": "5199751145299383550",
+      "premium_required": false,
+      "static_icon_id": "4925196378809828189",
+      "effect_sticker_id": "5199751145299383550",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "❤‍🔥",
+      "effect_id": "5319158979954229182",
+      "premium_required": false,
+      "static_icon_id": "4963140636753527164",
+      "effect_sticker_id": "5319158979954229182",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "❤‍🔥",
+      "effect_id": "5431832168449983046",
+      "premium_required": false,
+      "static_icon_id": "4963140636753527164",
+      "effect_sticker_id": "5431832168449983046",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "❤‍🔥",
+      "effect_id": "5364187558819418305",
+      "premium_required": false,
+      "static_icon_id": "4963140636753527164",
+      "effect_sticker_id": "5364187558819418305",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "❤‍🔥",
+      "effect_id": "5269524864707860078",
+      "premium_required": false,
+      "static_icon_id": "4963140636753527164",
+      "effect_sticker_id": "5269524864707860078",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "❤‍🔥",
+      "effect_id": "5436219821140220621",
+      "premium_required": false,
+      "static_icon_id": "4963140636753527164",
+      "effect_sticker_id": "5436219821140220621",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤣",
+      "effect_id": "5433677406659419467",
+      "premium_required": false,
+      "static_icon_id": "5005920125929390907",
+      "effect_sticker_id": "5433677406659419467",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤣",
+      "effect_id": "5287700225706705481",
+      "premium_required": false,
+      "static_icon_id": "5005920125929390907",
+      "effect_sticker_id": "5287700225706705481",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤣",
+      "effect_id": "5309985054364021277",
+      "premium_required": false,
+      "static_icon_id": "5005920125929390907",
+      "effect_sticker_id": "5309985054364021277",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤣",
+      "effect_id": "5294381378048113427",
+      "premium_required": false,
+      "static_icon_id": "5005920125929390907",
+      "effect_sticker_id": "5294381378048113427",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🏆",
+      "effect_id": "5283179205691990448",
+      "premium_required": false,
+      "static_icon_id": "5125212563402916294",
+      "effect_sticker_id": "5283179205691990448",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🏆",
+      "effect_id": "5003540413399696306",
+      "premium_required": false,
+      "static_icon_id": "5125212563402916294",
+      "effect_sticker_id": "5003540413399696306",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🏆",
+      "effect_id": "5321047026102714339",
+      "premium_required": false,
+      "static_icon_id": "5125212563402916294",
+      "effect_sticker_id": "5321047026102714339",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "💔",
+      "effect_id": "5343923593879240259",
+      "premium_required": false,
+      "static_icon_id": "5125212563402916295",
+      "effect_sticker_id": "5343923593879240259",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "💔",
+      "effect_id": "5422525270672284142",
+      "premium_required": false,
+      "static_icon_id": "5125212563402916295",
+      "effect_sticker_id": "5422525270672284142",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "💔",
+      "effect_id": "5316683262020564796",
+      "premium_required": false,
+      "static_icon_id": "5125212563402916295",
+      "effect_sticker_id": "5316683262020564796",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😐",
+      "effect_id": "5370875879461250062",
+      "premium_required": false,
+      "static_icon_id": "5125212563402916297",
+      "effect_sticker_id": "5370875879461250062",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😐",
+      "effect_id": "5226639740811365578",
+      "premium_required": false,
+      "static_icon_id": "5125212563402916297",
+      "effect_sticker_id": "5226639740811365578",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😐",
+      "effect_id": "5233643483851411432",
+      "premium_required": false,
+      "static_icon_id": "5125212563402916297",
+      "effect_sticker_id": "5233643483851411432",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😐",
+      "effect_id": "5215451999545348731",
+      "premium_required": false,
+      "static_icon_id": "5125212563402916297",
+      "effect_sticker_id": "5215451999545348731",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😐",
+      "effect_id": "5215558330050699073",
+      "premium_required": false,
+      "static_icon_id": "5125212563402916297",
+      "effect_sticker_id": "5215558330050699073",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🖕",
+      "effect_id": "5418213501464234089",
+      "premium_required": false,
+      "static_icon_id": "4963178024443839278",
+      "effect_sticker_id": "5418213501464234089",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😈",
+      "effect_id": "5298524445235748201",
+      "premium_required": false,
+      "static_icon_id": "4963178024443839277",
+      "effect_sticker_id": "5298524445235748201",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😈",
+      "effect_id": "5406757183008291910",
+      "premium_required": false,
+      "static_icon_id": "4963178024443839277",
+      "effect_sticker_id": "5406757183008291910",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😴",
+      "effect_id": "5282786564076739562",
+      "premium_required": false,
+      "static_icon_id": "5107577036843516381",
+      "effect_sticker_id": "5282786564076739562",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😴",
+      "effect_id": "5199654620204373613",
+      "premium_required": false,
+      "static_icon_id": "5107577036843516381",
+      "effect_sticker_id": "5199654620204373613",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😴",
+      "effect_id": "5199914190847874664",
+      "premium_required": false,
+      "static_icon_id": "5107577036843516381",
+      "effect_sticker_id": "5199914190847874664",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😴",
+      "effect_id": "5276296250017193032",
+      "premium_required": false,
+      "static_icon_id": "5107577036843516381",
+      "effect_sticker_id": "5276296250017193032",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😴",
+      "effect_id": "5265266189885512685",
+      "premium_required": false,
+      "static_icon_id": "5107577036843516381",
+      "effect_sticker_id": "5265266189885512685",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😴",
+      "effect_id": "5226749537355320995",
+      "premium_required": false,
+      "static_icon_id": "5107577036843516381",
+      "effect_sticker_id": "5226749537355320995",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😭",
+      "effect_id": "5199797767169382536",
+      "premium_required": false,
+      "static_icon_id": "5107577036843516382",
+      "effect_sticker_id": "5199797767169382536",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😭",
+      "effect_id": "5400247588840554648",
+      "premium_required": false,
+      "static_icon_id": "5107577036843516382",
+      "effect_sticker_id": "5400247588840554648",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😭",
+      "effect_id": "5285202242662583987",
+      "premium_required": false,
+      "static_icon_id": "5107577036843516382",
+      "effect_sticker_id": "5285202242662583987",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😭",
+      "effect_id": "4992272626828182669",
+      "premium_required": false,
+      "static_icon_id": "5107577036843516382",
+      "effect_sticker_id": "4992272626828182669",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😭",
+      "effect_id": "5199616051398055853",
+      "premium_required": false,
+      "static_icon_id": "5107577036843516382",
+      "effect_sticker_id": "5199616051398055853",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😭",
+      "effect_id": "5276130773517213254",
+      "premium_required": false,
+      "static_icon_id": "5107577036843516382",
+      "effect_sticker_id": "5276130773517213254",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😭",
+      "effect_id": "5271819223352489647",
+      "premium_required": false,
+      "static_icon_id": "5107577036843516382",
+      "effect_sticker_id": "5271819223352489647",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👻",
+      "effect_id": "5465392617699160564",
+      "premium_required": false,
+      "static_icon_id": "5107577036843516384",
+      "effect_sticker_id": "5465392617699160564",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👻",
+      "effect_id": "5318885888753677407",
+      "premium_required": false,
+      "static_icon_id": "5107577036843516384",
+      "effect_sticker_id": "5318885888753677407",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👨‍💻",
+      "effect_id": "5190483263004620832",
+      "premium_required": false,
+      "static_icon_id": "5107577036843516385",
+      "effect_sticker_id": "5190483263004620832",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👨‍💻",
+      "effect_id": "5235959441886557740",
+      "premium_required": false,
+      "static_icon_id": "5107577036843516385",
+      "effect_sticker_id": "5235959441886557740",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👨‍💻",
+      "effect_id": "5260273183029744498",
+      "premium_required": false,
+      "static_icon_id": "5107577036843516385",
+      "effect_sticker_id": "5260273183029744498",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👨‍💻",
+      "effect_id": "4985671579921811347",
+      "premium_required": false,
+      "static_icon_id": "5107577036843516385",
+      "effect_sticker_id": "4985671579921811347",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👀",
+      "effect_id": "5210972967130912095",
+      "premium_required": false,
+      "static_icon_id": "5107577036843516386",
+      "effect_sticker_id": "5210972967130912095",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😇",
+      "effect_id": "5465428884403016135",
+      "premium_required": false,
+      "static_icon_id": "4913431256500274108",
+      "effect_sticker_id": "5465428884403016135",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😇",
+      "effect_id": "5222256511937433879",
+      "premium_required": false,
+      "static_icon_id": "4913431256500274108",
+      "effect_sticker_id": "5222256511937433879",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😇",
+      "effect_id": "5343563881778267878",
+      "premium_required": false,
+      "static_icon_id": "4913431256500274108",
+      "effect_sticker_id": "5343563881778267878",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😨",
+      "effect_id": "5278278115431305575",
+      "premium_required": false,
+      "static_icon_id": "4913431256500274109",
+      "effect_sticker_id": "5278278115431305575",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😨",
+      "effect_id": "5199710725362162922",
+      "premium_required": false,
+      "static_icon_id": "4913431256500274109",
+      "effect_sticker_id": "5199710725362162922",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😨",
+      "effect_id": "5217544915633838343",
+      "premium_required": false,
+      "static_icon_id": "4913431256500274109",
+      "effect_sticker_id": "5217544915633838343",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤝",
+      "effect_id": "5213075100219231383",
+      "premium_required": false,
+      "static_icon_id": "4913431256500274110",
+      "effect_sticker_id": "5213075100219231383",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤝",
+      "effect_id": "5325508169978368119",
+      "premium_required": false,
+      "static_icon_id": "4913431256500274110",
+      "effect_sticker_id": "5325508169978368119",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤝",
+      "effect_id": "5316559463883227154",
+      "premium_required": false,
+      "static_icon_id": "4913431256500274110",
+      "effect_sticker_id": "5316559463883227154",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤝",
+      "effect_id": "5289497025274985738",
+      "premium_required": false,
+      "static_icon_id": "4913431256500274110",
+      "effect_sticker_id": "5289497025274985738",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤗",
+      "effect_id": "5269383014822975158",
+      "premium_required": false,
+      "static_icon_id": "4913431256500274112",
+      "effect_sticker_id": "5269383014822975158",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤗",
+      "effect_id": "5377817847986675057",
+      "premium_required": false,
+      "static_icon_id": "4913431256500274112",
+      "effect_sticker_id": "5377817847986675057",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤗",
+      "effect_id": "5339081233001362284",
+      "premium_required": false,
+      "static_icon_id": "4913431256500274112",
+      "effect_sticker_id": "5339081233001362284",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤗",
+      "effect_id": "5296271447126186407",
+      "premium_required": false,
+      "static_icon_id": "4913431256500274112",
+      "effect_sticker_id": "5296271447126186407",
+      "effect_animation_id": "None"
+    }
+  ]
+}
+
+{
+  "source": "Telegram MTProto messages.getAvailableEffects",
+  "generated_at": "2026-09-01T17:36:20.063803+00:00",
+  "total_effects": 697,
+  "part": 4,
+  "of_parts": 6,
+  "range": [
+    351,
+    467
+  ],
+  "effects": [
+    {
+      "emoji": "🤗",
+      "effect_id": "5215623415985085036",
+      "premium_required": false,
+      "static_icon_id": "4913431256500274112",
+      "effect_sticker_id": "5215623415985085036",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🫡",
+      "effect_id": "5460747722237687710",
+      "premium_required": false,
+      "static_icon_id": "4913431256500274113",
+      "effect_sticker_id": "5460747722237687710",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🫡",
+      "effect_id": "5379735387675575132",
+      "premium_required": false,
+      "static_icon_id": "4913431256500274113",
+      "effect_sticker_id": "5379735387675575132",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🫡",
+      "effect_id": "5373254191831594037",
+      "premium_required": false,
+      "static_icon_id": "4913431256500274113",
+      "effect_sticker_id": "5373254191831594037",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎅",
+      "effect_id": "5469784788695005955",
+      "premium_required": false,
+      "static_icon_id": "4990112567515939494",
+      "effect_sticker_id": "5469784788695005955",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎄",
+      "effect_id": "5222344073435692012",
+      "premium_required": false,
+      "static_icon_id": "5006283127975314083",
+      "effect_sticker_id": "5222344073435692012",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎄",
+      "effect_id": "5440726014927844546",
+      "premium_required": false,
+      "static_icon_id": "5006283127975314083",
+      "effect_sticker_id": "5440726014927844546",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤪",
+      "effect_id": "5409367492332115297",
+      "premium_required": false,
+      "static_icon_id": "5005914529587004236",
+      "effect_sticker_id": "5409367492332115297",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤪",
+      "effect_id": "5384200354072117254",
+      "premium_required": false,
+      "static_icon_id": "5005914529587004236",
+      "effect_sticker_id": "5384200354072117254",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "💘",
+      "effect_id": "5361877497774358112",
+      "premium_required": false,
+      "static_icon_id": "5089164786923471992",
+      "effect_sticker_id": "5361877497774358112",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🦄",
+      "effect_id": "5386766008620959057",
+      "premium_required": false,
+      "static_icon_id": "5089164786923471994",
+      "effect_sticker_id": "5386766008620959057",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😘",
+      "effect_id": "5199736001244699098",
+      "premium_required": false,
+      "static_icon_id": "5089164786923471995",
+      "effect_sticker_id": "5199736001244699098",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😘",
+      "effect_id": "5202214596806450391",
+      "premium_required": false,
+      "static_icon_id": "5089164786923471995",
+      "effect_sticker_id": "5202214596806450391",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😘",
+      "effect_id": "5276270733616487427",
+      "premium_required": false,
+      "static_icon_id": "5089164786923471995",
+      "effect_sticker_id": "5276270733616487427",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😘",
+      "effect_id": "5271825352270814879",
+      "premium_required": false,
+      "static_icon_id": "5089164786923471995",
+      "effect_sticker_id": "5271825352270814879",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😘",
+      "effect_id": "5202206840095511405",
+      "premium_required": false,
+      "static_icon_id": "5089164786923471995",
+      "effect_sticker_id": "5202206840095511405",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😘",
+      "effect_id": "5258204473376919605",
+      "premium_required": false,
+      "static_icon_id": "5089164786923471995",
+      "effect_sticker_id": "5258204473376919605",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😘",
+      "effect_id": "5280689245646770785",
+      "premium_required": false,
+      "static_icon_id": "5089164786923471995",
+      "effect_sticker_id": "5280689245646770785",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😘",
+      "effect_id": "5314671589533431402",
+      "premium_required": false,
+      "static_icon_id": "5089164786923471995",
+      "effect_sticker_id": "5314671589533431402",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😘",
+      "effect_id": "5201972416485529451",
+      "premium_required": false,
+      "static_icon_id": "5089164786923471995",
+      "effect_sticker_id": "5201972416485529451",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😘",
+      "effect_id": "5334882116490510602",
+      "premium_required": false,
+      "static_icon_id": "5089164786923471995",
+      "effect_sticker_id": "5334882116490510602",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😘",
+      "effect_id": "5269257464338979611",
+      "premium_required": false,
+      "static_icon_id": "5089164786923471995",
+      "effect_sticker_id": "5269257464338979611",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😘",
+      "effect_id": "5386728797024304133",
+      "premium_required": false,
+      "static_icon_id": "5089164786923471995",
+      "effect_sticker_id": "5386728797024304133",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😘",
+      "effect_id": "5350590130446932583",
+      "premium_required": false,
+      "static_icon_id": "5089164786923471995",
+      "effect_sticker_id": "5350590130446932583",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😘",
+      "effect_id": "5203995831413268540",
+      "premium_required": false,
+      "static_icon_id": "5089164786923471995",
+      "effect_sticker_id": "5203995831413268540",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😘",
+      "effect_id": "5300918331157519266",
+      "premium_required": false,
+      "static_icon_id": "5089164786923471995",
+      "effect_sticker_id": "5300918331157519266",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "💊",
+      "effect_id": "5386366834360467867",
+      "premium_required": false,
+      "static_icon_id": "5089164786923471996",
+      "effect_sticker_id": "5386366834360467867",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😎",
+      "effect_id": "5255931830086944741",
+      "premium_required": false,
+      "static_icon_id": "4924779393319961212",
+      "effect_sticker_id": "5255931830086944741",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😎",
+      "effect_id": "5314551180125281802",
+      "premium_required": false,
+      "static_icon_id": "4924779393319961212",
+      "effect_sticker_id": "5314551180125281802",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😎",
+      "effect_id": "5204239716836186750",
+      "premium_required": false,
+      "static_icon_id": "4924779393319961212",
+      "effect_sticker_id": "5204239716836186750",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😎",
+      "effect_id": "5384149007738099175",
+      "premium_required": false,
+      "static_icon_id": "4924779393319961212",
+      "effect_sticker_id": "5384149007738099175",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤷‍♂",
+      "effect_id": "5393068868832879749",
+      "premium_required": false,
+      "static_icon_id": "4924779393319961214",
+      "effect_sticker_id": "5393068868832879749",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😡",
+      "effect_id": "5386309526611834845",
+      "premium_required": false,
+      "static_icon_id": "4924779393319961217",
+      "effect_sticker_id": "5386309526611834845",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😡",
+      "effect_id": "5282751684647339553",
+      "premium_required": false,
+      "static_icon_id": "4924779393319961217",
+      "effect_sticker_id": "5282751684647339553",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😡",
+      "effect_id": "5280886157012395432",
+      "premium_required": false,
+      "static_icon_id": "4924779393319961217",
+      "effect_sticker_id": "5280886157012395432",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😡",
+      "effect_id": "5325838272574800390",
+      "premium_required": false,
+      "static_icon_id": "4924779393319961217",
+      "effect_sticker_id": "5325838272574800390",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😡",
+      "effect_id": "5298993008987872222",
+      "premium_required": false,
+      "static_icon_id": "4924779393319961217",
+      "effect_sticker_id": "5298993008987872222",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😡",
+      "effect_id": "5325732229832260838",
+      "premium_required": false,
+      "static_icon_id": "4924779393319961217",
+      "effect_sticker_id": "5325732229832260838",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😡",
+      "effect_id": "5413420141868228037",
+      "premium_required": false,
+      "static_icon_id": "4924779393319961217",
+      "effect_sticker_id": "5413420141868228037",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😡",
+      "effect_id": "5278314803041933798",
+      "premium_required": false,
+      "static_icon_id": "4924779393319961217",
+      "effect_sticker_id": "5278314803041933798",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😡",
+      "effect_id": "5345783735625194276",
+      "premium_required": false,
+      "static_icon_id": "4924779393319961217",
+      "effect_sticker_id": "5345783735625194276",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😡",
+      "effect_id": "5402617139477630460",
+      "premium_required": false,
+      "static_icon_id": "4924779393319961217",
+      "effect_sticker_id": "5402617139477630460",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😡",
+      "effect_id": "5303197064711123020",
+      "premium_required": false,
+      "static_icon_id": "4924779393319961217",
+      "effect_sticker_id": "5303197064711123020",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😡",
+      "effect_id": "5258019592214694954",
+      "premium_required": false,
+      "static_icon_id": "4924779393319961217",
+      "effect_sticker_id": "5258019592214694954",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😂",
+      "effect_id": "5291931816465275738",
+      "premium_required": false,
+      "static_icon_id": "5051344365771817404",
+      "effect_sticker_id": "5291931816465275738",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😂",
+      "effect_id": "5312543115410681520",
+      "premium_required": false,
+      "static_icon_id": "5051344365771817404",
+      "effect_sticker_id": "5312543115410681520",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😂",
+      "effect_id": "5199474012534610002",
+      "premium_required": false,
+      "static_icon_id": "5051344365771817404",
+      "effect_sticker_id": "5199474012534610002",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😂",
+      "effect_id": "5364136680636828335",
+      "premium_required": false,
+      "static_icon_id": "5051344365771817404",
+      "effect_sticker_id": "5364136680636828335",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😂",
+      "effect_id": "5287245697907695575",
+      "premium_required": false,
+      "static_icon_id": "5051344365771817404",
+      "effect_sticker_id": "5287245697907695575",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😂",
+      "effect_id": "5199465598693687055",
+      "premium_required": false,
+      "static_icon_id": "5051344365771817404",
+      "effect_sticker_id": "5199465598693687055",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😂",
+      "effect_id": "5199843671779843451",
+      "premium_required": false,
+      "static_icon_id": "5051344365771817404",
+      "effect_sticker_id": "5199843671779843451",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "☕",
+      "effect_id": "5382211990372497138",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5382211990372497138",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "⚽",
+      "effect_id": "5451910114061602411",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5451910114061602411",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "✅",
+      "effect_id": "5265153872195756001",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5265153872195756001",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "✅",
+      "effect_id": "5192784725525152419",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5192784725525152419",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "✈",
+      "effect_id": "5402217741878838912",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5402217741878838912",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "✊",
+      "effect_id": "5271837150545976153",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5271837150545976153",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "❄",
+      "effect_id": "5211213609853534583",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5211213609853534583",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "❄",
+      "effect_id": "5467812050086416198",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5467812050086416198",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "❤‍🩹",
+      "effect_id": "5224269103547567373",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5224269103547567373",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🌅",
+      "effect_id": "5271662577305277261",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5271662577305277261",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🌹",
+      "effect_id": "5436014903955561968",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5436014903955561968",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🍀",
+      "effect_id": "5276496378313329689",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5276496378313329689",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🍔",
+      "effect_id": "5307875387903067038",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5307875387903067038",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🍳",
+      "effect_id": "5310027626079870721",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5310027626079870721",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🍿",
+      "effect_id": "5426962328371349800",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5426962328371349800",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5519457717560803344",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5519457717560803344",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5663393367413751912",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5663393367413751912",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5724617928649736201",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5724617928649736201",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5648025729615527962",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5648025729615527962",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5701820405451325451",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5701820405451325451",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5717737768998666247",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5717737768998666247",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5717331924653965329",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5717331924653965329",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5722065266376966148",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5722065266376966148",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5717812776307523611",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5717812776307523611",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5701700996770562062",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5701700996770562062",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5517233362588139530",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5517233362588139530",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5539514394494369805",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5539514394494369805",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5523913514202169364",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5523913514202169364",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5469657369900235439",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5469657369900235439",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5710643921839718407",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5710643921839718407",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5375265804189189595",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5375265804189189595",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5544282014351360004",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5544282014351360004",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5492319666053316633",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5492319666053316633",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5762366696861990930",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5762366696861990930",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5758269066133372941",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5758269066133372941",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5427200132120582645",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5427200132120582645",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5222238451599949657",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5222238451599949657",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5496953669477728274",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5496953669477728274",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5228895582189272633",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5228895582189272633",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5638930797063831568",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5638930797063831568",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5208428005734498711",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5208428005734498711",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5537250070556049427",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5537250070556049427",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5632207511093248010",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5632207511093248010",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5668144954157826053",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5668144954157826053",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5544057378971844622",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5544057378971844622",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5420104476780411731",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5420104476780411731",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5735664292477272080",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5735664292477272080",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5553353530741358598",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5553353530741358598",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5215616105950759174",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5215616105950759174",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5604922468625023009",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5604922468625023009",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎁",
+      "effect_id": "5591366035715391496",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5591366035715391496",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎂",
+      "effect_id": "5015142455801022324",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5015142455801022324",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎂",
+      "effect_id": "5472001223747979823",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5472001223747979823",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎆",
+      "effect_id": "5460968041175074217",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5460968041175074217",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎆",
+      "effect_id": "5224698157895534565",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5224698157895534565",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎆",
+      "effect_id": "5217614378139924936",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5217614378139924936",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎤",
+      "effect_id": "5208944110479622965",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5208944110479622965",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎨",
+      "effect_id": "5445266293575927895",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5445266293575927895",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎮",
+      "effect_id": "5334946326251586946",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5334946326251586946",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎮",
+      "effect_id": "5388822924293588409",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5388822924293588409",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🎮",
+      "effect_id": "5312489303765430099",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5312489303765430099",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🏃",
+      "effect_id": "5271956091075313012",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5271956091075313012",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🏃‍♀",
+      "effect_id": "5460834880009026589",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5460834880009026589",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🏃‍♂",
+      "effect_id": "5188249592247890215",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5188249592247890215",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🏃‍♂",
+      "effect_id": "5361746423962418712",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5361746423962418712",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🏃‍♂",
+      "effect_id": "5046759574082683669",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5046759574082683669",
+      "effect_animation_id": "None"
+    }
+  ]
+}
+
+{
+  "source": "Telegram MTProto messages.getAvailableEffects",
+  "generated_at": "2026-09-01T17:36:20.063803+00:00",
+  "total_effects": 697,
+  "part": 5,
+  "of_parts": 6,
+  "range": [
+    468,
+    584
+  ],
+  "effects": [
+    {
+      "emoji": "🏊‍♂",
+      "effect_id": "5332333439947394970",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5332333439947394970",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🏋‍♀",
+      "effect_id": "5273737978517145694",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5273737978517145694",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🏋‍♂",
+      "effect_id": "5426964153732449060",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5426964153732449060",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🏖",
+      "effect_id": "5420623295944868630",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5420623295944868630",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🏖",
+      "effect_id": "5287761837012568140",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5287761837012568140",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5467687234041826545",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5467687234041826545",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5350689172392795613",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5350689172392795613",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5215680603474645577",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5215680603474645577",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5289615987279157811",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5289615987279157811",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5260603586273894516",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5260603586273894516",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5436257041326821148",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5436257041326821148",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5278403077504782598",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5278403077504782598",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5201721036344679215",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5201721036344679215",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5267178992225504675",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5267178992225504675",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5222151164979599382",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5222151164979599382",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5363880842319911945",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5363880842319911945",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5429411250004055645",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5429411250004055645",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5219754285465606022",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5219754285465606022",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5282985717415304019",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5282985717415304019",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5202121275757050228",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5202121275757050228",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5301114984825118615",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5301114984825118615",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5354967385021371738",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5354967385021371738",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5235844027525386142",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5235844027525386142",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5280958939528187494",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5280958939528187494",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5312041836892675953",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5312041836892675953",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5233365986014420963",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5233365986014420963",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5303467072125163514",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5303467072125163514",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5258154033280995408",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5258154033280995408",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5269773341450836434",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5269773341450836434",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5474460702410294911",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5474460702410294911",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5215176077961350523",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5215176077961350523",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5472309439191073890",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5472309439191073890",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5276140329819460862",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5276140329819460862",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5393236217938594247",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5393236217938594247",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5474173394867998524",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5474173394867998524",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5235529983811670976",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5235529983811670976",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5229000529715153707",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5229000529715153707",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5408957297185542626",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5408957297185542626",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5366446707322145801",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5366446707322145801",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5364218894900807959",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5364218894900807959",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5197403451750896580",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5197403451750896580",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5409357837245630745",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5409357837245630745",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5402111321179179380",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5402111321179179380",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5326016612501836502",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5326016612501836502",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5188562390421098380",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5188562390421098380",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5339558640091156104",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5339558640091156104",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👋",
+      "effect_id": "5427195935937549570",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5427195935937549570",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👨‍⚕",
+      "effect_id": "5233503459327626386",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5233503459327626386",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👨‍🍳",
+      "effect_id": "5204413731731160980",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5204413731731160980",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👮‍♀",
+      "effect_id": "5210988154135261581",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5210988154135261581",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "👿",
+      "effect_id": "5330331572870599180",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5330331572870599180",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "💃",
+      "effect_id": "5282957555314728059",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5282957555314728059",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "💃",
+      "effect_id": "5328171900105405553",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5328171900105405553",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "💌",
+      "effect_id": "5219882692102867066",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5219882692102867066",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "💍",
+      "effect_id": "5203973364439337911",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5203973364439337911",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "💐",
+      "effect_id": "5424589118422145723",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5424589118422145723",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "💐",
+      "effect_id": "5202157903238141805",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5202157903238141805",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "💓",
+      "effect_id": "5271946539068037852",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5271946539068037852",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "💕",
+      "effect_id": "5362081989757255882",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5362081989757255882",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "💝",
+      "effect_id": "5496856860914876428",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5496856860914876428",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "💪",
+      "effect_id": "5310138204307868219",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5310138204307868219",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "💪",
+      "effect_id": "5287354467954477553",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5287354467954477553",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "💪",
+      "effect_id": "5319177637292160119",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5319177637292160119",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "💪",
+      "effect_id": "5334624873719273642",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5334624873719273642",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "💪",
+      "effect_id": "5427182947956440499",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5427182947956440499",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "💪",
+      "effect_id": "5220005468037993227",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5220005468037993227",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "💪",
+      "effect_id": "5305669114742722915",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5305669114742722915",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "💸",
+      "effect_id": "5289543780288971412",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5289543780288971412",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "📊",
+      "effect_id": "5305750439948465683",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5305750439948465683",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "📣",
+      "effect_id": "5389104167342063261",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5389104167342063261",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "📸",
+      "effect_id": "5449359010861956820",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5449359010861956820",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🔞",
+      "effect_id": "5289817034698267624",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5289817034698267624",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🔞",
+      "effect_id": "5300800846622104011",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5300800846622104011",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🕺",
+      "effect_id": "5215311356546263053",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5215311356546263053",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🕺",
+      "effect_id": "5460665984715081728",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5460665984715081728",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🕺",
+      "effect_id": "5307726648890638696",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5307726648890638696",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🕺",
+      "effect_id": "5431617471624798325",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5431617471624798325",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🕺",
+      "effect_id": "5224652296234735777",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5224652296234735777",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🕺",
+      "effect_id": "5282819764173936427",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5282819764173936427",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😀",
+      "effect_id": "5197405109608275562",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5197405109608275562",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😅",
+      "effect_id": "5215253864114045785",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5215253864114045785",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😉",
+      "effect_id": "5296605728725800932",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5296605728725800932",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😊",
+      "effect_id": "5231253094033004867",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5231253094033004867",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😋",
+      "effect_id": "5411507829154531475",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5411507829154531475",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😋",
+      "effect_id": "5213192219682426206",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5213192219682426206",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😌",
+      "effect_id": "5309785694867043246",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5309785694867043246",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😏",
+      "effect_id": "5301183708596818801",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5301183708596818801",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😏",
+      "effect_id": "5402349567310053720",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5402349567310053720",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😏",
+      "effect_id": "5292150503315095993",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5292150503315095993",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😏",
+      "effect_id": "5420231728071459313",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5420231728071459313",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😑",
+      "effect_id": "5289594705716203466",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5289594705716203466",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😓",
+      "effect_id": "5334945003401654009",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5334945003401654009",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😔",
+      "effect_id": "5323481379206339475",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5323481379206339475",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😔",
+      "effect_id": "5316933933491836474",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5316933933491836474",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😔",
+      "effect_id": "5420543465387743692",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5420543465387743692",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😕",
+      "effect_id": "5271572997172370296",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5271572997172370296",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😚",
+      "effect_id": "5264778882896108916",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5264778882896108916",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😝",
+      "effect_id": "5393299396907520375",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5393299396907520375",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😝",
+      "effect_id": "5260346463761747746",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5260346463761747746",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😝",
+      "effect_id": "5308028460537503574",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5308028460537503574",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😝",
+      "effect_id": "5366350641788638575",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5366350641788638575",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😝",
+      "effect_id": "5402246376425804992",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5402246376425804992",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😝",
+      "effect_id": "5269466010771018176",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5269466010771018176",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😝",
+      "effect_id": "5409171852276813755",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5409171852276813755",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😝",
+      "effect_id": "5280772555127409384",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5280772555127409384",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😝",
+      "effect_id": "5303293422302425285",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5303293422302425285",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😝",
+      "effect_id": "5372890936382608427",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5372890936382608427",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😞",
+      "effect_id": "5201965948264781569",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5201965948264781569",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😠",
+      "effect_id": "5355096272694951726",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5355096272694951726",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😠",
+      "effect_id": "5449502020388016318",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5449502020388016318",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😠",
+      "effect_id": "5445159022472746552",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5445159022472746552",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😠",
+      "effect_id": "5229016601482776567",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5229016601482776567",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😠",
+      "effect_id": "5278468090424743557",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5278468090424743557",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😤",
+      "effect_id": "5303031197369126799",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5303031197369126799",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😦",
+      "effect_id": "5278549175112324076",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5278549175112324076",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😪",
+      "effect_id": "5240195692684658955",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5240195692684658955",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😬",
+      "effect_id": "5386405300087569470",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5386405300087569470",
+      "effect_animation_id": "None"
+    }
+  ]
+}
+
+{
+  "source": "Telegram MTProto messages.getAvailableEffects",
+  "generated_at": "2026-09-01T17:36:20.063803+00:00",
+  "total_effects": 697,
+  "part": 6,
+  "of_parts": 6,
+  "range": [
+    585,
+    696
+  ],
+  "effects": [
+    {
+      "emoji": "😬",
+      "effect_id": "5438153630165257316",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5438153630165257316",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😰",
+      "effect_id": "5381818360914791298",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5381818360914791298",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😰",
+      "effect_id": "5246706837335584772",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5246706837335584772",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😰",
+      "effect_id": "5305606339500716666",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5305606339500716666",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😲",
+      "effect_id": "5296477528246983373",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5296477528246983373",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😳",
+      "effect_id": "5300931044260727537",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5300931044260727537",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😳",
+      "effect_id": "5208669928357382382",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5208669928357382382",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😵",
+      "effect_id": "5332696038266379096",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5332696038266379096",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😵",
+      "effect_id": "5325673178326908685",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5325673178326908685",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😵",
+      "effect_id": "5402091482725240276",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5402091482725240276",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😵",
+      "effect_id": "5332534946928016204",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5332534946928016204",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😵‍💫",
+      "effect_id": "5199801190258317413",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5199801190258317413",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😵‍💫",
+      "effect_id": "5235815680741232979",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5235815680741232979",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😵‍💫",
+      "effect_id": "5305461758016635527",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5305461758016635527",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "😶‍🌫",
+      "effect_id": "5462909529601623814",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5462909529601623814",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🙄",
+      "effect_id": "5454306267726107102",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5454306267726107102",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🙅‍♂",
+      "effect_id": "5361647407786378862",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5361647407786378862",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🚌",
+      "effect_id": "5229123365779828990",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5229123365779828990",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🚨",
+      "effect_id": "5319040082374575127",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5319040082374575127",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🛁",
+      "effect_id": "5404541362135644327",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5404541362135644327",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🛍",
+      "effect_id": "5427053755340182171",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5427053755340182171",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🛍",
+      "effect_id": "5384340838157406314",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5384340838157406314",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🛷",
+      "effect_id": "5465575244003556617",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5465575244003556617",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤌",
+      "effect_id": "5359398631629675162",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5359398631629675162",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤑",
+      "effect_id": "5416090885676875994",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5416090885676875994",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤑",
+      "effect_id": "5469915548974336625",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5469915548974336625",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤑",
+      "effect_id": "5215527195832756800",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5215527195832756800",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤑",
+      "effect_id": "5275989945834557503",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5275989945834557503",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤑",
+      "effect_id": "5415640712974714131",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5415640712974714131",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤑",
+      "effect_id": "5454328103339839002",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5454328103339839002",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤑",
+      "effect_id": "5343933807311467091",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5343933807311467091",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤑",
+      "effect_id": "5611588150494232592",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5611588150494232592",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤑",
+      "effect_id": "5260350432311529401",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5260350432311529401",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤑",
+      "effect_id": "5343724431950756749",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5343724431950756749",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤑",
+      "effect_id": "5386841114714061509",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5386841114714061509",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤑",
+      "effect_id": "5260557131907609234",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5260557131907609234",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤑",
+      "effect_id": "5276514434355830294",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5276514434355830294",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤑",
+      "effect_id": "4913682971648590332",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "4913682971648590332",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤒",
+      "effect_id": "5323426412214885817",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5323426412214885817",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤕",
+      "effect_id": "5402349644619468753",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5402349644619468753",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤘",
+      "effect_id": "5217786211191511814",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5217786211191511814",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤘",
+      "effect_id": "5330524060419897725",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5330524060419897725",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤘",
+      "effect_id": "5402405234381177473",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5402405234381177473",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤙",
+      "effect_id": "5334911489771844419",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5334911489771844419",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤤",
+      "effect_id": "5386862675449899143",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5386862675449899143",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤤",
+      "effect_id": "5449440821399012582",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5449440821399012582",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤤",
+      "effect_id": "5211060335355638741",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5211060335355638741",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤤",
+      "effect_id": "5253748075440129301",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5253748075440129301",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤤",
+      "effect_id": "5197520025753246919",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5197520025753246919",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤤",
+      "effect_id": "5321011313449655360",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5321011313449655360",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤤",
+      "effect_id": "5201756151997284775",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5201756151997284775",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤤",
+      "effect_id": "5213394740275331738",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5213394740275331738",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤦‍♂",
+      "effect_id": "5285436760761840834",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5285436760761840834",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤦‍♂",
+      "effect_id": "5264801010567626868",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5264801010567626868",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤧",
+      "effect_id": "5454018882874391666",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5454018882874391666",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤧",
+      "effect_id": "5278542045466612245",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5278542045466612245",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤧",
+      "effect_id": "5220134192502819741",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5220134192502819741",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🤫",
+      "effect_id": "5330199652950096023",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5330199652950096023",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥂",
+      "effect_id": "5206579593544219932",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5206579593544219932",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥳",
+      "effect_id": "5202005612287779106",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5202005612287779106",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥳",
+      "effect_id": "5316623557680185598",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5316623557680185598",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥳",
+      "effect_id": "5199421747077584990",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5199421747077584990",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥳",
+      "effect_id": "5323480984069358714",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5323480984069358714",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥳",
+      "effect_id": "5287295781521344331",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5287295781521344331",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥳",
+      "effect_id": "5231170673610595275",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5231170673610595275",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥳",
+      "effect_id": "5199509218381535721",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5199509218381535721",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥳",
+      "effect_id": "5309864361488034390",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5309864361488034390",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥳",
+      "effect_id": "5226751457205688851",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5226751457205688851",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥳",
+      "effect_id": "5301278678913652950",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5301278678913652950",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥳",
+      "effect_id": "5265221702614260055",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5265221702614260055",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥳",
+      "effect_id": "5276520408655338097",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5276520408655338097",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥳",
+      "effect_id": "5310277047715639372",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5310277047715639372",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥳",
+      "effect_id": "5309929151069698755",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5309929151069698755",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥳",
+      "effect_id": "5228929701409462851",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5228929701409462851",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥳",
+      "effect_id": "5202082225914385660",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5202082225914385660",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥳",
+      "effect_id": "5231212347678275914",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5231212347678275914",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥵",
+      "effect_id": "5289629915858094188",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5289629915858094188",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥵",
+      "effect_id": "5267332996867831343",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5267332996867831343",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥵",
+      "effect_id": "5193180395092330134",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5193180395092330134",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥶",
+      "effect_id": "5418181894799899680",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5418181894799899680",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥶",
+      "effect_id": "5359574712403906605",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5359574712403906605",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥶",
+      "effect_id": "5307718097610754754",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5307718097610754754",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥶",
+      "effect_id": "5220089383109016312",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5220089383109016312",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🥹",
+      "effect_id": "5201687174822510819",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5201687174822510819",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🧑‍💻",
+      "effect_id": "5113957245121463396",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5113957245121463396",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🧘‍♂",
+      "effect_id": "5314503351369472346",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5314503351369472346",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🧘‍♂",
+      "effect_id": "4954250363688453518",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "4954250363688453518",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🧠",
+      "effect_id": "5206341557866738444",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5206341557866738444",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🧳",
+      "effect_id": "5474141375886803172",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5474141375886803172",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🧳",
+      "effect_id": "4967478970334315349",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "4967478970334315349",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🧺",
+      "effect_id": "5359819272136702255",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5359819272136702255",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🩷",
+      "effect_id": "5429503093584708815",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5429503093584708815",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🪩",
+      "effect_id": "5226758075750306754",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5226758075750306754",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🫀",
+      "effect_id": "5317021413385714861",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5317021413385714861",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🫠",
+      "effect_id": "5388652560120825927",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5388652560120825927",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🫠",
+      "effect_id": "5267129694590874705",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5267129694590874705",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🫨",
+      "effect_id": "5442946238141968338",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5442946238141968338",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🫨",
+      "effect_id": "5222469924567402209",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5222469924567402209",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🫵",
+      "effect_id": "5467638615012029622",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5467638615012029622",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🫵",
+      "effect_id": "5458469658698988745",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5458469658698988745",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🫶",
+      "effect_id": "5330482850208691087",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5330482850208691087",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🫶",
+      "effect_id": "5316716367628480549",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5316716367628480549",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🫶",
+      "effect_id": "5420507486446700198",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5420507486446700198",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🫶",
+      "effect_id": "5334902547649933407",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5334902547649933407",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🫶",
+      "effect_id": "5368723830263007662",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5368723830263007662",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🫶",
+      "effect_id": "5283233863445792731",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5283233863445792731",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🫶",
+      "effect_id": "5235665880871875633",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5235665880871875633",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🫶",
+      "effect_id": "5242522100375237015",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5242522100375237015",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🍑",
+      "effect_id": "5361611003643575178",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5361611003643575178",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🍑",
+      "effect_id": "5319069369756564474",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5319069369756564474",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🍑",
+      "effect_id": "5303040994189515406",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5303040994189515406",
+      "effect_animation_id": "None"
+    },
+    {
+      "emoji": "🍆",
+      "effect_id": "5303274812209110229",
+      "premium_required": false,
+      "static_icon_id": "None",
+      "effect_sticker_id": "5303274812209110229",
+      "effect_animation_id": "None"
+    }
+  ]
+}
