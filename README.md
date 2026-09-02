@@ -193,3 +193,67 @@ xato sababigacha — batafsil logga yoziladi (Render -> Logs). Nimadir
 ishlamasa, avval shu yerga qarang: qaysi funksiya, qaysi bosqichda, nima
 sababdan (limit tugagan/kalit yaroqsiz/timeout/boshqa xato) ishlamaganini
 aniq ko'rasiz.
+
+## 🎁 /tabrik — Telegram Business orqali do'stning private chatida animatsiya
+
+`/tabrik` botga (yoki inline: `@BotUsername /tabrik matn`) yuborilganda,
+bot **Telegram Business API** orqali AYNAN qabul qiluvchi bilan bo'lgan
+chatga (bot a'zo bo'lmagan, ikki foydalanuvchi orasidagi chat) audio + 5 ta
+emoji (Telegram Message Effect bilan) + yakuniy tabrik matnini yuboradi.
+Batafsil arxitektura va Telegram API cheklovlari: `tabrik_business.py`
+faylining boshidagi izoh va suhbatdagi FINAL_REPORT.
+
+### BotFather sozlamalari
+
+1. [@BotFather](https://t.me/BotFather) → botingizni tanlang.
+2. **Bot Settings → Business Mode** — yoqing (Telegram interfeysida bu
+   band nomi versiyaga qarab "Business Mode" yoki "Secretary Mode" kabi
+   biroz farq qilishi mumkin).
+3. **Bot Settings → Inline Mode** — yoqilganligiga ishonch hosil qiling
+   (loyihada allaqachon yoqilgan bo'lishi kerak, boshqa inline
+   funksiyalar — `/qoshiq`, `/vid`, `/pro` — ham shunga tayanadi).
+
+### Telegram Business ulash (foydalanuvchi tomonidan, /tabrik yuboruvchi A uchun)
+
+1. Telegram ilovasida: **Settings → Telegram Business → Chatbots**
+   (nomi versiyaga qarab farq qilishi mumkin).
+2. Botni (`@Student_ai_uz_bot`) tanlang, ulang.
+3. Botga kamida quyidagi huquqlarni bering:
+   - **Reply to messages** (`can_reply`)
+   - **Delete messages it sent** (`can_delete_sent_messages`)
+4. Kerak bo'lsa, "Chat access" bo'limida qaysi chatlarga botga ruxsat
+   berilishini tanlang ("All chats" tavsiya etiladi — aks holda faqat
+   ruxsat berilgan chatlarda animatsiya ishlaydi).
+
+Ulanish holati bot tomonidan avtomatik saqlanadi (`business_storage.py`,
+Render qayta ishga tushganda ham yo'qolmaydi — qarang: "DOIMIY SAQLASH"
+bo'limi yuqorida, xuddi shu Upstash/Neon/GitHub mexanizmi ishlatiladi).
+
+### ENV
+
+- `TABRIK_AUDIO_PATH` (ixtiyoriy) — animatsiya boshida yuboriladigan audio
+  fayl yo'li. Standart: `assets/tabrik/tabrik_music.mp3`. Fayl mavjud
+  bo'lmasa, animatsiya audiosiz davom etadi (`AUDIO_NOT_FOUND` logi
+  bilan) — bot CRASH bo'lmaydi.
+- `TABRIK_EFFECTS_JSON_PATH` (ixtiyoriy) — `emoji -> message_effect_id`
+  xaritasi fayli. Standart: `data/telegram_message_effects.json`.
+
+### Telegram API cheklovlari (yashirilmagan, kodda hisobga olingan)
+
+- Business account nomidan yuborilgan xabarlarga `callback_data` tugma
+  qo'yib bo'lmaydi — shuning uchun "🎁 Tabriknomani qabul qilish" tugmasi
+  (boshlang'ich HAM, 120 soniyadan keyin qayta chiqadigani HAM) faqat
+  ASL inline xabarda (`inline_message_id` orqali) bo'ladi.
+- Recipient (qabul qiluvchi)ning `chat_id`i inline callback'da to'g'ridan
+  to'g'ri kelmaydi — kod buni `query.from_user.id` (Bot API'ning shaxsiy
+  chat modeli: `chat_id == boshqa tomon user_id`) orqali aniqlaydi. Bu
+  rasmiy hujjatda so'zma-so'z "kafolatlangan" IBORA emas, balki Bot
+  API'ning barqaror xatti-harakati — real Telegram bilan tekshirilishi
+  tavsiya etiladi (qarang: FINAL_REPORT.md, 20-band).
+- Bot audio xabarini yubora oladi, lekin Telegram klientidagi "Play"
+  tugmasini masofadan bosolmaydi (avtoijro botga bog'liq emas).
+- `can_reply`/business chat eligibility Telegram tomonidan cheklangan
+  bo'lishi mumkin (masalan oxirgi 24 soatda faollik bo'lmagan chatlar) —
+  bunday holatda animatsiya `TABRIK_BUSINESS_CHAT_NOT_ELIGIBLE` logi
+  bilan to'xtaydi, foydalanuvchiga aniq sabab ko'rsatiladi, hech qachon
+  botning shaxsiy chatiga yashirincha redirect qilinmaydi.
