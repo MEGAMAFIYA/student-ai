@@ -21,6 +21,7 @@ from threading import Thread, Timer
 
 import telegram.error
 from telegram import BotCommand, BotCommandScopeDefault, BotCommandScopeAllGroupChats, BotCommandScopeChat, InlineQueryResultPhoto
+import business_storage
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -30,6 +31,7 @@ from telegram.ext import (
     InlineQueryHandler,
     ChosenInlineResultHandler,
     ChatMemberHandler,
+    BusinessConnectionHandler,
     filters,
 )
 
@@ -115,6 +117,20 @@ async def _post_init(application):
         reminders.reschedule_all(application)
     except Exception as e:
         logger.error(f"⏰ Eslatmalarni qayta rejalashtirishda xato: {type(e).__name__}: {e}", exc_info=True)
+
+
+async def _on_business_connection(update, context):
+    """📇 `business_connection` update — bot Telegram Business orqali
+    ulanganda, uzilganda yoki huquqlari o'zgarganda keladi (uch holatni
+    ham Telegram xuddi shu update turi orqali, `is_enabled` maydoni bilan
+    farqlab yuboradi). Ma'lumot restart-safe saqlanadi (business_storage.py).
+    """
+    conn = update.business_connection
+    if conn is None:
+        return
+    business_storage.save_connection(conn)
+    if not conn.is_enabled:
+        logger.info(f"📇 BUSINESS_CONNECTION_DISABLED user_id={conn.user.id} connection_id={conn.id}")
 
 
 async def _clear_pending_on_other_command(update, context):
@@ -927,6 +943,11 @@ def main():
     # 🔍 Xuddi shu, lekin do'st bilan chatda inline rejimda kelgan /tabrik
     # uchun (inline_message_id bilan ishlaydi, oddiy Message emas).
     app.add_handler(CallbackQueryHandler(inline_query.inline_tabrik_claim_callback, pattern="^itabrik:claim:"))
+    # 📇 Telegram Business — foydalanuvchi botni Settings → Telegram
+    # Business → Chatbots orqali ulaganda/uzganda/sozlamasini
+    # o'zgartirganda keladigan update. /tabrik'ning Business oqimi
+    # (tabrik_business.py) shu saqlangan ma'lumotdan foydalanadi.
+    app.add_handler(BusinessConnectionHandler(_on_business_connection))
     # 🎨 /rasim — Telegram Mini App orqali rasm chizish.
     app.add_handler(CommandHandler("rasim", rasim.rasim_cmd))
     # 🎬 /vid — video yuklab olish (ASCII buyruq, Privacy Mode'dan qat'i
