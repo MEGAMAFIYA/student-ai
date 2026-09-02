@@ -123,6 +123,7 @@ import github_storage
 import pro_tabrik_logic
 import storage
 import tabrik_logic
+import tabrik_business
 import video_tools
 import webapp_security
 
@@ -374,9 +375,18 @@ async def on_inline_query(
     # --------------------------------------------------------
 
     if query[:7].lower().startswith("/tabrik") and not TABRIK_BARE_RE.match(query):
-        text = tabrik_logic.parse_tabrik_text(query)
-        if text:
-            short_id = tabrik_logic.store_greeting(text)
+        raw_text = tabrik_logic.parse_tabrik_text(query)
+        if raw_text:
+            # 🎁 Business oqimi uchun: foydalanuvchi matn boshida o'z
+            # emojilarini yozgan bo'lsa o'shalar, aks holda Business
+            # default ketma-ketligi (😍🥳🎉❤️✨) ishlatiladi — bu
+            # tabrik_logic.DEFAULT_EMOJIS (🎉🎊🥳🎁✨) dan ATAYLAB farqli,
+            # chunki u eski /pro va guruh /tabrik oqimlari uchun umumiy va
+            # o'zgartirilmadi (21-band: /pro'ni buzma).
+            custom_emojis, text = tabrik_logic.extract_emojis(raw_text)
+            emojis = custom_emojis or tabrik_business.DEFAULT_EMOJIS
+            short_id = tabrik_logic.store_greeting(text, emojis=emojis)
+            tabrik_business.register_celebration(short_id, sender_user_id=update.inline_query.from_user.id)
             results = [
                 InlineQueryResultArticle(
                     id=str(uuid.uuid4()),
@@ -1175,98 +1185,33 @@ async def _handle_qoshiq(
 # "🎁 Tabriknomani qabul qilish" bosilganda boshlanadi.
 # ============================================================
 
+# NOTE: TABRIK_COUNTDOWN_DELAY / TABRIK_FRAME_DELAY konstantalari va
+# _ACTIVE_INLINE_TABRIK / _INLINE_TABRIK_REVERT_TASKS ombori endi bu yerda
+# YO'Q — ular faqat eski (countdown+aylanuvchi-naqsh) inline /tabrik
+# animatsiyasi uchun kerak edi, u endi tabrik_business.py'ga topshirildi.
+# `/pro` OQIMI HALI HAM shu ikkita delay konstantasidan foydalanadi —
+# ular pastroqda, PRO_SLIDESHOW_DELAY bilan bir joyda TABRIK_COUNTDOWN_DELAY /
+# TABRIK_FRAME_DELAY nomi bilan saqlanib qoldi (grep bilan tekshirilgan:
+# faqat inline_pro_claim_callback ishlatadi) — 21-band: /pro'ni buzmaslik.
 TABRIK_COUNTDOWN_DELAY = 1.0
 TABRIK_FRAME_DELAY = 0.45
-TABRIK_REVERT_DELAY_SEC = 120  # 2 daqiqa — handlers/tabrik.py'dagi bilan bir xil
-
-# inline_message_id -> True — hozir shu xabar uchun animatsiya ketmoqda.
-_ACTIVE_INLINE_TABRIK: set[str] = set()
-# inline_message_id -> rejalashtirilgan "asl holatga qaytarish" vazifasi.
-_INLINE_TABRIK_REVERT_TASKS: dict[str, asyncio.Task] = {}
-
-
-def _tabrik_ready_markup(short_id: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton("🎁 Tabriknomani qabul qilish", callback_data=f"itabrik:claim:{short_id}")
-    ]])
 
 
 async def inline_tabrik_claim_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """"🎁 Tabriknomani qabul qilish" tugmasi INLINE xabarda bosilganda
-    (do'st bilan chatda) chaqiriladi. Guruhdagi `tabrik_claim_callback`ga
-    juda o'xshaydi, lekin `query.message` o'rniga `inline_message_id`
-    bilan ishlaydi — inline xabarlar oddiy Message obyekti sifatida
-    qaytarilmaydi."""
-    query = update.callback_query
-    inline_message_id = query.inline_message_id
-    if not inline_message_id:
-        await query.answer("⚠️ Bu tugma faqat inline xabarlar uchun.", show_alert=True)
-        return
+    (do'st bilan chatda) chaqiriladi.
 
-    short_id = query.data.split(":", 2)[2]
-    greeting = tabrik_logic.get_greeting(short_id)
-    if not greeting:
-        await query.answer("⚠️ Bu tabrikning muddati o'tgan.", show_alert=True)
-        return
-
-    if inline_message_id in _ACTIVE_INLINE_TABRIK:
-        await query.answer("⏳ Animatsiya allaqachon ketmoqda...", show_alert=False)
-        return
-
-    pending_revert = _INLINE_TABRIK_REVERT_TASKS.pop(inline_message_id, None)
-    if pending_revert:
-        pending_revert.cancel()
-
-    tabrik_logic.touch_greeting(short_id)
-    _ACTIVE_INLINE_TABRIK.add(inline_message_id)
-    await query.answer("🎁 Ochilmoqda...")
-
-    try:
-        for n in (5, 4, 3, 2, 1):
-            await _safe_edit_text(context, inline_message_id, tabrik_logic.build_countdown_frame(n), parse_mode=ParseMode.MARKDOWN)
-            await asyncio.sleep(TABRIK_COUNTDOWN_DELAY)
-
-        for step in range(tabrik_logic.TOTAL_ROTATION_FRAMES):
-            await _safe_edit_text(context, inline_message_id, tabrik_logic.build_circle_frame(step), parse_mode=ParseMode.MARKDOWN)
-            await asyncio.sleep(TABRIK_FRAME_DELAY)
-
-        final_text = f"{tabrik_logic.build_final_card(escape_markdown(greeting, version=1))}\n\n🤖 Talaba AI — @{BOT_USERNAME}"
-        await _safe_edit_text(context, inline_message_id, final_text, parse_mode=ParseMode.MARKDOWN, reply_markup=INLINE_MESSAGE_MARKUP)
-        logger.info(f"🔍 Inline /tabrik animatsiyasi muvaffaqiyatli yakunlandi (inline_message_id={inline_message_id}).")
-
-        task = asyncio.create_task(_schedule_inline_tabrik_revert(context, inline_message_id, short_id))
-        _INLINE_TABRIK_REVERT_TASKS[inline_message_id] = task
-    except Exception as e:
-        logger.error(f"🔍 Inline /tabrik animatsiyasida kutilmagan xato: {type(e).__name__}: {e}", exc_info=True)
-        try:
-            await _safe_edit_text(
-                context, inline_message_id, f"🎁 {escape_markdown(greeting, version=1)}\n\n🤖 Talaba AI — @{BOT_USERNAME}",
-                parse_mode=ParseMode.MARKDOWN, reply_markup=INLINE_MESSAGE_MARKUP,
-            )
-        except Exception:
-            pass
-    finally:
-        _ACTIVE_INLINE_TABRIK.discard(inline_message_id)
-
-
-async def _schedule_inline_tabrik_revert(context: ContextTypes.DEFAULT_TYPE, inline_message_id: str, short_id: str) -> None:
-    """`TABRIK_REVERT_DELAY_SEC` soniyadan keyin inline xabarni yana
-    "🎁 Tabriknomani qabul qilish" tugmasi holatiga qaytaradi — xuddi
-    handlers/tabrik.py'dagi `_schedule_revert` kabi."""
-    try:
-        await asyncio.sleep(TABRIK_REVERT_DELAY_SEC)
-        await _safe_edit_text(
-            context, inline_message_id, tabrik_logic.build_ready_card(),
-            reply_markup=_tabrik_ready_markup(short_id),
-        )
-        logger.info(f"🔍 Inline /tabrik xabari asl (tugma) holatiga qaytarildi (inline_message_id={inline_message_id}).")
-    except asyncio.CancelledError:
-        raise
-    except Exception as e:
-        logger.warning(f"🔍 Inline /tabrik xabarini asl holatiga qaytarishda xato: {type(e).__name__}: {e}")
-    finally:
-        _INLINE_TABRIK_REVERT_TASKS.pop(inline_message_id, None)
-
+    ESKI (countdown/aylanuvchi-naqsh, `edit_message_text` bilan emoji
+    almashtirish) mexanizm BU YERDA ENDI ISHLATILMAYDI — u faqat
+    `handlers/tabrik.py` (guruh/oddiy chat) va `/pro` oqimlarida, ular
+    o'zlarining bevosita `Message` obyektiga ega bo'lgani va Business API
+    kerak bo'lmagani uchun qoladi. Inline (do'stlar orasidagi private chat)
+    oqimi endi to'liq `tabrik_business.handle_claim`ga topshiriladi — u
+    Telegram Business API orqali AYNAN o'sha private chatga audio + 5
+    emoji (message_effect_id bilan, ketma-ket o'chiriladigan) + yakuniy
+    matn yuboradi (batafsili: tabrik_business.py docstring'i).
+    """
+    await tabrik_business.handle_claim(update, context)
 
 # ============================================================
 # 💎 OG'IR OQIM: /pro (inline) — /tabrik bilan BIR XIL naqsh, lekin
