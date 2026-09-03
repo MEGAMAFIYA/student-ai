@@ -1024,8 +1024,24 @@ def main():
     # 🎙 Ovozli xabar — istalgan paytda (hech qanday menyu tanlanmagan bo'lsa ham)
     app.add_handler(MessageHandler(filters.VOICE, voice.handle_voice))
 
-    # UNIVERSAL CHAT — hech qanday conversation faol bo'lmaganda ishlaydi
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, universal_chat.handle_message))
+    # UNIVERSAL CHAT — hech qanday conversation faol bo'lmaganda ishlaydi.
+    # MUHIM: business_message'lar (Telegram Business/Secretary orqali
+    # ulangan chatlardagi xabarlar) BU YERGA UMUMAN TUSHMASLIGI KERAK —
+    # Business oqimi FAQAT tabrik_business.py orqali, aniq belgilangan
+    # holatlarda (masalan /tabrik'ning "qabul qilish" bosilishi) ishlaydi.
+    # `~filters.UpdateType.BUSINESS_MESSAGE` bo'lmasa, PTB business
+    # xabarlarni ham `effective_message` orqali shu filterga (filters.TEXT)
+    # mos deb hisoblab, handle_message'ga yuborishi mumkin — u yerdagi
+    # `if not update.message: return` bu holatlarning aksariyatini ushlab
+    # qoladi, lekin bu ANIQ, deklarativ filtr xavfsizroq (kelajakda
+    # kimdir shu tekshiruvni o'zgartirib/olib tashlab qo'ysa ham himoya
+    # saqlanadi).
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND & ~filters.UpdateType.BUSINESS_MESSAGE,
+            universal_chat.handle_message,
+        )
+    )
 
     # INLINE REJIM — "@Student_ai_uz_bot savol" deb istalgan chatda yozilganda
     # (bot o'sha chatga a'zo bo'lmasa ham) ishlaydi. BotFather'da /setinline va
