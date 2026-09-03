@@ -39,6 +39,8 @@ import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputFile, InputMediaPhoto, Update
 from telegram.constants import ParseMode
 from telegram.error import BadRequest, RetryAfter
+import telegram_effects
+import config
 from telegram.ext import ContextTypes
 from telegram.helpers import escape_markdown
 
@@ -131,7 +133,7 @@ async def pro_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE, override_t
 
     sender_id = update.effective_user.id
     photos = github_storage.list_user_photos(sender_id) if github_storage.is_configured() else []
-    short_id = pro_tabrik_logic.store_pro_greeting(text, sender_id, photos, emojis)
+    short_id = pro_tabrik_logic.store_pro_greeting(text, sender_id, photos, config.get_tabrik_settings()["emojis"])
 
     await update.message.reply_photo(
         photo=InputFile(io.BytesIO(_gift_placeholder_bytes()), filename="gift.png"),
@@ -204,10 +206,39 @@ async def pro_claim_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await _safe_edit_caption(msg, tabrik_logic.build_countdown_frame(n))
             await asyncio.sleep(COUNTDOWN_DELAY)
 
-        emojis = entry.get("emojis") or tabrik_logic.DEFAULT_EMOJIS
-        for emoji in emojis:
-            await _safe_edit_caption(msg, tabrik_logic.build_emoji_frame(emoji))
-            await asyncio.sleep(FRAME_DELAY)
+        settings = config.get_tabrik_settings()
+        audio_id = settings.get("audio_file_id")
+        if audio_id:
+            try:
+                sent_audio = await context.bot.send_audio(chat_id=chat_id, audio=audio_id)
+                logger.info(f"🎵 /pro audio yuborildi: message_id={sent_audio.message_id}")
+            except Exception as e:
+                logger.warning(f"🎵 /pro audio yuborilmadi: {type(e).__name__}: {e}")
+
+        emojis = entry.get("emojis") or settings["emojis"]
+        emoji_delay = settings["emoji_delay"]
+        for idx, emoji in enumerate(emojis, start=1):
+            effect_id = telegram_effects.get_effect_id(emoji)
+            try:
+                sent_emoji = await context.bot.send_message(
+                    chat_id=chat_id, text=emoji, message_effect_id=effect_id
+                )
+            except Exception as e:
+                if effect_id is not None:
+                    logger.warning(f"✨ /pro emoji effect rad etildi idx={idx} emoji={emoji!r}: {e}")
+                    try:
+                        sent_emoji = await context.bot.send_message(chat_id=chat_id, text=emoji)
+                    except Exception as e2:
+                        logger.warning(f"✨ /pro emoji yuborilmadi idx={idx}: {e2}")
+                        continue
+                else:
+                    logger.warning(f"✨ /pro emoji yuborilmadi idx={idx}: {e}")
+                    continue
+            await asyncio.sleep(emoji_delay)
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=sent_emoji.message_id)
+            except Exception as e:
+                logger.warning(f"✨ /pro emoji o'chirilmadi idx={idx}: {type(e).__name__}: {e}")
 
         if entry["photos"]:
             await _run_slideshow(msg, entry["photos"])
@@ -231,7 +262,7 @@ async def pro_claim_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def _schedule_revert(context, chat_id: int, message_id: int, short_id: str, message_key: tuple[int, int]) -> None:
     try:
-        await asyncio.sleep(REVERT_DELAY_SEC)
+        await asyncio.sleep(config.get_tabrik_settings()["revert_minutes"] * 60)
         await context.bot.edit_message_media(
             chat_id=chat_id,
             message_id=message_id,
