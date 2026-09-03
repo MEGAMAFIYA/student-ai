@@ -29,21 +29,55 @@ def _load_map() -> dict:
     if not os.path.exists(EFFECTS_JSON_PATH):
         logger.error(f"✨ EFFECT_MAP_FILE_NOT_FOUND path={EFFECTS_JSON_PATH} — effektlar o'chirilgan holda ishlaydi.")
         return {}
+
+    with open(EFFECTS_JSON_PATH, "r", encoding="utf-8") as f:
+        text = f.read()
+
+    # 🩹 Manba fayl ba'zan bitta yaxlit JSON emas, balki bir nechta
+    # "qism" (part) hujjat KETMA-KET yozilgan holda keladi (masalan
+    # Telegram API'dan 6 ta bo'lak qilib olib, ularni birlashtirmasdan
+    # bitta faylga ulab qo'yish natijasi). Oddiy `json.load()` bunday
+    # holatda "Extra data" xatosi bilan yiqiladi va xarita BUTUNLAY
+    # bo'sh qolib ketadi (=> hamma emoji uchun EFFECT_NOT_FOUND, aslida
+    # sabab boshqa edi). Shuning uchun faylni bitta emas, ketma-ket
+    # kelgan BARCHA JSON hujjatlarni o'qib, ularning "effects"
+    # ro'yxatlarini birlashtiramiz.
+    decoder = json.JSONDecoder()
+    docs: list[dict] = []
+    pos, n = 0, len(text)
     try:
-        with open(EFFECTS_JSON_PATH, "r", encoding="utf-8") as f:
-            raw = json.load(f)
+        while pos < n:
+            while pos < n and text[pos] in " \n\t\r":
+                pos += 1
+            if pos >= n:
+                break
+            obj, end = decoder.raw_decode(text, pos)
+            docs.append(obj)
+            pos = end
     except Exception as e:
         logger.error(f"✨ EFFECT_MAP_PARSE_ERROR path={EFFECTS_JSON_PATH} error_type={type(e).__name__} error={e}")
         return {}
 
-    effects = raw.get("effects") if isinstance(raw, dict) else None
-    if not isinstance(effects, list):
-        logger.error("✨ EFFECT_MAP_MALFORMED — 'effects' massiv emas yoki topilmadi.")
+    if not docs:
+        logger.error(f"✨ EFFECT_MAP_EMPTY_FILE path={EFFECTS_JSON_PATH} — faylda birorta ham JSON hujjat topilmadi.")
+        return {}
+
+    if len(docs) > 1:
+        logger.info(f"✨ EFFECT_MAP_MULTI_PART_FILE path={EFFECTS_JSON_PATH} parts={len(docs)} — barchasi birlashtirilmoqda.")
+
+    all_effects = []
+    for doc in docs:
+        effects = doc.get("effects") if isinstance(doc, dict) else None
+        if isinstance(effects, list):
+            all_effects.extend(effects)
+
+    if not all_effects:
+        logger.error("✨ EFFECT_MAP_MALFORMED — birorta hujjatda ham to'g'ri 'effects' massivi topilmadi.")
         return {}
 
     mapping: dict[str, str] = {}
     total = 0
-    for item in effects:
+    for item in all_effects:
         try:
             emoji = item.get("emoji")
             effect_id = item.get("effect_id")
@@ -55,7 +89,7 @@ def _load_map() -> dict:
         if emoji not in mapping:  # birinchi (asosiy) variantni saqlaymiz
             mapping[emoji] = str(effect_id)
 
-    logger.info(f"✨ EFFECT_MAP_LOADED path={EFFECTS_JSON_PATH} total_effects={total} unique_emojis={len(mapping)}")
+    logger.info(f"✨ EFFECT_MAP_LOADED path={EFFECTS_JSON_PATH} parts={len(docs)} total_effects={total} unique_emojis={len(mapping)}")
     return mapping
 
 
@@ -82,7 +116,18 @@ def get_effect_id(emoji: str) -> str | None:
         if effect_id is not None:
             logger.info(f"✨ EFFECT_FOUND_VIA_VS16_STRIP emoji={emoji!r} matched={stripped!r}")
     if effect_id is None:
-        logger.warning(f"✨ EFFECT_NOT_FOUND emoji={emoji!r} — effektsiz yuboriladi.")
+        if not _EFFECT_MAP:
+            logger.warning(
+                f"✨ EFFECT_NOT_FOUND emoji={emoji!r} — SABAB: xarita BUTUNLAY BO'SH "
+                f"(EFFECT_MAP_LOADED/EFFECT_MAP_FILE_NOT_FOUND/EFFECT_MAP_PARSE_ERROR "
+                f"loglariga qarang — fayl topilmagan yoki o'qilmagan)."
+            )
+        else:
+            logger.warning(
+                f"✨ EFFECT_NOT_FOUND emoji={emoji!r} — SABAB: xarita {len(_EFFECT_MAP)} ta "
+                f"emoji bilan yuklangan, lekin ORASIDA aynan shu emoji yo'q "
+                f"(mavjud namunalar: {list(_EFFECT_MAP.keys())[:10]}...)."
+            )
     return effect_id
 
 
