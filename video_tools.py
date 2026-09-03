@@ -25,6 +25,7 @@ QASDDAN qo'shilmagan.
 import logging
 import os
 import shutil
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import subprocess
 import tempfile
 
@@ -708,6 +709,93 @@ def search_tracks(query: str, count: int) -> list[dict]:
 
     return _dedupe_tracks(merged)[:count]
 
+
+
+def search_tracks_inline(query: str, count: int) -> list[dict]:
+    """Inline rejim uchun tezlashtirilgan qo'shiq qidiruvi.
+
+    Oddiy /qoshiq oqimi kabi barcha manbalarni ketma-ket va SoundCloud har bir
+    natijasini qayta extract qilib tekshirish inline query timeout'iga sabab
+    bo'lishi mumkin. Shu variant manbalarni parallel so'raydi va Telegram'
+    kanal sonini cheklab, inline javobni tezroq qaytaradi.
+    """
+    active_sources = [s for s in SEARCH_SOURCES if config.is_music_source_enabled(s["toggle"])]
+    telegram_enabled = config.TG_SEARCH_ENABLED and config.is_music_source_enabled("telegram")
+    if not active_sources and not telegram_enabled:
+        raise DownloadError("❌ Hozircha qo'shiq qidirish manbalarining barchasi o'chirilgan.")
+
+    # Inline natija uchun kamida 10 ta variant maqsad qilinadi; konfiguratsiya
+    # undan kichik qiymat bergan bo'lsa, foydalanuvchi sozlamasi ustun turadi.
+    target = max(1, min(count, max(10, count)))
+
+    weights = {s["id"]: 1 for s in active_sources}
+    if telegram_enabled:
+        weights["telegram"] = 2
+    total_weight = sum(weights.values()) or 1
+
+    def alloc(source_id: str) -> int:
+        return max(3, -(-count * weights[source_id] // total_weight))
+
+    jobs = {}
+    errors: list[str] = []
+    with ThreadPoolExecutor(max_workers=max(1, len(active_sources) + (1 if telegram_enabled else 0))) as pool:
+        for src in active_sources:
+            jobs[pool.submit(_search_one_source, src["prefix"], query, alloc(src["id"]),)] = ("web", src)
+        if telegram_enabled:
+            # Telegram moduli ham asyncio.run() bilan bloklovchi wrapper beradi.
+            # Inline uchun birinchi 8 kanal yetarlicha tez fallback bo'lib xizmat qiladi.
+            def _tg_search():
+                import telegram_search
+                return telegram_search.search_public_audio(query, min(alloc("telegram"), count), max_channels=8)
+            jobs[pool.submit(_tg_search)] = ("telegram", None)
+
+        merged: list[dict] = []
+        for future in as_completed(jobs):
+            kind, src = jobs[future]
+            try:
+                if kind == "telegram":
+                    merged.extend(future.result() or [])
+                    continue
+                raw_entries, error_reason = future.result()
+                if error_reason:
+                    errors.append(f"{src['label']}: {error_reason}")
+                for e in raw_entries:
+                    raw_ref = e.get("webpage_url") or e.get("url") or (e.get("id") if src["id"] == "youtube" else None)
+                    if not raw_ref:
+                        continue
+                    if raw_ref.startswith("http"):
+                        webpage_url = raw_ref
+                    elif src["id"] == "youtube":
+                        webpage_url = f"https://www.youtube.com/watch?v={raw_ref}"
+                    else:
+                        continue
+                    uploader = (e.get("uploader") or "").strip()
+                    merged.append({
+                        "source_id": src["id"],
+                        "source_label": src["label"],
+                        "source_emoji": src["emoji"],
+                        "title": (e.get("title") or "Noma'lum").strip(),
+                        "duration": e.get("duration"),
+                        "uploader": uploader,
+                        "channel": uploader or None,
+                        "webpage_url": webpage_url,
+                    })
+            except Exception as exc:
+                label = src["label"] if src else "Telegram"
+                errors.append(f"{label}: {type(exc).__name__}: {exc}")
+                logger.error("🎵 Inline /qo'shiq: %s qidiruvida kutilmagan xato: %s: %s", label, type(exc).__name__, exc, exc_info=True)
+
+    deduped = _dedupe_tracks(merged)
+    if not deduped:
+        if errors:
+            raise DownloadError(f"❌ \"{query}\" bo'yicha inline qidiruv amalga oshmadi. Sabab: {'; '.join(errors)}.")
+        raise DownloadError(f"❌ \"{query}\" bo'yicha hech qanday natija topilmadi.")
+
+    logger.info(
+        "🎵 Inline /qo'shiq tezkor qidiruv: query='%s', raw=%d, unique=%d, errors=%s",
+        query, len(merged), len(deduped), errors or "yo'q",
+    )
+    return deduped[:target]
 
 def _normalize_for_dedupe(text: str) -> str:
     return "".join(ch for ch in text.lower() if ch.isalnum())
