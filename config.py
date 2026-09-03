@@ -159,6 +159,46 @@ MUSIC_SEARCH_SOURCE_LABELS = {
 # Default holat — hammasi YOQILGAN.
 MUSIC_SEARCH_SOURCES: dict[str, bool] = {sid: True for sid in MUSIC_SEARCH_SOURCE_IDS}
 
+# ============================================================
+# 🎁 /tabrik + /pro — umumiy admin sozlamalari
+# ============================================================
+# Bu sozlamalar /developer > 💎 Pro/Tabrik orqali boshqariladi va
+# runtime_ai_config.json/Upstash/Neon/GitHub orqali doimiy saqlanadi.
+DEFAULT_TABRIK_EMOJIS = ["😍", "🥳", "🎉", "❤️", "✨"]
+TABRIK_EMOJI_DELAY_SEC = int(os.getenv("TABRIK_EMOJI_DELAY_SEC", "2"))
+TABRIK_REVERT_MINUTES = int(os.getenv("TABRIK_REVERT_MINUTES", "2"))
+TABRIK_AUDIO_FILE_ID = os.getenv("TABRIK_AUDIO_FILE_ID", "")
+
+def get_tabrik_settings() -> dict:
+    return {
+        "emojis": list(DEFAULT_TABRIK_EMOJIS),
+        "emoji_delay": TABRIK_EMOJI_DELAY_SEC,
+        "revert_minutes": TABRIK_REVERT_MINUTES,
+        "audio_file_id": TABRIK_AUDIO_FILE_ID,
+    }
+
+def set_tabrik_setting(key: str, value) -> bool:
+    global TABRIK_EMOJI_DELAY_SEC, TABRIK_REVERT_MINUTES, TABRIK_AUDIO_FILE_ID
+    if key == "emojis":
+        if not isinstance(value, list) or len(value) != 5 or any(not str(x).strip() for x in value):
+            return False
+        DEFAULT_TABRIK_EMOJIS[:] = [str(x) for x in value]
+    elif key == "emoji_delay":
+        value = int(value)
+        if value not in range(1, 7): return False
+        TABRIK_EMOJI_DELAY_SEC = value
+    elif key == "revert_minutes":
+        value = int(value)
+        if value not in range(1, 5): return False
+        TABRIK_REVERT_MINUTES = value
+    elif key == "audio_file_id":
+        TABRIK_AUDIO_FILE_ID = str(value or "")
+    else:
+        return False
+    _save_runtime_overrides()
+    logger.info(f"[DEVELOPER] tabrik/pro sozlamasi '{key}' yangilandi.")
+    return True
+
 
 def is_music_source_enabled(source_id: str) -> bool:
     """Noma'lum source_id uchun ham xavfsiz — ON deb hisoblaydi (yangi
@@ -729,6 +769,7 @@ def _write_local_fallback(local_filename: str, raw: str) -> None:
 
 
 def _load_runtime_overrides() -> None:
+    global TABRIK_EMOJI_DELAY_SEC, TABRIK_REVERT_MINUTES, TABRIK_AUDIO_FILE_ID
     """Bot ishga tushganda chaqiriladi: persist_read() orqali (Upstash ->
     GitHub -> mahalliy fayl ustuvorligida) saqlangan konfiguratsiyani
     o'qiydi. Topilgan qiymatlar .env'dan o'qilgan BOSHLANG'ICH qiymatlar
@@ -771,14 +812,26 @@ def _load_runtime_overrides() -> None:
         functions_data = data.get("functions", {})
         pools_data = data.get("key_pools", {})
         music_data = data.get("music_search_sources", {})
+        tabrik_data = data.get("tabrik_settings", {})
     else:
         functions_data = data  # eski format
         pools_data = {}
         music_data = {}
+        tabrik_data = {}
 
     for sid, enabled in music_data.items():
         if sid in MUSIC_SEARCH_SOURCES and isinstance(enabled, bool):
             MUSIC_SEARCH_SOURCES[sid] = enabled
+
+    if isinstance(tabrik_data, dict):
+        if isinstance(tabrik_data.get("emojis"), list) and len(tabrik_data["emojis"]) == 5:
+            DEFAULT_TABRIK_EMOJIS[:] = [str(x) for x in tabrik_data["emojis"]]
+        if str(tabrik_data.get("emoji_delay", "")).isdigit() and int(tabrik_data["emoji_delay"]) in range(1, 7):
+            TABRIK_EMOJI_DELAY_SEC = int(tabrik_data["emoji_delay"])
+        if str(tabrik_data.get("revert_minutes", "")).isdigit() and int(tabrik_data["revert_minutes"]) in range(1, 5):
+            TABRIK_REVERT_MINUTES = int(tabrik_data["revert_minutes"])
+        if "audio_file_id" in tabrik_data:
+            TABRIK_AUDIO_FILE_ID = str(tabrik_data.get("audio_file_id") or "")
 
     for prefix, values in functions_data.items():
         cfg = AI_FUNCTIONS.get(prefix)
@@ -813,6 +866,12 @@ def _save_runtime_overrides() -> None:
             for provider, entries in KEY_POOLS.items()
         },
         "music_search_sources": dict(MUSIC_SEARCH_SOURCES),
+        "tabrik_settings": {
+            "emojis": list(DEFAULT_TABRIK_EMOJIS),
+            "emoji_delay": TABRIK_EMOJI_DELAY_SEC,
+            "revert_minutes": TABRIK_REVERT_MINUTES,
+            "audio_file_id": TABRIK_AUDIO_FILE_ID,
+        },
     }
     raw = json.dumps(data, ensure_ascii=False)
     persist_write(_RUNTIME_CONFIG_FILENAME, _UPSTASH_KEY, raw, commit_message="🔧 /developer: AI sozlamalari/kalitlari yangilandi")
