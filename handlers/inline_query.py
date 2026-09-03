@@ -128,6 +128,7 @@ import video_tools
 import webapp_security
 
 logger = logging.getLogger(__name__)
+logger.warning("🏷️ inline_query.py YUKLANDI — versiya: tabrik-ai-hardfix-v2 (chosen_inline_result guard bilan)")
 
 PLACEHOLDER_TEXT = "⏳ Javob tayyorlanmoqda..."
 BOT_USERNAME = "Student_ai_uz_bot"  # faqat imzo/havola uchun, username o'zgarsa shu yerni yangilang
@@ -737,6 +738,19 @@ async def on_chosen_inline_result(
     # 🎁 /tabrik uchun bu yerda ATAYLAB hech narsa yo'q — animatsiya endi
     # xabar TANLANGANDA emas, faqat "🎁 Tabriknomani qabul qilish" tugmasi
     # bosilganda (inline_tabrik_claim_callback) boshlanadi.
+    #
+    # 🐞 TOPILGAN HAQIQIY XATO: tabrik natijasi `cache`ga yozilmagani
+    # uchun `entry` shu yerda HAR DOIM None bo'lgan, va pastdagi "ODDIY AI
+    # SAVOL" bo'limi `entry or {}` orqali `chosen.query`ga (ya'ni butun
+    # "/tabrik <matn>" satriga) qaytib, uni AI'ga SAVOL sifatida yuborgan.
+    # Foydalanuvchi /tabrik ishlatganda AI javob berishining ASOSIY sababi
+    # shu edi — endi bu yerda ANIQ to'xtatiladi:
+    if re.match(r"^/tabrik(?:@\w+)?(\s|$)", chosen.query or "", re.IGNORECASE):
+        logger.info(
+            f"🎁 [CHOSEN_INLINE] /tabrik natijasi tanlandi — AI'ga YUBORILMAYDI "
+            f"(user_id={user.id if user else '?'}, query='{(chosen.query or '')[:80]}')"
+        )
+        return
 
     # --------------------------------------------------------
     # ODDIY AI SAVOL
@@ -749,6 +763,15 @@ async def on_chosen_inline_result(
 
     if not query:
         return
+
+    logger.warning(
+        f"🔎 [CHOSEN_INLINE→AI] AI javob YO'LGA QO'YILDI: "
+        f"entry={'bor, type=' + str(entry.get('type')) if entry else 'YO`Q (None)'}, "
+        f"chosen.query='{(chosen.query or '')[:120]}', "
+        f"final_query='{query[:120]}', "
+        f"user_id={user.id if user else '?'}, "
+        f"username=@{getattr(user, 'username', None)}"
+    )
 
     await _handle_chat(
         context,
@@ -769,6 +792,12 @@ async def _handle_chat(
     query: str,
     user=None,
 ):
+    logger.warning(
+        f"🤖 [_handle_chat CHAQIRILDI] Bu Gemini'ga so'rov ketayotganini "
+        f"anglatadi. query='{query[:120]}', user_id={user.id if user else '?'}, "
+        f"inline_message_id={inline_message_id}"
+    )
+
     wants_location = bool(
         LOCATION_HINTS.search(query)
     )
