@@ -128,6 +128,7 @@ import storage
 import tabrik_logic
 import tabrik_business
 import video_tools
+import inline_media
 import webapp_security
 
 logger = logging.getLogger(__name__)
@@ -245,6 +246,8 @@ async def on_inline_query(
     context: ContextTypes.DEFAULT_TYPE
 ):
     query = update.inline_query.query.strip()
+    user = update.inline_query.from_user
+    logger.info("🔍 INLINE START: user_id=%s username=%s query=%r", getattr(user, "id", "?"), _user_label(user), query)
 
     # --------------------------------------------------------
     # 🎨 MINI APP: /rasim (bo'sh query HAM shu yerga tushadi — yuqoridagi
@@ -314,17 +317,23 @@ async def on_inline_query(
         cache[result_id] = {"type": "vid", "url": url}
 
         results = [
-            InlineQueryResultDocument(
+            InlineQueryResultArticle(
                 id=result_id,
-                title="🎬 Video yuklab olinadi",
+                title="🎬 Video tayyorlanmoqda",
                 description=url[:120],
-                document_url=f"{PUBLIC_BASE_URL}/placeholder.pdf",
-                mime_type="application/pdf",
-                caption=f"⏳ Video yuklab olinmoqda...\n{url}",
+                input_message_content=InputTextMessageContent(
+                    f"⏳ Video yuklab olinmoqda...\n\n{url}"
+                ),
                 reply_markup=INLINE_MESSAGE_MARKUP,
             )
         ]
-        await update.inline_query.answer(results, cache_time=0, is_personal=True)
+        try:
+            await update.inline_query.answer(results, cache_time=0, is_personal=True)
+            _log_inline(user, query, "queued", f"/vid tanlandi, download navbatga qo'yildi; result_id={result_id}")
+        except Exception as e:
+            logger.error("🔍 INLINE /vid answerInlineQuery XATO: %s: %s", type(e).__name__, e, exc_info=True)
+            _log_inline(user, query, "error", f"answer_inline_query: {type(e).__name__}: {e}")
+            raise
         return
 
     if VID_BARE_RE.match(query):
@@ -358,8 +367,11 @@ async def on_inline_query(
             return
 
         try:
-            tracks = await asyncio.to_thread(video_tools.search_tracks, search_text, config.QOSHIQ_SEARCH_COUNT)
+            started = time.monotonic()
+            tracks = await asyncio.to_thread(video_tools.search_tracks_inline, search_text, config.QOSHIQ_SEARCH_COUNT)
+            logger.info("🎵 INLINE /qo'shiq SEARCH OK: user_id=%s query=%r results=%d elapsed=%.2fs", user.id, search_text, len(tracks), time.monotonic() - started)
         except video_tools.DownloadError as e:
+            logger.error("🎵 INLINE /qo'shiq SEARCH ERROR: user_id=%s query=%r DownloadError=%s", user.id, search_text, e, exc_info=True)
             await _answer_instruction(update, "🎵 Qidiruvda xatolik", str(e), query=query)
             return
         except Exception as e:
@@ -370,7 +382,7 @@ async def on_inline_query(
         results = []
         for t in tracks:
             result_id = str(uuid.uuid4())
-            cache[result_id] = {"type": "qoshiq", "url": t["webpage_url"], "title": t["title"], "uploader": t.get("uploader")}
+            cache[result_id] = {"type": "qoshiq", "track": dict(t)}
             channel = video_tools.display_channel(t)
             # 🎧 Haqiqiy ("20-30 soniyalik") audio preview'ni bot ichida
             # ijro etib bo'lmaydi (Telegram inline natijalari faqat
@@ -385,14 +397,13 @@ async def on_inline_query(
                 [InlineKeyboardButton("🤖 Talaba AI", url=f"https://t.me/{BOT_USERNAME}")],
             ])
             results.append(
-                InlineQueryResultDocument(
+                InlineQueryResultArticle(
                     id=result_id,
                     title=f"🎵 {video_tools.format_track_label(t, max_len=60)}",
                     description=f"{t['source_emoji']} {channel or t['source_label']}",
-                    document_url=f"{PUBLIC_BASE_URL}/placeholder.pdf",
-                    mime_type="application/pdf",
-                    thumbnail_url=f"{PUBLIC_BASE_URL}/music_icon.png",
-                    caption=f"⏳ \"{t['title']}\" yuklab olinmoqda...",
+                    input_message_content=InputTextMessageContent(
+                        f"⏳ \"{t['title']}\" yuklab olinmoqda..."
+                    ),
                     reply_markup=preview_markup,
                 )
             )
@@ -670,10 +681,12 @@ async def on_chosen_inline_result(
     inline_message_id = chosen.inline_message_id
 
     if not inline_message_id:
-        logger.warning(
-            "chosen_inline_result keldi, lekin inline_message_id yo'q — "
-            "BotFather'da /setinlinefeedback 'Enabled' qilinganini tekshiring."
+        logger.error(
+            "🔴 CHOSEN INLINE ERROR: inline_message_id YO'Q. result_id=%s query=%r user_id=%s. "
+            "/setinlinefeedback=Enabled va reply_markup tekshirilsin.",
+            chosen.result_id, chosen.query, getattr(chosen.from_user, "id", "?"),
         )
+        _log_inline(chosen.from_user, chosen.query or "", "error", "chosen_inline_result: inline_message_id yo'q")
         return
 
     cache = context.bot_data.get("inline_queries", {})
@@ -715,7 +728,7 @@ async def on_chosen_inline_result(
     # --------------------------------------------------------
 
     if entry and entry.get("type") == "qoshiq":
-        await _handle_qoshiq(context, inline_message_id, entry["url"], entry["title"], entry.get("uploader"), user)
+        await _handle_qoshiq(context, inline_message_id, entry.get("track") or {}, user)
         return
 
     # 🎁 /tabrik va 💎 /pro uchun bu yerda ATAYLAB hech narsa yo'q —
@@ -1148,59 +1161,18 @@ async def _handle_course_work(
 # ============================================================
 
 async def _fail_inline_media(context: ContextTypes.DEFAULT_TYPE, inline_message_id: str, error_text: str) -> None:
-    """/vid va /qo'shiq OG'IR oqimlarida yuklab olish/konvertatsiya
-    MUVAFFAQIYATSIZ bo'lganda chaqiriladi. MUHIM: bu yerda ATAYLAB faqat
-    `edit_message_caption` EMAS, `edit_message_media` ishlatiladi —
-    aks holda xabar hali ham boshlang'ich "placeholder.pdf" hujjati
-    bo'lib qolaverar edi (foydalanuvchiga xato tagida chalkash/soxta
-    "placeholder.pdf" fayli ko'rinar edi, qarang: talab #5). Bu yerda
-    o'sha placeholder MEDIA'ning o'zi kichik, aniq nomli ("xatolik.txt")
-    matn hujjati bilan ALMASHTIRILADI — foydalanuvchi hech qachon
-    "placeholder.pdf" nomli faylni oxirgi natija sifatida ko'rmaydi."""
+    """Inline xatoni placeholder media upload qilmasdan matn sifatida ko'rsatadi."""
     try:
-        await context.bot.edit_message_media(
+        await context.bot.edit_message_text(
             inline_message_id=inline_message_id,
-            media=InputMediaDocument(
-                media=InputFile(io.BytesIO(error_text.encode("utf-8")), filename="xatolik.txt"),
-                caption=error_text[:1024],
-            ),
+            text=error_text[:4096],
             reply_markup=INLINE_MESSAGE_MARKUP,
         )
-        return
+        logger.info("🔍 Inline error message ko'rsatildi: inline_message_id=%s", inline_message_id)
+    except BadRequest as e:
+        logger.error("🔴 Inline error message tahrirlashda Telegram BadRequest: %s: %s", type(e).__name__, e, exc_info=True)
     except Exception as e:
-        # ⚠️ ANIQ sababni to'liq (traceback bilan) logga yozamiz — talab
-        # #11/#20: "muammoni yashirma". Bu chaqiruv muvaffaqiyatsiz bo'lsa,
-        # keyingi urinish(lar)dan OLDIN sabab albatta ko'rinadi.
-        logger.error(f"🔍 Inline xato xabarini media orqali ko'rsatib bo'lmadi (birinchi urinish): {type(e).__name__}: {e}", exc_info=True)
-
-    # 🔁 IKKINCHI urinish — YANGI BytesIO obyekti bilan (birinchisi allaqachon
-    # o'qilgan/tugagan bo'lishi mumkin) va soddaroq (caption'siz) media —
-    # ba'zan aynan caption uzunligi/parse xatosi sabab bo'lishi mumkin.
-    try:
-        await context.bot.edit_message_media(
-            inline_message_id=inline_message_id,
-            media=InputMediaDocument(
-                media=InputFile(io.BytesIO(error_text.encode("utf-8")), filename="xatolik.txt"),
-            ),
-            reply_markup=INLINE_MESSAGE_MARKUP,
-        )
-        return
-    except Exception as e:
-        logger.error(f"🔍 Inline xato xabarini media orqali ko'rsatib bo'lmadi (ikkinchi urinish): {type(e).__name__}: {e}", exc_info=True)
-
-    # 🆘 OXIRGI CHORA: faqat caption'ni yangilaymiz. MUHIM CHEKLOV: bu
-    # holatda foydalanuvchi baribir asl "placeholder.pdf" faylini (xato
-    # matni bilan birga) ko'rishi mumkin — Telegram API'da buni to'liq
-    # oldini olishning boshqa yo'li yo'q (agar edit_message_media ikki
-    # marta ham muvaffaqiyatsiz bo'lsa). Shu sabab bu holat Render
-    # loglarida albatta ko'rinadi (yuqoridagi ikkita logger.error) — admin
-    # aniq sababni topa oladi.
-    try:
-        await context.bot.edit_message_caption(
-            inline_message_id=inline_message_id, caption=error_text[:1024], reply_markup=INLINE_MESSAGE_MARKUP,
-        )
-    except Exception as e:
-        logger.error(f"🔍 Inline xato xabarini caption orqali ham yangilab bo'lmadi: {type(e).__name__}: {e}", exc_info=True)
+        logger.error("🔴 Inline error message tahrirlashda kutilmagan xato: %s: %s", type(e).__name__, e, exc_info=True)
 
 
 async def _handle_vid(
@@ -1210,28 +1182,33 @@ async def _handle_vid(
     user=None,
 ):
     dest_dir = tempfile.mkdtemp(prefix="inline_vid_")
+    started = time.monotonic()
     try:
+        logger.info("🎬 INLINE /vid START: user_id=%s url=%s inline_message_id=%s", getattr(user, "id", "?"), url, inline_message_id)
         filepath = await asyncio.to_thread(
             video_tools.download_video, url, dest_dir, config.VID_MAX_MB, config.VID_DOWNLOAD_TIMEOUT_SEC,
         )
-        with open(filepath, "rb") as f:
-            await context.bot.edit_message_media(
-                inline_message_id=inline_message_id,
-                media=InputMediaVideo(
-                    media=InputFile(f),
-                    caption=f"✅ Video tayyor.\n\n🤖 Talaba AI — @{BOT_USERNAME}",
-                ),
-                reply_markup=INLINE_MESSAGE_MARKUP,
-            )
-        logger.info(f"🔍 Inline /vid muvaffaqiyatli: url={url}.")
-        _log_inline(user, f"/vid {url}", "ok")
+        logger.info("🎬 INLINE /vid DOWNLOAD OK: filepath=%s size=%d bytes elapsed=%.2fs", filepath, __import__("os").path.getsize(filepath), time.monotonic() - started)
+        media_url = inline_media.publish(filepath, "video")
+        logger.info("🎬 INLINE /vid EDIT: switching inline message to URL=%s", media_url)
+        await context.bot.edit_message_media(
+            inline_message_id=inline_message_id,
+            media=InputMediaVideo(
+                media=media_url,
+                caption=f"✅ Video tayyor.\n\n🤖 Talaba AI — @{BOT_USERNAME}",
+            ),
+            reply_markup=INLINE_MESSAGE_MARKUP,
+        )
+        logger.info("✅ INLINE /vid SUCCESS: user_id=%s url=%s total=%.2fs", getattr(user, "id", "?"), url, time.monotonic() - started)
+        _log_inline(user, f"/vid {url}", "ok", f"media_url={media_url}; total={time.monotonic()-started:.2f}s")
     except video_tools.DownloadError as e:
+        logger.error("🔴 INLINE /vid DOWNLOAD ERROR: user_id=%s url=%s reason=%s", getattr(user, "id", "?"), url, e, exc_info=True)
         await _fail_inline_media(context, inline_message_id, str(e))
         _log_inline(user, f"/vid {url}", "error", str(e))
     except Exception as e:
-        logger.error(f"🔍 Inline /vid kutilmagan xato (url={url}): {type(e).__name__}: {e}", exc_info=True)
+        logger.error("🔴 INLINE /vid ERROR: user_id=%s url=%s type=%s detail=%s", getattr(user, "id", "?"), url, type(e).__name__, e, exc_info=True)
         await _fail_inline_media(context, inline_message_id, "❌ Video yuborishda kutilmagan xatolik yuz berdi.")
-        _log_inline(user, f"/vid {url}", "error", f"kutilmagan xato: {type(e).__name__}: {e}")
+        _log_inline(user, f"/vid {url}", "error", f"{type(e).__name__}: {e}")
     finally:
         shutil.rmtree(dest_dir, ignore_errors=True)
 
@@ -1243,36 +1220,50 @@ async def _handle_vid(
 async def _handle_qoshiq(
     context: ContextTypes.DEFAULT_TYPE,
     inline_message_id: str,
-    url: str,
-    title: str,
-    uploader: str | None,
+    track: dict,
     user=None,
 ):
     dest_dir = tempfile.mkdtemp(prefix="inline_qoshiq_")
+    title = (track.get("title") or "Noma'lum").strip()
+    started = time.monotonic()
     try:
-        filepath = await asyncio.to_thread(
-            video_tools.download_audio, url, dest_dir, config.QOSHIQ_MAX_MB, config.QOSHIQ_DOWNLOAD_TIMEOUT_SEC,
+        logger.info(
+            "🎵 INLINE /qo'shiq START: user_id=%s source=%s title=%r url=%s inline_message_id=%s",
+            getattr(user, "id", "?"), track.get("source_id"), title, track.get("webpage_url"), inline_message_id,
         )
-        with open(filepath, "rb") as f:
-            await context.bot.edit_message_media(
-                inline_message_id=inline_message_id,
-                media=InputMediaAudio(
-                    media=InputFile(f),
-                    title=title[:64],
-                    performer=uploader or None,
-                    caption=f"✅ Tayyor.\n\n🤖 Talaba AI — @{BOT_USERNAME}",
-                ),
-                reply_markup=INLINE_MESSAGE_MARKUP,
+        if not track.get("webpage_url"):
+            raise video_tools.DownloadError("❌ Qo'shiq natijasida yuklash havolasi topilmadi.")
+        if track.get("source_id") == "telegram":
+            filepath = await asyncio.to_thread(
+                video_tools.download_telegram_audio, track, dest_dir, config.QOSHIQ_MAX_MB,
             )
-        logger.info(f"🔍 Inline /qo'shiq muvaffaqiyatli: track='{title}'.")
-        _log_inline(user, f"/qo'shiq {title}", "ok")
+        else:
+            filepath = await asyncio.to_thread(
+                video_tools.download_audio, track["webpage_url"], dest_dir, config.QOSHIQ_MAX_MB, config.QOSHIQ_DOWNLOAD_TIMEOUT_SEC,
+            )
+        logger.info("🎵 INLINE /qo'shiq DOWNLOAD OK: filepath=%s size=%d bytes elapsed=%.2fs", filepath, __import__("os").path.getsize(filepath), time.monotonic() - started)
+        media_url = inline_media.publish(filepath, "audio")
+        logger.info("🎵 INLINE /qo'shiq EDIT: switching inline message to URL=%s", media_url)
+        await context.bot.edit_message_media(
+            inline_message_id=inline_message_id,
+            media=InputMediaAudio(
+                media=media_url,
+                title=title[:64],
+                performer=(track.get("uploader") or None),
+                caption=f"✅ Tayyor.\n\n🤖 Talaba AI — @{BOT_USERNAME}",
+            ),
+            reply_markup=INLINE_MESSAGE_MARKUP,
+        )
+        logger.info("✅ INLINE /qo'shiq SUCCESS: user_id=%s title=%r source=%s total=%.2fs", getattr(user, "id", "?"), title, track.get("source_id"), time.monotonic() - started)
+        _log_inline(user, f"/qo'shiq {title}", "ok", f"source={track.get('source_id')}; media_url={media_url}; total={time.monotonic()-started:.2f}s")
     except video_tools.DownloadError as e:
+        logger.error("🔴 INLINE /qo'shiq DOWNLOAD ERROR: user_id=%s source=%s title=%r reason=%s", getattr(user, "id", "?"), track.get("source_id"), title, e, exc_info=True)
         await _fail_inline_media(context, inline_message_id, str(e))
         _log_inline(user, f"/qo'shiq {title}", "error", str(e))
     except Exception as e:
-        logger.error(f"🔍 Inline /qo'shiq kutilmagan xato (title='{title}'): {type(e).__name__}: {e}", exc_info=True)
+        logger.error("🔴 INLINE /qo'shiq ERROR: user_id=%s source=%s title=%r type=%s detail=%s", getattr(user, "id", "?"), track.get("source_id"), title, type(e).__name__, e, exc_info=True)
         await _fail_inline_media(context, inline_message_id, "❌ Qo'shiqni yuborishda kutilmagan xatolik yuz berdi.")
-        _log_inline(user, f"/qo'shiq {title}", "error", f"kutilmagan xato: {type(e).__name__}: {e}")
+        _log_inline(user, f"/qo'shiq {title}", "error", f"{type(e).__name__}: {e}")
     finally:
         shutil.rmtree(dest_dir, ignore_errors=True)
 
