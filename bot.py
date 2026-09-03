@@ -543,6 +543,10 @@ class HealthHandler(BaseHTTPRequestHandler):
             self.wfile.write(_PRO_AUDIO_BYTES)
             return
 
+        if self.path.startswith(inline_media.URL_PREFIX):
+            self._serve_inline_media()
+            return
+
         if self.path.startswith(_WEBAPP_GENERATED_URL_PREFIX):
             self._serve_generated_image()
             return
@@ -562,6 +566,36 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.end_headers()
         self.wfile.write(b"Talaba AI bot ishlamoqda!")
+
+    def _serve_inline_media(self) -> None:
+        """GET /inline-media/<token> — /vid va /qoshiq uchun tayyor faylni
+        Telegram serveriga vaqtincha ochiq URL orqali beradi."""
+        token = self.path[len(inline_media.URL_PREFIX):].split("?", 1)[0]
+        resolved = inline_media.resolve_path(token)
+        if not resolved:
+            logger.warning("🔴 Inline media GET 404/expired: token=%s", token)
+            self.send_response(404)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(b"Inline media not found or expired")
+            return
+        file_path, content_type = resolved
+        try:
+            size = os.path.getsize(file_path)
+            with open(file_path, "rb") as f:
+                body = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(size))
+            self.send_header("Cache-Control", "public, max-age=300")
+            self.send_header("Accept-Ranges", "bytes")
+            self.end_headers()
+            self.wfile.write(body)
+            logger.info("📤 Inline media GET 200: token=%s type=%s size=%d", token, content_type, size)
+        except OSError as e:
+            logger.error("🔴 Inline media file serve ERROR: token=%s type=%s detail=%s", token, type(e).__name__, e, exc_info=True)
+            self.send_response(500)
+            self.end_headers()
 
     def _serve_generated_image(self) -> None:
         """GET /miniapp/rasim/generated/<hex>.png — inline `/rasim` orqali
