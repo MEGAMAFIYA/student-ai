@@ -193,6 +193,7 @@ def record_inline_log(user_id: int, username: str, query: str, status: str, deta
     status:
       'ok'          — foydalanuvchiga muvaffaqiyatli javob/fayl berildi.
       'error'       — ishlashga urinildi, lekin xatolik chiqdi (detail — sababi).
+      'queued'      — inline natija Telegram'ga chiqarildi, og'ir ish tanlashdan keyin boshlanadi.
       'redirect'    — inline rejimda bajarib bo'lmadigan vazifa, shaxsiy
                        chatga yo'naltirildi (detail — sababi).
       'instruction' — buyruq to'liq emas edi (masalan argumentsiz), shu
