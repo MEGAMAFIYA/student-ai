@@ -76,12 +76,14 @@ async def qoshiq_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE, overrid
     """`override_text` — handlers/mention_dispatch.py orqali chaqirilganda
     beriladi (qarang: fayl boshidagi izoh)."""
     if not update.message:
+        logger.warning("🎵 /qoshiq: update.message yo'q — handler to'xtatildi.")
         return
     raw_text = override_text if override_text is not None else (update.message.text or "")
     query = _COMMAND_RE.sub("", raw_text, count=1).strip()
 
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
+    logger.info("🎵 /qoshiq START: chat_id=%s user_id=%s raw=%r query=%r", chat_id, user_id, raw_text[:300], query[:200])
 
     if not query:
         # Ikki bosqichli kiritish: "/qo'shiq" so'z/argumentsiz yuborilgan
@@ -93,13 +95,16 @@ async def qoshiq_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE, overrid
         return
     status = await update.message.reply_text(f"🔎 \"{query}\" qidirilmoqda...")
 
+    started = time.monotonic()
     try:
         results = await asyncio.to_thread(video_tools.search_tracks, query, config.QOSHIQ_SEARCH_COUNT)
+        logger.info("✅ /qoshiq SEARCH OK: chat_id=%s user_id=%s query=%r results=%d elapsed=%.2fs", chat_id, user_id, query, len(results), time.monotonic() - started)
     except video_tools.DownloadError as e:
+        logger.error("🔴 /qoshiq SEARCH ERROR: chat_id=%s user_id=%s query=%r DownloadError=%s elapsed=%.2fs", chat_id, user_id, query, e, time.monotonic() - started, exc_info=True)
         await status.edit_text(str(e))
         return
     except Exception as e:
-        logger.error(f"🎵 /qo'shiq qidiruvida kutilmagan xato ('{query}'): {type(e).__name__}: {e}", exc_info=True)
+        logger.error(f"🔴 /qo'shiq SEARCH ERROR: chat_id={chat_id}, user_id={user_id}, query='{query}', type={type(e).__name__}: {e}", exc_info=True)
         await status.edit_text(f"❌ Qidiruvda kutilmagan xatolik yuz berdi.\n\nSabab: {type(e).__name__}: {e}")
         return
 
@@ -109,11 +114,15 @@ async def qoshiq_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE, overrid
         "user_id": user_id, "chat_id": chat_id, "results": results, "ts": time.time(), "query": query,
     }
 
-    await status.edit_text(
-        f"🎵 \"{query}\" bo'yicha {len(results)} ta natija topildi — birini tanlang:",
-        reply_markup=_build_results_markup(session_id, results, page=0),
-    )
-    logger.info(f"🎵 /qo'shiq qidiruvi: chat_id={chat_id}, user_id={user_id}, query='{query}', session={session_id}, natijalar soni={len(results)}.")
+    try:
+        await status.edit_text(
+            f"🎵 \"{query}\" bo'yicha {len(results)} ta natija topildi — birini tanlang:",
+            reply_markup=_build_results_markup(session_id, results, page=0),
+        )
+    except Exception as e:
+        logger.error("🔴 /qoshiq RESULT MESSAGE ERROR: chat_id=%s user_id=%s session=%s type=%s detail=%s", chat_id, user_id, session_id, type(e).__name__, e, exc_info=True)
+        raise
+    logger.info(f"🎵 /qo'shiq qidiruvi READY: chat_id={chat_id}, user_id={user_id}, query='{query}', session={session_id}, natijalar soni={len(results)}.")
 
 
 # Talab #15: 10 tadan ko'p natija bitta katta xabarga joylanmaydi —
@@ -215,6 +224,7 @@ async def qoshiq_choice_callback(update: Update, context: ContextTypes.DEFAULT_T
 
     await query_cb.answer("⏳ Yuklab olinmoqda...")
     chat_id = session["chat_id"]
+    logger.info("🎵 /qoshiq CHOICE: chat_id=%s user_id=%s source=%s title=%r url=%s", chat_id, session["user_id"], track.get("source_id"), track.get("title"), track.get("webpage_url"))
     await context.bot.send_chat_action(chat_id, ChatAction.UPLOAD_VOICE)
 
     dest_dir = tempfile.mkdtemp(prefix="qoshiq_")
