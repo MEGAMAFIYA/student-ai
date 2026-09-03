@@ -98,6 +98,7 @@ import uuid
 from telegram import (
     Update,
     InlineQueryResultArticle,
+    InlineQueryResultAudio,
     InlineQueryResultDocument,
     InlineQueryResultsButton,
     WebAppInfo,
@@ -120,6 +121,8 @@ from config import UNIVERSAL_CHAT_AI, PUBLIC_BASE_URL
 from ai_clients import ask_ai
 from handlers import course_work
 import github_storage
+import pro_tabrik_business
+from pro_tabrik_business import PRO_AUDIO_PATH
 import pro_tabrik_logic
 import storage
 import tabrik_logic
@@ -128,7 +131,6 @@ import video_tools
 import webapp_security
 
 logger = logging.getLogger(__name__)
-logger.warning("🏷️ inline_query.py YUKLANDI — versiya: tabrik-ai-hardfix-v2 (chosen_inline_result guard bilan)")
 
 PLACEHOLDER_TEXT = "⏳ Javob tayyorlanmoqda..."
 BOT_USERNAME = "Student_ai_uz_bot"  # faqat imzo/havola uchun, username o'zgarsa shu yerni yangilang
@@ -257,43 +259,6 @@ async def on_inline_query(
 
     if not query:
         return  # foydalanuvchi hali hech narsa yozmagan
-
-    # --------------------------------------------------------
-    # 🛑 QATTIQ HIMOYA (hamma narsadan OLDIN): "/tabrik" bilan boshlangan
-    # HAR QANDAY so'rov faqat /tabrik funksiyasiga tegishli — pastdagi
-    # boshqa hech qanday tarmoqqa (jumladan oxiridagi umumiy AI-javob
-    # "chat" natijasiga) HECH QACHON tushmasligi kerak. Bu tekshiruv
-    # pastdagi (asosiy) /tabrik blokidan MUSTAQIL, ATAYLAB DUBLIKAT —
-    # agar u yerdagi shart negadir ishlamay qolsa ham (masalan kelajakda
-    # kimdir kod tuzatib, chegara shartini buzib qo'ysa), so'rov baribir
-    # shu yerda ushlanib qoladi va AI'ga umuman yuborilmaydi.
-    # --------------------------------------------------------
-    if re.match(r"^/tabrik(?:@\w+)?(\s|$)", query, re.IGNORECASE):
-        raw_text = tabrik_logic.parse_tabrik_text(query)
-        if not raw_text:
-            await _answer_instruction(
-                update, "🎁 /tabrik — tabrik matnini ham yozing",
-                "Masalan: /tabrik Salom mening qadrli insonim...",
-                query=query,
-            )
-            return
-        custom_emojis, text = tabrik_logic.extract_emojis(raw_text)
-        emojis = custom_emojis or tabrik_business.DEFAULT_EMOJIS
-        short_id = tabrik_logic.store_greeting(text, emojis=emojis)
-        tabrik_business.register_celebration(short_id, sender_user_id=update.inline_query.from_user.id)
-        results = [
-            InlineQueryResultArticle(
-                id=str(uuid.uuid4()),
-                title="🎁 Tabrik yuborish",
-                description=text[:120],
-                input_message_content=InputTextMessageContent(tabrik_logic.build_ready_card()),
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🎁 Tabriknomani qabul qilish", callback_data=f"itabrik:claim:{short_id}")
-                ]]),
-            )
-        ]
-        await update.inline_query.answer(results, cache_time=0, is_personal=True)
-        return
 
     cache = context.bot_data.setdefault("inline_queries", {})
     _trim_cache(cache)
@@ -448,35 +413,54 @@ async def on_inline_query(
         return
 
     # --------------------------------------------------------
-    # 💎 /pro — /tabrik'ning shaxsiy-rasmli versiyasi. Xuddi /tabrik kabi,
-    # avval FAQAT "🎁 Tabriknomani qabul qilish" tugmasi chiqadi (rasm
-    # HALI ko'rsatilmaydi) — lekin placeholder HUJJAT (PDF) turida
-    # bo'lishi kerak, chunki keyinroq RASMGA almashtiriladi (matn buni
-    # qila olmas edi, qarang: handlers/pro_tabrik.py boshidagi izoh).
+    # 💎 /pro — do'stning private chatiga Telegram BUSINESS API orqali
+    # BOSQICHMA-BOSQICH (har bosishda bitta emoji) yuboriladigan tabriknoma
+    # (qarang: pro_tabrik_business.py). Kontent modeli (matn + emoji)
+    # /tabrik bilan AYNAN BIR XIL bo'lgani uchun bir xil `tabrik_logic`
+    # ombori qayta ishlatiladi (rasm YO'Q — eski slайд-shou versiyasidan
+    # farqli, shuning uchun PUBLIC_BASE_URL/GitHub rasmlari SHART EMAS).
+    #
+    # Boshlang'ich natija — AGAR audio fayl + PUBLIC_BASE_URL sozlangan
+    # bo'lsa — "🎵 Ovozli xabar" (InlineQueryResultAudio, ▶️ Play bilan
+    # ko'rinadi) va tagida "🎁 Tabriknomani qabul qilish" tugmasi BITTA
+    # xabarda. Audio sozlanmagan bo'lsa — /tabrik bilan BIR XIL oddiy matn
+    # natijasiga qaytadi (7-band: audio ishlamasa ham oqim to'xtamasin).
     # --------------------------------------------------------
 
     if PRO_WITH_TEXT_RE.match(query):
-        text = pro_tabrik_logic.parse_pro_text(query)
-        if text:
-            if not PUBLIC_BASE_URL:
-                await _answer_redirect(update, query, "PUBLIC_BASE_URL sozlanmagan — /pro inline rejimda ishlay olmaydi")
-                return
-            sender_id = update.inline_query.from_user.id
-            photos = github_storage.list_user_photos(sender_id) if github_storage.is_configured() else []
-            short_id = pro_tabrik_logic.store_pro_greeting(text, sender_id, photos)
-            results = [
-                InlineQueryResultDocument(
-                    id=str(uuid.uuid4()),
-                    title="💎 Pro tabriknoma yuborish",
-                    description=text[:120],
-                    document_url=f"{PUBLIC_BASE_URL}/placeholder.pdf",
-                    mime_type="application/pdf",
-                    caption=pro_tabrik_logic.build_ready_card(),
-                    reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("🎁 Tabriknomani qabul qilish", callback_data=f"iprotabrik:claim:{short_id}")
-                    ]]),
-                )
-            ]
+        raw_text = pro_tabrik_logic.parse_pro_text(query)
+        if raw_text:
+            custom_emojis, text = tabrik_logic.extract_emojis(raw_text)
+            emojis = custom_emojis or pro_tabrik_business.DEFAULT_EMOJIS
+            short_id = tabrik_logic.store_greeting(text, emojis=emojis)
+            pro_tabrik_business.register_pro_celebration(short_id, sender_user_id=update.inline_query.from_user.id)
+            ready_markup = InlineKeyboardMarkup([[
+                InlineKeyboardButton("🎁 Tabriknomani qabul qilish", callback_data=f"iprotabrik:claim:{short_id}")
+            ]])
+
+            if PUBLIC_BASE_URL and pro_tabrik_business.audio_available():
+                results = [
+                    InlineQueryResultAudio(
+                        id=str(uuid.uuid4()),
+                        audio_url=f"{PUBLIC_BASE_URL}/pro_audio.mp3",
+                        title="🎵 Ovozli xabar",
+                        performer="Talaba AI",
+                        caption=pro_tabrik_business.build_ready_card(),
+                        reply_markup=ready_markup,
+                    )
+                ]
+                logger.info(f"💎 Inline /pro: audio bilan natija ({PRO_AUDIO_PATH}).")
+            else:
+                logger.info("💎 Inline /pro: audio sozlanmagan (PUBLIC_BASE_URL yoki fayl yo'q) — faqat matn+tugma bilan davom etiladi.")
+                results = [
+                    InlineQueryResultArticle(
+                        id=str(uuid.uuid4()),
+                        title="💎 Pro tabrik yuborish",
+                        description=text[:120],
+                        input_message_content=InputTextMessageContent(pro_tabrik_business.build_ready_card()),
+                        reply_markup=ready_markup,
+                    )
+                ]
             await update.inline_query.answer(results, cache_time=0, is_personal=True)
             return
 
@@ -738,19 +722,6 @@ async def on_chosen_inline_result(
     # 🎁 /tabrik uchun bu yerda ATAYLAB hech narsa yo'q — animatsiya endi
     # xabar TANLANGANDA emas, faqat "🎁 Tabriknomani qabul qilish" tugmasi
     # bosilganda (inline_tabrik_claim_callback) boshlanadi.
-    #
-    # 🐞 TOPILGAN HAQIQIY XATO: tabrik natijasi `cache`ga yozilmagani
-    # uchun `entry` shu yerda HAR DOIM None bo'lgan, va pastdagi "ODDIY AI
-    # SAVOL" bo'limi `entry or {}` orqali `chosen.query`ga (ya'ni butun
-    # "/tabrik <matn>" satriga) qaytib, uni AI'ga SAVOL sifatida yuborgan.
-    # Foydalanuvchi /tabrik ishlatganda AI javob berishining ASOSIY sababi
-    # shu edi — endi bu yerda ANIQ to'xtatiladi:
-    if re.match(r"^/tabrik(?:@\w+)?(\s|$)", chosen.query or "", re.IGNORECASE):
-        logger.info(
-            f"🎁 [CHOSEN_INLINE] /tabrik natijasi tanlandi — AI'ga YUBORILMAYDI "
-            f"(user_id={user.id if user else '?'}, query='{(chosen.query or '')[:80]}')"
-        )
-        return
 
     # --------------------------------------------------------
     # ODDIY AI SAVOL
@@ -763,15 +734,6 @@ async def on_chosen_inline_result(
 
     if not query:
         return
-
-    logger.warning(
-        f"🔎 [CHOSEN_INLINE→AI] AI javob YO'LGA QO'YILDI: "
-        f"entry={'bor, type=' + str(entry.get('type')) if entry else 'YO`Q (None)'}, "
-        f"chosen.query='{(chosen.query or '')[:120]}', "
-        f"final_query='{query[:120]}', "
-        f"user_id={user.id if user else '?'}, "
-        f"username=@{getattr(user, 'username', None)}"
-    )
 
     await _handle_chat(
         context,
@@ -792,12 +754,6 @@ async def _handle_chat(
     query: str,
     user=None,
 ):
-    logger.warning(
-        f"🤖 [_handle_chat CHAQIRILDI] Bu Gemini'ga so'rov ketayotganini "
-        f"anglatadi. query='{query[:120]}', user_id={user.id if user else '?'}, "
-        f"inline_message_id={inline_message_id}"
-    )
-
     wants_location = bool(
         LOCATION_HINTS.search(query)
     )
@@ -1251,16 +1207,13 @@ async def _handle_qoshiq(
 # "🎁 Tabriknomani qabul qilish" bosilganda boshlanadi.
 # ============================================================
 
-# NOTE: TABRIK_COUNTDOWN_DELAY / TABRIK_FRAME_DELAY konstantalari va
-# _ACTIVE_INLINE_TABRIK / _INLINE_TABRIK_REVERT_TASKS ombori endi bu yerda
-# YO'Q — ular faqat eski (countdown+aylanuvchi-naqsh) inline /tabrik
-# animatsiyasi uchun kerak edi, u endi tabrik_business.py'ga topshirildi.
-# `/pro` OQIMI HALI HAM shu ikkita delay konstantasidan foydalanadi —
-# ular pastroqda, PRO_SLIDESHOW_DELAY bilan bir joyda TABRIK_COUNTDOWN_DELAY /
-# TABRIK_FRAME_DELAY nomi bilan saqlanib qoldi (grep bilan tekshirilgan:
-# faqat inline_pro_claim_callback ishlatadi) — 21-band: /pro'ni buzmaslik.
-TABRIK_COUNTDOWN_DELAY = 1.0
-TABRIK_FRAME_DELAY = 0.45
+# NOTE: TABRIK_COUNTDOWN_DELAY / TABRIK_FRAME_DELAY / PRO_SLIDESHOW_DELAY /
+# _ACTIVE_INLINE_TABRIK / _INLINE_TABRIK_REVERT_TASKS / _ACTIVE_INLINE_PRO /
+# _INLINE_PRO_REVERT_TASKS konstantalari endi bu yerda YO'Q — ular faqat
+# eski (countdown+aylanuvchi-naqsh / rasm-slайд-shou + 120s revert) inline
+# /tabrik va /pro animatsiyalari uchun kerak edi. /tabrik allaqachon
+# tabrik_business.py'ga, /pro esa endi pro_tabrik_business.py'ga
+# topshirildi (grep bilan tekshirilgan: boshqa hech kim ishlatmaydi).
 
 
 async def inline_tabrik_claim_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1280,118 +1233,19 @@ async def inline_tabrik_claim_callback(update: Update, context: ContextTypes.DEF
     await tabrik_business.handle_claim(update, context)
 
 # ============================================================
-# 💎 OG'IR OQIM: /pro (inline) — /tabrik bilan BIR XIL naqsh, lekin
-# yakuniy bosqichdan OLDIN foydalanuvchining shaxsiy rasmlari (agar
-# bo'lsa) slайд-shou qilinadi. Qarang: handlers/pro_tabrik.py'dagi
-# batafsil arxitektura izohi (nega placeholder HUJJAT turida ekani).
+# 💎 OG'IR OQIM: /pro (inline) — endi to'liq `pro_tabrik_business.py`ga
+# topshirilgan: HAR bosish FAQAT BITTA bosqichni bajaradi (audio + 6
+# bosqichli emoji/final-matn ketma-ketligi, Business API orqali, ASL
+# tabrik_business.py naqshiga o'xshab — batafsili: pro_tabrik_business.py
+# docstring'i). ESKI (countdown + aylanuvchi-naqsh + rasm slайд-shou +
+# 120s avtomatik revert) mexanizm BU YERDA ENDI ISHLATILMAYDI (21-band:
+# eski bosqichlar yangi state machine bilan almashtirildi) — lekin
+# handlers/pro_tabrik.py'dagi ODDIY (Business bo'lmagan, guruh/shaxsiy
+# chat) `/pro <matn>` buyrug'i BUTUNLAY DAXLSIZ qoladi (u hali ham
+# rasm-slайд-shouli eski oqimni ishlatadi, chunki Business API'ga
+# umuman muhtoj emas).
 # ============================================================
-
-PRO_SLIDESHOW_DELAY = 1.0
-PRO_REVERT_DELAY_SEC = 120
-
-_ACTIVE_INLINE_PRO: set[str] = set()
-_INLINE_PRO_REVERT_TASKS: dict[str, asyncio.Task] = {}
-
-
-def _pro_ready_markup(short_id: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton("🎁 Tabriknomani qabul qilish", callback_data=f"iprotabrik:claim:{short_id}")
-    ]])
 
 
 async def inline_pro_claim_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    inline_message_id = query.inline_message_id
-    if not inline_message_id:
-        await query.answer("⚠️ Bu tugma faqat inline xabarlar uchun.", show_alert=True)
-        return
-
-    short_id = query.data.split(":", 2)[2]
-    entry = pro_tabrik_logic.get_pro_greeting(short_id)
-    if not entry:
-        await query.answer("⚠️ Bu tabrikning muddati o'tgan.", show_alert=True)
-        return
-
-    if inline_message_id in _ACTIVE_INLINE_PRO:
-        await query.answer("⏳ Animatsiya allaqachon ketmoqda...", show_alert=False)
-        return
-
-    pending_revert = _INLINE_PRO_REVERT_TASKS.pop(inline_message_id, None)
-    if pending_revert:
-        pending_revert.cancel()
-
-    pro_tabrik_logic.touch_pro_greeting(short_id)
-    _ACTIVE_INLINE_PRO.add(inline_message_id)
-    await query.answer("💎 Ochilmoqda...")
-
-    try:
-        for n in (5, 4, 3, 2, 1):
-            await _safe_edit_caption_inline(context, inline_message_id, tabrik_logic.build_countdown_frame(n))
-            await asyncio.sleep(TABRIK_COUNTDOWN_DELAY)
-
-        for step in range(tabrik_logic.TOTAL_ROTATION_FRAMES):
-            await _safe_edit_caption_inline(context, inline_message_id, tabrik_logic.build_circle_frame(step))
-            await asyncio.sleep(TABRIK_FRAME_DELAY)
-
-        for i, url in enumerate(entry["photos"]):
-            try:
-                await context.bot.edit_message_media(
-                    inline_message_id=inline_message_id,
-                    media=InputMediaPhoto(media=url, caption=f"📷 {i + 1}/{len(entry['photos'])}"),
-                )
-            except Exception as e:
-                logger.warning(f"🔍 Inline /pro slайд-shou: rasmni ko'rsatib bo'lmadi ({url}): {type(e).__name__}: {e}")
-            await asyncio.sleep(PRO_SLIDESHOW_DELAY)
-
-        final_text = f"{tabrik_logic.build_final_card(escape_markdown(entry['text'], version=1))}\n\n🤖 Talaba AI — @{BOT_USERNAME}"
-        await _safe_edit_caption_inline(context, inline_message_id, final_text, reply_markup=INLINE_MESSAGE_MARKUP)
-        logger.info(f"🔍 Inline /pro animatsiyasi muvaffaqiyatli yakunlandi (inline_message_id={inline_message_id}).")
-
-        task = asyncio.create_task(_schedule_inline_pro_revert(context, inline_message_id, short_id))
-        _INLINE_PRO_REVERT_TASKS[inline_message_id] = task
-    except Exception as e:
-        logger.error(f"🔍 Inline /pro animatsiyasida kutilmagan xato: {type(e).__name__}: {e}", exc_info=True)
-        try:
-            await _safe_edit_caption_inline(
-                context, inline_message_id, f"🎁 {escape_markdown(entry['text'], version=1)}\n\n🤖 Talaba AI — @{BOT_USERNAME}",
-                reply_markup=INLINE_MESSAGE_MARKUP,
-            )
-        except Exception:
-            pass
-    finally:
-        _ACTIVE_INLINE_PRO.discard(inline_message_id)
-
-
-async def _safe_edit_caption_inline(context: ContextTypes.DEFAULT_TYPE, inline_message_id: str, caption: str, reply_markup=None) -> None:
-    """_safe_edit_text bilan BIR XIL maqsad, lekin caption uchun (chunki
-    /pro placeholder har doim MEDIA — hujjat/rasm — bo'lib qoladi, matn
-    emas)."""
-    try:
-        await context.bot.edit_message_caption(
-            inline_message_id=inline_message_id, caption=caption, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup,
-        )
-    except BadRequest as e:
-        if "message is not modified" not in str(e).lower():
-            logger.warning(f"🔍 Inline /pro caption edit qilib bo'lmadi: {e}")
-    except Exception as e:
-        logger.warning(f"🔍 Inline /pro caption edit qilishda kutilmagan xato: {type(e).__name__}: {e}")
-
-
-async def _schedule_inline_pro_revert(context: ContextTypes.DEFAULT_TYPE, inline_message_id: str, short_id: str) -> None:
-    try:
-        await asyncio.sleep(PRO_REVERT_DELAY_SEC)
-        await context.bot.edit_message_media(
-            inline_message_id=inline_message_id,
-            media=InputMediaDocument(
-                media=f"{PUBLIC_BASE_URL}/placeholder.pdf",
-                caption=pro_tabrik_logic.build_ready_card(),
-            ),
-            reply_markup=_pro_ready_markup(short_id),
-        )
-        logger.info(f"🔍 Inline /pro xabari asl holatga qaytarildi (inline_message_id={inline_message_id}).")
-    except asyncio.CancelledError:
-        raise
-    except Exception as e:
-        logger.warning(f"🔍 Inline /pro xabarini asl holatga qaytarishda xato: {type(e).__name__}: {e}")
-    finally:
-        _INLINE_PRO_REVERT_TASKS.pop(inline_message_id, None)
+    await pro_tabrik_business.handle_stage_click(update, context)
