@@ -28,6 +28,7 @@ import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import subprocess
 import tempfile
+import time
 
 import yt_dlp
 
@@ -711,60 +712,60 @@ def search_tracks(query: str, count: int) -> list[dict]:
 
 
 
+_INLINE_SEARCH_CACHE: dict[str, tuple[float, list[dict]]] = {}
+_INLINE_SEARCH_CACHE_TTL = 60.0
+
+
 def search_tracks_inline(query: str, count: int) -> list[dict]:
-    """Inline /qo'shiq uchun kengroq va barqaror qidiruv.
+    """Inline /qo'shiq qidiruvi uchun timeoutga chidamli qidiruv.
 
-    Muhim: `count` foydalanuvchiga ko'rsatiladigan yakuniy natijalar soni.
-    Har bir manbadan oldindan ko'proq natija olinadi, keyin dublikatlar
-    olib tashlanadi. Aks holda YouTube/SoundCloud/Telegram natijalari
-    dublikat bo'lsa, 10+ natijaga yetmasdan ro'yxat qisqarib qoladi.
-
-    Telegram uchun avvalgi kod faqat 8 ta kanalni tekshirardi. Endi
-    konfiguratsiyadagi BARCHA public kanallar tekshiriladi.
+    Telegram inline rejimida foydalanuvchi har bir belgi yozganda yangi query
+    yuboradi. Shu sabab bir xil query'ni qayta-qayta Telethon/yt-dlp orqali
+    qidirish mumkin emas. Natijalar 60 soniyaga lokal cache qilinadi.
+    Telegram kanallari inline javobning 10 soniyalik muddatiga ulgurish uchun
+    birinchi bosqichda 4 ta kanal bilan qidiriladi.
     """
-    active_sources = [
-        s for s in SEARCH_SOURCES
-        if config.is_music_source_enabled(s["toggle"])
-    ]
-    telegram_enabled = (
-        config.TG_SEARCH_ENABLED
-        and config.is_music_source_enabled("telegram")
-    )
+    query = " ".join((query or "").split()).strip()
+    cache_key = query.casefold()
+    now = time.monotonic()
+    cached = _INLINE_SEARCH_CACHE.get(cache_key)
+    if cached and now - cached[0] < _INLINE_SEARCH_CACHE_TTL:
+        logger.info("🎵 Inline /qo'shiq CACHE HIT: query=%r results=%d", query, len(cached[1]))
+        return [dict(x) for x in cached[1][:count]]
+
+    # eski cache yozuvlarini vaqti-vaqti bilan tozalash
+    for key, (ts, _) in list(_INLINE_SEARCH_CACHE.items()):
+        if now - ts >= _INLINE_SEARCH_CACHE_TTL:
+            _INLINE_SEARCH_CACHE.pop(key, None)
+
+    active_sources = [s for s in SEARCH_SOURCES if config.is_music_source_enabled(s["toggle"])]
+    telegram_enabled = config.TG_SEARCH_ENABLED and config.is_music_source_enabled("telegram")
     if not active_sources and not telegram_enabled:
         raise DownloadError("❌ Hozircha qo'shiq qidirish manbalarining barchasi o'chirilgan.")
 
-    # Qidiruvda kamida 10 ta natijani maqsad qilamiz, lekin config qiymati
-    # foydalanuvchiga ko'rsatiladigan maksimal sonni belgilaydi.
-    target = max(10, int(count or 0))
-    # Har bir manbadan yakuniy targetdan ancha ko'p olamiz: dublikatlar,
-    # bo'sh metadata va bir manbaning kam natijasi qolganlarini kamaytirmasin.
-    source_request = max(12, min(30, target * 2))
+    # Inline natija uchun kamida 10 ta variant maqsad qilinadi; konfiguratsiya
+    # undan kichik qiymat bergan bo'lsa, foydalanuvchi sozlamasi ustun turadi.
+    target = max(1, min(count, max(10, count)))
+
+    weights = {s["id"]: 1 for s in active_sources}
+    if telegram_enabled:
+        weights["telegram"] = 2
+    total_weight = sum(weights.values()) or 1
+
+    def alloc(source_id: str) -> int:
+        return max(3, -(-count * weights[source_id] // total_weight))
 
     jobs = {}
     errors: list[str] = []
-    source_stats: dict[str, int] = {}
-
-    # Har bir manba alohida thread'da ishlaydi — Telegram/yt-dlp bir-birini
-    # bloklamaydi. Telegram endi max_channels=8 bilan sun'iy cheklanmaydi.
-    with ThreadPoolExecutor(
-        max_workers=max(1, len(active_sources) + (1 if telegram_enabled else 0))
-    ) as pool:
+    with ThreadPoolExecutor(max_workers=max(1, len(active_sources) + (1 if telegram_enabled else 0))) as pool:
         for src in active_sources:
-            jobs[pool.submit(
-                _search_one_source,
-                src["prefix"],
-                query,
-                source_request,
-            )] = ("web", src)
-
+            jobs[pool.submit(_search_one_source, src["prefix"], query, alloc(src["id"]),)] = ("web", src)
         if telegram_enabled:
+            # Telegram moduli ham asyncio.run() bilan bloklovchi wrapper beradi.
+            # Inline uchun birinchi 8 kanal yetarlicha tez fallback bo'lib xizmat qiladi.
             def _tg_search():
                 import telegram_search
-                return telegram_search.search_public_audio(
-                    query,
-                    source_request,
-                    max_channels=None,
-                )
+                return telegram_search.search_public_audio(query, min(alloc("telegram"), count), max_channels=4)
             jobs[pool.submit(_tg_search)] = ("telegram", None)
 
         merged: list[dict] = []
@@ -772,35 +773,13 @@ def search_tracks_inline(query: str, count: int) -> list[dict]:
             kind, src = jobs[future]
             try:
                 if kind == "telegram":
-                    tg_results = future.result() or []
-                    source_stats["Telegram"] = len(tg_results)
-                    merged.extend(tg_results)
-                    logger.info(
-                        "📡 Inline /qo'shiq Telegram: query=%r results=%d channels=%d",
-                        query,
-                        len(tg_results),
-                        len(config.TG_SEARCH_CHANNELS),
-                    )
+                    merged.extend(future.result() or [])
                     continue
-
                 raw_entries, error_reason = future.result()
-                label = src["label"]
-                source_stats[label] = len(raw_entries or [])
-                logger.info(
-                    "🎵 Inline /qo'shiq %s: query=%r results=%d",
-                    label,
-                    query,
-                    len(raw_entries or []),
-                )
                 if error_reason:
-                    errors.append(f"{label}: {error_reason}")
-
-                for e in raw_entries or []:
-                    raw_ref = (
-                        e.get("webpage_url")
-                        or e.get("url")
-                        or (e.get("id") if src["id"] == "youtube" else None)
-                    )
+                    errors.append(f"{src['label']}: {error_reason}")
+                for e in raw_entries:
+                    raw_ref = e.get("webpage_url") or e.get("url") or (e.get("id") if src["id"] == "youtube" else None)
                     if not raw_ref:
                         continue
                     if raw_ref.startswith("http"):
@@ -823,36 +802,21 @@ def search_tracks_inline(query: str, count: int) -> list[dict]:
             except Exception as exc:
                 label = src["label"] if src else "Telegram"
                 errors.append(f"{label}: {type(exc).__name__}: {exc}")
-                logger.error(
-                    "🎵 Inline /qo'shiq: %s qidiruvida kutilmagan xato: %s: %s",
-                    label,
-                    type(exc).__name__,
-                    exc,
-                    exc_info=True,
-                )
+                logger.error("🎵 Inline /qo'shiq: %s qidiruvida kutilmagan xato: %s: %s", label, type(exc).__name__, exc, exc_info=True)
 
     deduped = _dedupe_tracks(merged)
-    logger.info(
-        "🎵 Inline /qo'shiq SEARCH SUMMARY: query=%r source_results=%s raw=%d unique=%d target=%d errors=%s",
-        query,
-        source_stats,
-        len(merged),
-        len(deduped),
-        target,
-        errors or "yo'q",
-    )
-
     if not deduped:
         if errors:
-            raise DownloadError(
-                f"❌ \"{query}\" bo'yicha inline qidiruv amalga oshmadi. "
-                f"Sabab: {'; '.join(errors)}."
-            )
+            raise DownloadError(f"❌ \"{query}\" bo'yicha inline qidiruv amalga oshmadi. Sabab: {'; '.join(errors)}.")
         raise DownloadError(f"❌ \"{query}\" bo'yicha hech qanday natija topilmadi.")
 
-    # `target` 10+ bo'lgani uchun mavjud bo'lgan barcha yaxshi natijalarni
-    # ko'rsatamiz, lekin keraksiz cheksiz ro'yxat chiqarmaymiz.
-    return deduped[:target]
+    final_results = deduped[:target]
+    _INLINE_SEARCH_CACHE[cache_key] = (time.monotonic(), [dict(x) for x in final_results])
+    logger.info(
+        "🎵 Inline /qo'shiq tezkor qidiruv: query='%s', raw=%d, unique=%d, target=%d, errors=%s",
+        query, len(merged), len(deduped), target, errors or "yo'q",
+    )
+    return [dict(x) for x in final_results[:count]]
 
 def _normalize_for_dedupe(text: str) -> str:
     return "".join(ch for ch in text.lower() if ch.isalnum())
