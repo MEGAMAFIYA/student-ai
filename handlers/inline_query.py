@@ -383,10 +383,57 @@ async def on_inline_query(
             )
             return
 
+        # Telegram har bir yozilgan belgi uchun inline query yuboradi. Juda
+        # qisqa query'larni qidirish faqat serverni band qiladi va eski query
+        # ID'si bilan answerInlineQuery qilishga olib kelishi mumkin.
+        if len(search_text) < 3:
+            await _answer_instruction(
+                update,
+                "🎵 Qidiruvni davom ettiring",
+                "Kamida 3 ta harf yozing. Masalan: /qo'shiq ozodbek",
+                query=query,
+            )
+            return
+
+        # Bir xil query bir vaqtda ikki marta kelishi mumkin. Bitta worker
+        # ishlasin, ikkala inline query esa o'sha natijani kutib ishlatsin.
+        music_tasks = context.bot_data.setdefault("inline_music_tasks", {})
+        task_key = search_text.casefold()
+        started = time.monotonic()
+        task = music_tasks.get(task_key)
+        if task is None or task.done():
+            task = asyncio.create_task(
+                asyncio.to_thread(
+                    video_tools.search_tracks_inline,
+                    search_text,
+                    config.QOSHIQ_SEARCH_COUNT,
+                )
+            )
+            music_tasks[task_key] = task
+            logger.info("🎵 INLINE /qo'shiq SEARCH START: user_id=%s query=%r", user.id, search_text)
+        else:
+            logger.info("🎵 INLINE /qo'shiq SEARCH JOIN: user_id=%s query=%r — mavjud qidiruv kutilmoqda", user.id, search_text)
+
         try:
-            started = time.monotonic()
-            tracks = await asyncio.to_thread(video_tools.search_tracks_inline, search_text, config.QOSHIQ_SEARCH_COUNT)
-            logger.info("🎵 INLINE /qo'shiq SEARCH OK: user_id=%s query=%r results=%d elapsed=%.2fs", user.id, search_text, len(tracks), time.monotonic() - started)
+            # Telegram query ID muddati tugashidan oldin javob berish uchun
+            # qidiruvga qat'iy vaqt chegarasi qo'yiladi.
+            tracks = await asyncio.wait_for(task, timeout=7.0)
+            logger.info(
+                "🎵 INLINE /qo'shiq SEARCH OK: user_id=%s query=%r results=%d elapsed=%.2fs",
+                user.id, search_text, len(tracks), time.monotonic() - started,
+            )
+        except asyncio.TimeoutError:
+            logger.error(
+                "🔴 INLINE /qo'shiq SEARCH TIMEOUT: user_id=%s query=%r elapsed=%.2fs",
+                user.id, search_text, time.monotonic() - started,
+            )
+            await _answer_instruction(
+                update,
+                "🎵 Qidiruv juda sekinlashdi",
+                "Qidiruv serveri vaqtida javob bermadi. Iltimos, so'rovni yana yuboring.",
+                query=query,
+            )
+            return
         except video_tools.DownloadError as e:
             logger.error("🎵 INLINE /qo'shiq SEARCH ERROR: user_id=%s query=%r DownloadError=%s", user.id, search_text, e, exc_info=True)
             await _answer_instruction(update, "🎵 Qidiruvda xatolik", str(e), query=query)
@@ -424,7 +471,23 @@ async def on_inline_query(
                     reply_markup=preview_markup,
                 )
             )
-        await update.inline_query.answer(results, cache_time=0, is_personal=True)
+        try:
+            await update.inline_query.answer(results, cache_time=5, is_personal=True)
+        except BadRequest as e:
+            # Telegram foydalanuvchi yozishni davom ettirib, query ID'si
+            # eskirib qolgan bo'lsa "Query is too old..." qaytaradi. Bu
+            # holatda botning o'zi yiqilmasin va aniq log qoldirsin.
+            if "too old" in str(e).lower() or "query id is invalid" in str(e).lower():
+                logger.warning(
+                    "⚠️ INLINE /qo'shiq ANSWER EXPIRED: user_id=%s query=%r: %s",
+                    user.id, search_text, e,
+                )
+                return
+            logger.error(
+                "🔴 INLINE /qo'shiq ANSWER ERROR: user_id=%s query=%r %s: %s",
+                user.id, search_text, type(e).__name__, e, exc_info=True,
+            )
+            raise
         return
 
     if QOSHIQ_BARE_RE.match(query):
