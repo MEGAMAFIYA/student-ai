@@ -133,7 +133,7 @@ async def _search_channel(client, channel: str, query: str, limit: int, channel_
     return out
 
 
-async def _search_public_audio_async(query: str, count: int) -> list[dict]:
+async def _search_public_audio_async(query: str, count: int, max_channels: int | None = None) -> list[dict]:
     if not config.TG_SEARCH_ENABLED:
         return []
     if not TELETHON_AVAILABLE:
@@ -148,7 +148,8 @@ async def _search_public_audio_async(query: str, count: int) -> list[dict]:
             return []
         per_channel = max(1, -(-count // max(1, len(config.TG_SEARCH_CHANNELS))))
         results: list[dict] = []
-        for channel in config.TG_SEARCH_CHANNELS:
+        channels = config.TG_SEARCH_CHANNELS[:max_channels] if max_channels else config.TG_SEARCH_CHANNELS
+        for channel in channels:
             # 🔌 Render loglarida ko'ringan "Disconnecting.../Disconnection
             # complete!" — Telethon ulanishi qidiruv davomida uzilib
             # qolishi mumkin. Bitta bunday uzilish QOLGAN 19 ta kanalni
@@ -194,9 +195,9 @@ async def _download_public_audio_async(tg_channel: str, tg_message_id: int, dest
 # faol loop bo'lmagani uchun bu xavfsiz.
 # ============================================================
 
-def search_public_audio(query: str, count: int) -> list[dict]:
+def search_public_audio(query: str, count: int, max_channels: int | None = None) -> list[dict]:
     try:
-        return asyncio.run(_search_public_audio_async(query, count))
+        return asyncio.run(_search_public_audio_async(query, count, max_channels=max_channels))
     except Exception as e:
         logger.error(f"📡 Telegram qidiruvida kutilmagan xato ('{query}'): {type(e).__name__}: {e}", exc_info=True)
         return []
