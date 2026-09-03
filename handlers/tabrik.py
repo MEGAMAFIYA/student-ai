@@ -41,6 +41,8 @@ import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.error import BadRequest, RetryAfter
+import telegram_effects
+import config
 from telegram.ext import ContextTypes
 from telegram.helpers import escape_markdown
 
@@ -58,7 +60,7 @@ _REVERT_TASKS: dict[tuple[int, int], asyncio.Task] = {}
 
 COUNTDOWN_DELAY = 1.0     # soniya — 5→1 orasidagi kutish
 FRAME_DELAY = 0.45        # soniya — naqsh freym'lari orasidagi kutish
-REVERT_DELAY_SEC = 120    # 2 daqiqa — yakuniy kartadan keyin tugmaga qaytish
+REVERT_DELAY_SEC = 120  # fallback; actual value comes from /developer    # 2 daqiqa — yakuniy kartadan keyin tugmaga qaytish
 
 
 def _ready_markup(short_id: str) -> InlineKeyboardMarkup:
@@ -98,7 +100,7 @@ async def tabrik_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE, overrid
         )
         return
 
-    short_id = tabrik_logic.store_greeting(text, emojis)
+    short_id = tabrik_logic.store_greeting(text, config.get_tabrik_settings()["emojis"])
     # MUHIM: bu yerda tabrik matni HECH QACHON ko'rsatilmaydi — faqat
     # tugma bosilgach, animatsiya oxirida ochiladi.
     await update.message.reply_text(
@@ -164,10 +166,39 @@ async def tabrik_claim_callback(update: Update, context: ContextTypes.DEFAULT_TY
             await _safe_edit(msg, tabrik_logic.build_countdown_frame(n))
             await asyncio.sleep(COUNTDOWN_DELAY)
 
-        emojis = tabrik_logic.get_greeting_emojis(short_id) or tabrik_logic.DEFAULT_EMOJIS
-        for emoji in emojis:
-            await _safe_edit(msg, tabrik_logic.build_emoji_frame(emoji))
-            await asyncio.sleep(FRAME_DELAY)
+        # Admin sozlagan umumiy audio /tabrik va /pro uchun ishlatiladi.
+        audio_id = config.get_tabrik_settings().get("audio_file_id")
+        if audio_id:
+            try:
+                sent_audio = await context.bot.send_audio(chat_id=chat_id, audio=audio_id)
+                logger.info(f"🎵 /tabrik audio yuborildi: message_id={sent_audio.message_id}")
+            except Exception as e:
+                logger.warning(f"🎵 /tabrik audio yuborilmadi: {type(e).__name__}: {e}")
+
+        emojis = tabrik_logic.get_greeting_emojis(short_id) or config.get_tabrik_settings()["emojis"]
+        emoji_delay = config.get_tabrik_settings()["emoji_delay"]
+        for idx, emoji in enumerate(emojis, start=1):
+            effect_id = telegram_effects.get_effect_id(emoji)
+            try:
+                sent_emoji = await context.bot.send_message(
+                    chat_id=chat_id, text=emoji, message_effect_id=effect_id
+                )
+            except Exception as e:
+                if effect_id is not None:
+                    logger.warning(f"✨ /tabrik emoji effect rad etildi idx={idx} emoji={emoji!r}: {e}")
+                    try:
+                        sent_emoji = await context.bot.send_message(chat_id=chat_id, text=emoji)
+                    except Exception as e2:
+                        logger.warning(f"✨ /tabrik emoji yuborilmadi idx={idx}: {e2}")
+                        continue
+                else:
+                    logger.warning(f"✨ /tabrik emoji yuborilmadi idx={idx}: {e}")
+                    continue
+            await asyncio.sleep(emoji_delay)
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=sent_emoji.message_id)
+            except Exception as e:
+                logger.warning(f"✨ /tabrik emoji o'chirilmadi idx={idx}: {type(e).__name__}: {e}")
 
         escaped = escape_markdown(greeting, version=1)
         await _safe_edit(msg, tabrik_logic.build_final_card(escaped))
@@ -193,7 +224,7 @@ async def _schedule_revert(context, chat_id: int, message_id: int, short_id: str
     bosilsa, `tabrik_claim_callback` bu vazifani bekor qiladi (yuqoriga
     qarang) — shuning uchun `CancelledError` kutilgan holat, xato emas."""
     try:
-        await asyncio.sleep(REVERT_DELAY_SEC)
+        await asyncio.sleep(config.get_tabrik_settings()["revert_minutes"] * 60)
         await context.bot.edit_message_text(
             chat_id=chat_id,
             message_id=message_id,
