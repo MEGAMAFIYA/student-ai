@@ -718,21 +718,86 @@ async def on_chosen_inline_result(
         await _handle_qoshiq(context, inline_message_id, entry["url"], entry["title"], entry.get("uploader"), user)
         return
 
-    # 🎁 /tabrik uchun bu yerda ATAYLAB hech narsa yo'q — animatsiya endi
-    # xabar TANLANGANDA emas, faqat "🎁 Tabriknomani qabul qilish" tugmasi
-    # bosilganda (inline_tabrik_claim_callback) boshlanadi.
+    # 🎁 /tabrik va 💎 /pro uchun bu yerda ATAYLAB hech narsa yo'q —
+    # ikkalasi ham animatsiyani xabar TANLANGANDA emas, faqat "🎁/💎
+    # Tabriknomani qabul qilish" tugmasi bosilganda (mos claim_callback
+    # orqali) boshlaydi.
     #
-    # 🐞 TOPILGAN HAQIQIY XATO: tabrik natijasi `cache`ga yozilmagani
-    # uchun `entry` shu yerda HAR DOIM None bo'lgan, va pastdagi "ODDIY AI
-    # SAVOL" bo'limi `entry or {}` orqali `chosen.query`ga (ya'ni butun
-    # "/tabrik <matn>" satriga) qaytib, uni AI'ga SAVOL sifatida yuborgan.
-    # Foydalanuvchi /tabrik ishlatganda AI javob berishining ASOSIY sababi
-    # shu edi — endi bu yerda ANIQ to'xtatiladi:
-    if re.match(r"^/tabrik(?:@\w+)?(\s|$)", chosen.query or "", re.IGNORECASE):
+    # 🐞 TOPILGAN HAQIQIY XATO (va uning UMUMLASHTIRILGAN yechimi): AGAR
+    # biror sababdan (server qayta ishga tushishi, kesh tozalanishi,
+    # _MAX_CACHE chegarasidan chiqib ketishi va h.k.) `entry` shu yerda
+    # YO'Q bo'lib qolsa, pastdagi "ODDIY AI SAVOL" bo'limi `chosen.query`ni
+    # (ya'ni butun "/buyruq <matn>" satrini) AI'ga SAVOL sifatida yuborib
+    # yuborardi. Bu FAQAT /tabrik uchun emas — /pro (kesh UMUMAN ishlatmaydi,
+    # shuning uchun bu holat har doim yuz beradi), /vid va /qo'shiq
+    # (kesh yo'qolib qolsa) uchun ham AYNAN shu xato takrorlanardi. Shu
+    # sabab BARCHA maxsus buyruqlar bu yerda ANIQ to'xtatiladi — hech
+    # qachon AI'ga yuborilmaydi:
+    special_query = chosen.query or ""
+
+    if re.match(r"^/tabrik(?:@\w+)?(\s|$)", special_query, re.IGNORECASE):
         logger.info(
             f"🎁 [CHOSEN_INLINE] /tabrik natijasi tanlandi — AI'ga YUBORILMAYDI "
-            f"(user_id={user.id if user else '?'}, query='{(chosen.query or '')[:80]}')"
+            f"(user_id={user.id if user else '?'}, query='{special_query[:80]}')"
         )
+        return
+
+    if re.match(r"^/pro(?:@\w+)?(\s|$)", special_query, re.IGNORECASE):
+        # 💎 /pro ham /tabrik kabi FAQAT tugma orqali (inline_pro_claim_callback)
+        # ishlaydi — kesh UMUMAN yozilmaydi, shuning uchun `entry` bu yerda
+        # HAR DOIM None. Avval shu holat guardsiz to'g'ridan-to'g'ri
+        # AI'ga ketardi ("/pro salom do'stim..." matni savol sifatida
+        # yuborilardi) — aynan foydalanuvchi duch kelgan xato shu edi.
+        logger.info(
+            f"💎 [CHOSEN_INLINE] /pro natijasi tanlandi — AI'ga YUBORILMAYDI "
+            f"(user_id={user.id if user else '?'}, query='{special_query[:80]}')"
+        )
+        return
+
+    if VID_WITH_URL_RE.match(special_query):
+        # 🎬 /vid uchun, agar kesh (masalan server qayta ishga tushgani
+        # sabab) yo'qolgan bo'lsa ham, havolaning o'zi so'rov matnida
+        # bor — shuning uchun AI'ga yuborish o'rniga yuklab olishni shu
+        # yerdan qayta tiklab ishga tushiramiz (foydalanuvchi uchun
+        # ko'rinmas tarzda tuzatiladi).
+        if not entry:
+            url = VID_WITH_URL_RE.match(special_query).group(1)
+            logger.warning(
+                f"🎬 [CHOSEN_INLINE] /vid uchun kesh topilmadi — URL so'rovdan "
+                f"qayta tiklanib, yuklash boshlanmoqda (url={url})."
+            )
+            await _handle_vid(context, inline_message_id, url, user)
+            return
+
+    if re.match(r"^/vid(?:@\w+)?(\s|$)", special_query, re.IGNORECASE):
+        logger.warning(
+            f"🎬 [CHOSEN_INLINE] /vid natijasi tanlandi, lekin havola "
+            f"aniqlanmadi — AI'ga YUBORILMAYDI (query='{special_query[:80]}')."
+        )
+        return
+
+    if re.match(r"^/(?:qo[`'\u00b4\u2018\u2019\u02bb\u02bc]shiq|qoshiq)(?:@\w+)?(\s|$)", special_query, re.IGNORECASE):
+        # 🎵 /qo'shiq uchun kesh yo'qolgan bo'lsa, aynan qaysi qo'shiq
+        # tanlanganini (uning yuklab olish havolasini) qayta tiklab
+        # bo'lmaydi — shu sabab AI'ga yuborish o'rniga foydalanuvchiga
+        # qayta urinib ko'rishni so'raymiz.
+        logger.warning(
+            f"🎵 [CHOSEN_INLINE] /qo'shiq uchun kesh topilmadi — AI'ga "
+            f"YUBORILMAYDI (query='{special_query[:80]}')."
+        )
+        try:
+            await context.bot.edit_message_caption(
+                inline_message_id=inline_message_id,
+                caption=(
+                    "❌ Bu so'rov muddati o'tib ketgan (server qayta ishga "
+                    "tushgan bo'lishi mumkin). Iltimos, qidiruvni qaytadan "
+                    f"boshlang: /qo'shiq ...\n\n🤖 Talaba AI — @{BOT_USERNAME}"
+                ),
+                reply_markup=INLINE_MESSAGE_MARKUP,
+            )
+        except Exception as e:
+            logger.warning(f"🎵 Inline /qo'shiq kesh-yo'q xabarini caption orqali yangilab bo'lmadi: {type(e).__name__}: {e}")
+        _log_inline(user, special_query, "error", "kesh topilmadi (server qayta ishga tushgan yoki muddati o'tgan)")
         return
 
     # --------------------------------------------------------
