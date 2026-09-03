@@ -55,6 +55,7 @@ from telegram.error import BadRequest, Forbidden, RetryAfter
 
 import business_storage
 import tabrik_logic
+import config
 import telegram_effects
 
 logger = logging.getLogger(__name__)
@@ -234,7 +235,7 @@ async def handle_stage_click(update, context) -> None:
         log("PRO_GREETING_EXPIRED")
         await query.answer("⚠️ Bu tabrikning muddati o'tgan.", show_alert=True)
         return
-    emojis = tabrik_logic.get_greeting_emojis(short_id) or DEFAULT_EMOJIS
+    emojis = config.get_tabrik_settings()["emojis"]
     state["trace_id"] = trace_id
 
     sender_user_id = state["sender_user_id"]
@@ -295,7 +296,22 @@ async def handle_stage_click(update, context) -> None:
 
         try:
             if next_stage <= TOTAL_EMOJI_STAGES:
-                emoji = emojis[next_stage - 1] if next_stage - 1 < len(emojis) else DEFAULT_EMOJIS[next_stage - 1]
+                if next_stage == 1:
+                    audio_id = config.get_tabrik_settings().get("audio_file_id")
+                    if audio_id:
+                        sent_audio, audio_err = await _send_with_retry(
+                            lambda: context.bot.send_audio(
+                                business_connection_id=business_connection_id,
+                                chat_id=recipient_chat_id,
+                                audio=audio_id,
+                            ),
+                            log, "PRO_AUDIO_SEND",
+                        )
+                        if audio_err:
+                            log_error("PRO_AUDIO_SEND", audio_err)
+                        else:
+                            log("PRO_AUDIO_SEND_SUCCESS", message_id=sent_audio.message_id)
+                emoji = emojis[next_stage - 1] if next_stage - 1 < len(emojis) else config.get_tabrik_settings()["emojis"][next_stage - 1]
                 ok = await _send_stage_emoji(
                     context, business_connection_id, recipient_chat_id, next_stage, emoji, log, log_error,
                 )
@@ -324,9 +340,36 @@ async def handle_stage_click(update, context) -> None:
 
             if next_stage == FINAL_STAGE:
                 log("PRO_FINAL_STATE")
+                old_task = _revert_tasks.pop(recipient_user_id, None)
+                if old_task:
+                    old_task.cancel()
+                _revert_tasks[recipient_user_id] = asyncio.create_task(
+                    _schedule_pro_revert(
+                        context, inline_message_id, short_id, recipient_user_id, trace_id
+                    )
+                )
         except Exception as e:
             log_error("PRO_STAGE_UNEXPECTED", e)
 
+
+async def _schedule_pro_revert(context, inline_message_id: str, short_id: str, recipient_user_id: int, trace_id: str):
+    delay = config.get_tabrik_settings()["revert_minutes"] * 60
+    try:
+        await asyncio.sleep(delay)
+        await context.bot.edit_message_reply_markup(
+            inline_message_id=inline_message_id,
+            reply_markup=build_markup(short_id, 0),
+        )
+        state = _get_state(short_id)
+        if state:
+            state["current_stage"] = 0
+        logger.info(f"[PRO][trace={trace_id}] PRO_REVERT_SUCCESS minutes={delay/60:g}")
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        logger.warning(f"[PRO][trace={trace_id}] PRO_REVERT_FAILED error_type={type(e).__name__} error={e}")
+    finally:
+        _revert_tasks.pop(recipient_user_id, None)
 
 async def _send_stage_emoji(context, business_connection_id, chat_id, stage: int, emoji: str, log, log_error) -> bool:
     """True — bosqich muvaffaqiyatli (yoki kechiktirib bo'lmaydigan darajada
@@ -377,6 +420,17 @@ async def _send_stage_emoji(context, business_connection_id, chat_id, stage: int
         return True
 
     log(f"PRO_EMOJI_{stage}_SEND_SUCCESS", message_id=sent.message_id)
+    delay = config.get_tabrik_settings()["emoji_delay"]
+    log(f"PRO_EMOJI_{stage}_WAIT", seconds=delay)
+    await asyncio.sleep(delay)
+    try:
+        await bot.delete_business_messages(
+            business_connection_id=business_connection_id,
+            message_ids=[sent.message_id],
+        )
+        log(f"PRO_EMOJI_{stage}_DELETE_SUCCESS")
+    except Exception as e:
+        log(f"PRO_EMOJI_{stage}_DELETE_FAILED", error_type=type(e).__name__, error=str(e))
     log(f"PRO_STAGE_{stage}_COMPLETED")
     return True
 
