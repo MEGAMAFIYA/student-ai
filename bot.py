@@ -41,6 +41,7 @@ import pending_input
 import wallet
 import payment_providers
 import webapp_security
+import inline_media
 from handlers import (
     menu, universal_chat, course_work, translate as translate_handler, images_to_pdf,
     edit_pdf, guide, inline_query, developer, pptx_gen, essay, quiz, solve, summarize,
