@@ -44,7 +44,7 @@ from handlers import payment_admin as pay_ui
 
 logger = logging.getLogger(__name__)
 
-DEV_MENU, DEV_WAIT_TEXT, DEV_WAIT_BULK_MODEL = range(3)
+DEV_MENU, DEV_WAIT_TEXT, DEV_WAIT_BULK_MODEL, DEV_WAIT_AUDIO = range(4)
 
 _FIELD_LABELS = {
     "provider": "PROVIDER",
@@ -176,6 +176,7 @@ def _main_menu_keyboard() -> InlineKeyboardMarkup:
     rows.append([InlineKeyboardButton("➕ Barcha modellar", callback_data="dev:bulk")])
     rows.append([InlineKeyboardButton("📊 Statistika", callback_data="dev:stats")])
     rows.append([InlineKeyboardButton("🔍 Inline jurnali (@Bot ...)", callback_data="dev:inlinelog:all")])
+    rows.append([InlineKeyboardButton("💎 Pro / Tabrik sozlamalari", callback_data="dev:pt")])
     rows.append([InlineKeyboardButton("💎 Pro obunalar", callback_data="dev:prosub")])
     rows.append([InlineKeyboardButton("💳 To'lovlar", callback_data="dev:pay"),
                  InlineKeyboardButton("💰 Balanslar", callback_data="dev:paybal")])
@@ -429,6 +430,39 @@ def _inline_log_keyboard(status_filter: str | None) -> InlineKeyboardMarkup:
 
 
 # ============================================================
+# 💎 /pro + /tabrik umumiy sozlamalari
+# ============================================================
+
+def _pt_text() -> str:
+    st = config.get_tabrik_settings()
+    audio = "✅ o'rnatilgan" if st["audio_file_id"] else "❌ o'rnatilmagan"
+    emojis = " ".join(st["emojis"])
+    return (
+        "💎 <b>Pro / Tabrik sozlamalari</b>\n\n"
+        f"🎵 Qo'shiq: {audio}\n"
+        f"😀 Emojilar: {_esc(emojis)}\n"
+        f"⏱ Emoji soniyasi: <b>{st['emoji_delay']} soniya</b>\n"
+        f"↩️ Matn qaytish daqiqasi: <b>{st['revert_minutes']} daqiqa</b>\n\n"
+        "Bu sozlamalarning barchasi <b>/tabrik</b> va <b>/pro</b> uchun bir xil ishlaydi."
+    )
+
+def _pt_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎵 Qo'shiq yuklash", callback_data="dev:ptsong")],
+        [InlineKeyboardButton("😀 Emoji tanlash", callback_data="dev:ptemoji")],
+        [InlineKeyboardButton("⏱ Emoji soniyasi", callback_data="dev:ptdelay")],
+        [InlineKeyboardButton("↩️ Matn qaytish daqiqasi", callback_data="dev:ptrevert")],
+        [InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:menu")],
+    ])
+
+def _pt_choice_keyboard(kind: str, values: list[int], back="dev:pt") -> InlineKeyboardMarkup:
+    rows = []
+    for i in range(0, len(values), 3):
+        rows.append([InlineKeyboardButton(str(v), callback_data=f"dev:{kind}:{v}") for v in values[i:i+3]])
+    rows.append([InlineKeyboardButton("⬅️ Orqaga", callback_data=back)])
+    return InlineKeyboardMarkup(rows)
+
+# ============================================================
 # 💎 Pro obunalar (kutilayotgan so'rovlar ro'yxati)
 # ============================================================
 
@@ -648,7 +682,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # oldingi "kutilayotgan matn kiritish" holatini tozalaydi — pastda
     # tegishli branch (edit/keyaddprov/keyrepl/keymodel/bulkprov/keybulkscope)
     # kerak bo'lsa uni qaytadan o'rnatadi.
-    if action not in ("edit", "bulkprov", "keyaddprov", "keyrepl", "keymodel", "keybulkscope", "priceedit", "balsearch"):
+    if action not in ("edit", "bulkprov", "keyaddprov", "keyrepl", "keymodel", "keybulkscope", "priceedit", "balsearch", "ptsong", "ptemoji", "ptdelay", "ptrevert"):
         context.user_data.pop("dev_action", None)
 
     # ---------- Asosiy menyu ----------
@@ -855,6 +889,60 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _edit_menu(context, report, _music_check_keyboard())
         return DEV_MENU
 
+    # ---------- 💎 /pro + /tabrik umumiy sozlamalari ----------
+    if action == "pt":
+        await _safe_edit_query(query, _pt_text(), reply_markup=_pt_keyboard(), parse_mode="HTML")
+        return DEV_MENU
+
+    if action == "ptsong":
+        context.user_data["dev_action"] = {"type": "pt_audio"}
+        await _safe_edit_query(
+            query,
+            "🎵 <b>Qo'shiq yuklash</b>\n\nMenga audio fayl yuboring. U <b>/tabrik</b> va <b>/pro</b> ochilganda ishlatiladi.\n\n"
+            "MP3/M4A/OGG kabi Telegram audio fayl yuborishingiz mumkin.",
+            reply_markup=_back_keyboard("dev:pt"),
+            parse_mode="HTML",
+        )
+        return DEV_WAIT_AUDIO
+
+    if action == "ptemoji":
+        context.user_data["dev_action"] = {"type": "pt_emoji"}
+        await _safe_edit_query(
+            query,
+            "😀 <b>5 ta emoji tanlash</b>\n\nAynan 5 ta emoji yuboring.\nMasalan: 😍 🥳 🎉 ❤️ ✨",
+            reply_markup=_back_keyboard("dev:pt"),
+            parse_mode="HTML",
+        )
+        return DEV_WAIT_TEXT
+
+    if action == "ptdelay":
+        await _safe_edit_query(
+            query, "⏱ <b>Emoji soniyasi</b>\n\nEmojilar qancha soniya ko'rinib turishini tanlang:",
+            reply_markup=_pt_choice_keyboard("ptdelayset", list(range(1, 7))),
+            parse_mode="HTML",
+        )
+        return DEV_MENU
+
+    if action == "ptdelayset":
+        value = int(parts[2])
+        config.set_tabrik_setting("emoji_delay", value)
+        await _safe_edit_query(query, "✅ Emoji soniyasi saqlandi.\n\n" + _pt_text(), reply_markup=_pt_keyboard(), parse_mode="HTML")
+        return DEV_MENU
+
+    if action == "ptrevert":
+        await _safe_edit_query(
+            query, "↩️ <b>Matn qaytish daqiqasi</b>\n\nYakuniy tabrik matni qancha vaqtdan keyin boshlang'ich holatga qaytishini tanlang:",
+            reply_markup=_pt_choice_keyboard("ptrevertset", list(range(1, 5))),
+            parse_mode="HTML",
+        )
+        return DEV_MENU
+
+    if action == "ptrevertset":
+        value = int(parts[2])
+        config.set_tabrik_setting("revert_minutes", value)
+        await _safe_edit_query(query, "✅ Qaytish vaqti saqlandi.\n\n" + _pt_text(), reply_markup=_pt_keyboard(), parse_mode="HTML")
+        return DEV_MENU
+
     # ---------- 💎 Pro obunalar ----------
     if action == "prosub":
         await _safe_edit_query(query, _prosub_menu_text(), reply_markup=_prosub_menu_keyboard(), parse_mode="HTML")
@@ -995,6 +1083,24 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action_type is None:
         return DEV_MENU
 
+    if action_type == "pt_emoji":
+        # Telegram sticker/emoji uchun alohida parser o'rniga mavjud emoji
+        # parseridan foydalanamiz: matnda faqat 5 ta emoji bo'lishi kerak.
+        import tabrik_logic
+        emojis, rest = tabrik_logic.extract_emojis(raw_value.strip())
+        if rest.strip() or len(emojis) != 5:
+            await _edit_menu(
+                context,
+                "⚠️ Aynan 5 ta emoji yuboring.\nMasalan: 😍 🥳 🎉 ❤️ ✨",
+                _back_keyboard("dev:pt"),
+            )
+            context.user_data["dev_action"] = action
+            return DEV_WAIT_TEXT
+        config.set_tabrik_setting("emojis", emojis)
+        await _edit_menu(context, "✅ 5 ta emoji saqlandi.\n\n" + _pt_text(), _pt_keyboard())
+        context.user_data.pop("dev_action", None)
+        return DEV_MENU
+
     if action_type == "func_field":
         prefix, field = action["prefix"], action["field"]
         value = "" if raw_value in ("-", "bosh", "bo'sh") else raw_value
@@ -1065,6 +1171,32 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("dev_action", None)
     return DEV_MENU
 
+
+async def on_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_admin(update) or not update.message:
+        return ConversationHandler.END
+    action = context.user_data.get("dev_action") or {}
+    if action.get("type") != "pt_audio":
+        return DEV_MENU
+    file_id = None
+    if update.message.audio:
+        file_id = update.message.audio.file_id
+    elif update.message.document:
+        mime = (update.message.document.mime_type or "").lower()
+        if mime.startswith("audio/") or (update.message.document.file_name or "").lower().endswith((".mp3", ".m4a", ".ogg", ".wav", ".flac")):
+            file_id = update.message.document.file_id
+    if not file_id:
+        await _edit_menu(context, "⚠️ Iltimos, audio fayl yuboring (MP3/M4A/OGG).", _back_keyboard("dev:pt"))
+        context.user_data["dev_action"] = action
+        return DEV_WAIT_AUDIO
+    config.set_tabrik_setting("audio_file_id", file_id)
+    try:
+        await update.message.delete()
+    except Exception:
+        pass
+    await _edit_menu(context, "✅ Qo'shiq saqlandi va /tabrik + /pro uchun yoqildi.\n\n" + _pt_text(), _pt_keyboard())
+    context.user_data.pop("dev_action", None)
+    return DEV_MENU
 
 async def on_bulk_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_admin(update):
