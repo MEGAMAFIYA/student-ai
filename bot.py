@@ -179,6 +179,34 @@ async def _error_handler(update, context):
 _PLACEHOLDER_PDF_BYTES: bytes = b""
 _PLACEHOLDER_PDF_PATH = "/placeholder.pdf"
 
+# ============================================================
+# 💎 Inline "/pro" boshlang'ich audio xabari uchun (pro_tabrik_business.py)
+# ============================================================
+# InlineQueryResultAudio `audio_url` talab qiladi (fayl baytlarini
+# to'g'ridan-to'g'ri biriktirib bo'lmaydi) — shuning uchun yuqoridagi
+# placeholder PDF bilan BIR XIL naqsh: audio faylni shu health-server
+# orqali ochiq (https) manzildan xizmat qilamiz. Fayl topilmasa (hali
+# joylanmagan bo'lsa), bo'sh bayt bilan qoladi — HealthHandler.do_GET
+# buni graceful 404'ga aylantiradi, handlers/inline_query.py esa
+# pro_tabrik_business.audio_available()ni oldindan tekshirib, audio
+# yo'q bo'lsa oddiy matn+tugma natijasiga qaytadi (7-band: audio
+# ishlamasa ham oqim to'xtamasin).
+_PRO_AUDIO_BYTES: bytes = b""
+_PRO_AUDIO_PATH = "/pro_audio.mp3"
+
+
+def _load_pro_audio_bytes() -> bytes:
+    try:
+        import pro_tabrik_business
+        if os.path.exists(pro_tabrik_business.PRO_AUDIO_PATH):
+            with open(pro_tabrik_business.PRO_AUDIO_PATH, "rb") as f:
+                return f.read()
+        logger.info(f"💎 /pro audio fayli topilmadi ({pro_tabrik_business.PRO_AUDIO_PATH}) — inline /pro audiosiz ishlaydi.")
+        return b""
+    except Exception as e:
+        logger.error(f"💎 /pro audio faylini o'qishda xato: {type(e).__name__}: {e}", exc_info=True)
+        return b""
+
 
 def _build_placeholder_pdf() -> bytes:
     try:
@@ -506,6 +534,15 @@ class HealthHandler(BaseHTTPRequestHandler):
             self.wfile.write(_MUSIC_ICON_PNG_BYTES)
             return
 
+        if self.path == _PRO_AUDIO_PATH and _PRO_AUDIO_BYTES:
+            self.send_response(200)
+            self.send_header("Content-Type", "audio/mpeg")
+            self.send_header("Content-Length", str(len(_PRO_AUDIO_BYTES)))
+            self.send_header("Cache-Control", "public, max-age=86400")
+            self.end_headers()
+            self.wfile.write(_PRO_AUDIO_BYTES)
+            return
+
         if self.path.startswith(_WEBAPP_GENERATED_URL_PREFIX):
             self._serve_generated_image()
             return
@@ -615,9 +652,10 @@ class HealthHandler(BaseHTTPRequestHandler):
 
 
 def start_health_server():
-    global _PLACEHOLDER_PDF_BYTES, _MUSIC_ICON_PNG_BYTES
+    global _PLACEHOLDER_PDF_BYTES, _MUSIC_ICON_PNG_BYTES, _PRO_AUDIO_BYTES
     _PLACEHOLDER_PDF_BYTES = _build_placeholder_pdf()
     _MUSIC_ICON_PNG_BYTES = _build_music_icon_png()
+    _PRO_AUDIO_BYTES = _load_pro_audio_bytes()
     try:
         port = int(os.getenv("PORT", "10000"))
         server = HTTPServer(("0.0.0.0", port), HealthHandler)
@@ -1024,24 +1062,8 @@ def main():
     # 🎙 Ovozli xabar — istalgan paytda (hech qanday menyu tanlanmagan bo'lsa ham)
     app.add_handler(MessageHandler(filters.VOICE, voice.handle_voice))
 
-    # UNIVERSAL CHAT — hech qanday conversation faol bo'lmaganda ishlaydi.
-    # MUHIM: business_message'lar (Telegram Business/Secretary orqali
-    # ulangan chatlardagi xabarlar) BU YERGA UMUMAN TUSHMASLIGI KERAK —
-    # Business oqimi FAQAT tabrik_business.py orqali, aniq belgilangan
-    # holatlarda (masalan /tabrik'ning "qabul qilish" bosilishi) ishlaydi.
-    # `~filters.UpdateType.BUSINESS_MESSAGE` bo'lmasa, PTB business
-    # xabarlarni ham `effective_message` orqali shu filterga (filters.TEXT)
-    # mos deb hisoblab, handle_message'ga yuborishi mumkin — u yerdagi
-    # `if not update.message: return` bu holatlarning aksariyatini ushlab
-    # qoladi, lekin bu ANIQ, deklarativ filtr xavfsizroq (kelajakda
-    # kimdir shu tekshiruvni o'zgartirib/olib tashlab qo'ysa ham himoya
-    # saqlanadi).
-    app.add_handler(
-        MessageHandler(
-            filters.TEXT & ~filters.COMMAND & ~filters.UpdateType.BUSINESS_MESSAGE,
-            universal_chat.handle_message,
-        )
-    )
+    # UNIVERSAL CHAT — hech qanday conversation faol bo'lmaganda ishlaydi
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, universal_chat.handle_message))
 
     # INLINE REJIM — "@Student_ai_uz_bot savol" deb istalgan chatda yozilganda
     # (bot o'sha chatga a'zo bo'lmasa ham) ishlaydi. BotFather'da /setinline va
