@@ -1298,4 +1298,71 @@ async def inline_pro_claim_callback(update: Update, context: ContextTypes.DEFAUL
     try:
         for n in (5, 4, 3, 2, 1):
             await _safe_edit_caption_inline(context, inline_message_id, tabrik_logic.build_countdown_frame(n))
-            await asynci
+            await asyncio.sleep(TABRIK_COUNTDOWN_DELAY)
+
+        for step in range(tabrik_logic.TOTAL_ROTATION_FRAMES):
+            await _safe_edit_caption_inline(context, inline_message_id, tabrik_logic.build_circle_frame(step))
+            await asyncio.sleep(TABRIK_FRAME_DELAY)
+
+        for i, url in enumerate(entry["photos"]):
+            try:
+                await context.bot.edit_message_media(
+                    inline_message_id=inline_message_id,
+                    media=InputMediaPhoto(media=url, caption=f"📷 {i + 1}/{len(entry['photos'])}"),
+                )
+            except Exception as e:
+                logger.warning(f"🔍 Inline /pro slайд-shou: rasmni ko'rsatib bo'lmadi ({url}): {type(e).__name__}: {e}")
+            await asyncio.sleep(PRO_SLIDESHOW_DELAY)
+
+        final_text = f"{tabrik_logic.build_final_card(escape_markdown(entry['text'], version=1))}\n\n🤖 Talaba AI — @{BOT_USERNAME}"
+        await _safe_edit_caption_inline(context, inline_message_id, final_text, reply_markup=INLINE_MESSAGE_MARKUP)
+        logger.info(f"🔍 Inline /pro animatsiyasi muvaffaqiyatli yakunlandi (inline_message_id={inline_message_id}).")
+
+        task = asyncio.create_task(_schedule_inline_pro_revert(context, inline_message_id, short_id))
+        _INLINE_PRO_REVERT_TASKS[inline_message_id] = task
+    except Exception as e:
+        logger.error(f"🔍 Inline /pro animatsiyasida kutilmagan xato: {type(e).__name__}: {e}", exc_info=True)
+        try:
+            await _safe_edit_caption_inline(
+                context, inline_message_id, f"🎁 {escape_markdown(entry['text'], version=1)}\n\n🤖 Talaba AI — @{BOT_USERNAME}",
+                reply_markup=INLINE_MESSAGE_MARKUP,
+            )
+        except Exception:
+            pass
+    finally:
+        _ACTIVE_INLINE_PRO.discard(inline_message_id)
+
+
+async def _safe_edit_caption_inline(context: ContextTypes.DEFAULT_TYPE, inline_message_id: str, caption: str, reply_markup=None) -> None:
+    """_safe_edit_text bilan BIR XIL maqsad, lekin caption uchun (chunki
+    /pro placeholder har doim MEDIA — hujjat/rasm — bo'lib qoladi, matn
+    emas)."""
+    try:
+        await context.bot.edit_message_caption(
+            inline_message_id=inline_message_id, caption=caption, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup,
+        )
+    except BadRequest as e:
+        if "message is not modified" not in str(e).lower():
+            logger.warning(f"🔍 Inline /pro caption edit qilib bo'lmadi: {e}")
+    except Exception as e:
+        logger.warning(f"🔍 Inline /pro caption edit qilishda kutilmagan xato: {type(e).__name__}: {e}")
+
+
+async def _schedule_inline_pro_revert(context: ContextTypes.DEFAULT_TYPE, inline_message_id: str, short_id: str) -> None:
+    try:
+        await asyncio.sleep(PRO_REVERT_DELAY_SEC)
+        await context.bot.edit_message_media(
+            inline_message_id=inline_message_id,
+            media=InputMediaDocument(
+                media=f"{PUBLIC_BASE_URL}/placeholder.pdf",
+                caption=pro_tabrik_logic.build_ready_card(),
+            ),
+            reply_markup=_pro_ready_markup(short_id),
+        )
+        logger.info(f"🔍 Inline /pro xabari asl holatga qaytarildi (inline_message_id={inline_message_id}).")
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        logger.warning(f"🔍 Inline /pro xabarini asl holatga qaytarishda xato: {type(e).__name__}: {e}")
+    finally:
+        _INLINE_PRO_REVERT_TASKS.pop(inline_message_id, None)
