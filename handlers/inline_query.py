@@ -260,6 +260,43 @@ async def on_inline_query(
     if not query:
         return  # foydalanuvchi hali hech narsa yozmagan
 
+    # --------------------------------------------------------
+    # 🛑 QATTIQ HIMOYA (hamma narsadan OLDIN): "/tabrik" bilan boshlangan
+    # HAR QANDAY so'rov faqat /tabrik funksiyasiga tegishli — pastdagi
+    # boshqa hech qanday tarmoqqa (jumladan oxiridagi umumiy AI-javob
+    # "chat" natijasiga) HECH QACHON tushmasligi kerak. Bu tekshiruv
+    # pastdagi (asosiy) /tabrik blokidan MUSTAQIL, ATAYLAB DUBLIKAT —
+    # agar u yerdagi shart negadir ishlamay qolsa ham (masalan kelajakda
+    # kimdir kod tuzatib, chegara shartini buzib qo'ysa), so'rov baribir
+    # shu yerda ushlanib qoladi va AI'ga umuman yuborilmaydi.
+    # --------------------------------------------------------
+    if re.match(r"^/tabrik(?:@\w+)?(\s|$)", query, re.IGNORECASE):
+        raw_text = tabrik_logic.parse_tabrik_text(query)
+        if not raw_text:
+            await _answer_instruction(
+                update, "🎁 /tabrik — tabrik matnini ham yozing",
+                "Masalan: /tabrik Salom mening qadrli insonim...",
+                query=query,
+            )
+            return
+        custom_emojis, text = tabrik_logic.extract_emojis(raw_text)
+        emojis = custom_emojis or tabrik_business.DEFAULT_EMOJIS
+        short_id = tabrik_logic.store_greeting(text, emojis=emojis)
+        tabrik_business.register_celebration(short_id, sender_user_id=update.inline_query.from_user.id)
+        results = [
+            InlineQueryResultArticle(
+                id=str(uuid.uuid4()),
+                title="🎁 Tabrik yuborish",
+                description=text[:120],
+                input_message_content=InputTextMessageContent(tabrik_logic.build_ready_card()),
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🎁 Tabriknomani qabul qilish", callback_data=f"itabrik:claim:{short_id}")
+                ]]),
+            )
+        ]
+        await update.inline_query.answer(results, cache_time=0, is_personal=True)
+        return
+
     cache = context.bot_data.setdefault("inline_queries", {})
     _trim_cache(cache)
 
@@ -370,47 +407,9 @@ async def on_inline_query(
         )
         return
 
-    # --------------------------------------------------------
-    # 🎁 /tabrik — GURUH bilan BIR XIL tartibda: avval FAQAT
-    # "🎁 Tabriknomani qabul qilish" tugmasi chiqadi (matn ko'rinmaydi),
-    # animatsiya FAQAT tugma bosilgandan keyin (inline_tabrik_claim_callback)
-    # boshlanadi — chosen_inline_result'da AVTOMATIK boshlanmaydi.
-    # --------------------------------------------------------
-
-    if query[:7].lower().startswith("/tabrik") and not TABRIK_BARE_RE.match(query):
-        raw_text = tabrik_logic.parse_tabrik_text(query)
-        if raw_text:
-            # 🎁 Business oqimi uchun: foydalanuvchi matn boshida o'z
-            # emojilarini yozgan bo'lsa o'shalar, aks holda Business
-            # default ketma-ketligi (😍🥳🎉❤️✨) ishlatiladi — bu
-            # tabrik_logic.DEFAULT_EMOJIS (🎉🎊🥳🎁✨) dan ATAYLAB farqli,
-            # chunki u eski /pro va guruh /tabrik oqimlari uchun umumiy va
-            # o'zgartirilmadi (21-band: /pro'ni buzma).
-            custom_emojis, text = tabrik_logic.extract_emojis(raw_text)
-            emojis = custom_emojis or tabrik_business.DEFAULT_EMOJIS
-            short_id = tabrik_logic.store_greeting(text, emojis=emojis)
-            tabrik_business.register_celebration(short_id, sender_user_id=update.inline_query.from_user.id)
-            results = [
-                InlineQueryResultArticle(
-                    id=str(uuid.uuid4()),
-                    title="🎁 Tabrik yuborish",
-                    description=text[:120],
-                    input_message_content=InputTextMessageContent(tabrik_logic.build_ready_card()),
-                    reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("🎁 Tabriknomani qabul qilish", callback_data=f"itabrik:claim:{short_id}")
-                    ]]),
-                )
-            ]
-            await update.inline_query.answer(results, cache_time=0, is_personal=True)
-            return
-
-    if TABRIK_BARE_RE.match(query):
-        await _answer_instruction(
-            update, "🎁 /tabrik — tabrik matnini ham yozing",
-            "Masalan: /tabrik Salom mening qadrli insonim...",
-            query=query,
-        )
-        return
+    # NOTE: /tabrik uchun alohida tarmoq bu yerda ATAYLAB YO'Q — bu
+    # so'rovlar funksiya boshidagi "🛑 QATTIQ HIMOYA" bloki tomonidan
+    # allaqachon to'liq qayta ishlanib, shu yergacha yetib kelmaydi.
 
     # --------------------------------------------------------
     # 💎 /pro — do'stning private chatiga Telegram BUSINESS API orqali
@@ -722,6 +721,19 @@ async def on_chosen_inline_result(
     # 🎁 /tabrik uchun bu yerda ATAYLAB hech narsa yo'q — animatsiya endi
     # xabar TANLANGANDA emas, faqat "🎁 Tabriknomani qabul qilish" tugmasi
     # bosilganda (inline_tabrik_claim_callback) boshlanadi.
+    #
+    # 🐞 TOPILGAN HAQIQIY XATO: tabrik natijasi `cache`ga yozilmagani
+    # uchun `entry` shu yerda HAR DOIM None bo'lgan, va pastdagi "ODDIY AI
+    # SAVOL" bo'limi `entry or {}` orqali `chosen.query`ga (ya'ni butun
+    # "/tabrik <matn>" satriga) qaytib, uni AI'ga SAVOL sifatida yuborgan.
+    # Foydalanuvchi /tabrik ishlatganda AI javob berishining ASOSIY sababi
+    # shu edi — endi bu yerda ANIQ to'xtatiladi:
+    if re.match(r"^/tabrik(?:@\w+)?(\s|$)", chosen.query or "", re.IGNORECASE):
+        logger.info(
+            f"🎁 [CHOSEN_INLINE] /tabrik natijasi tanlandi — AI'ga YUBORILMAYDI "
+            f"(user_id={user.id if user else '?'}, query='{(chosen.query or '')[:80]}')"
+        )
+        return
 
     # --------------------------------------------------------
     # ODDIY AI SAVOL
