@@ -219,6 +219,23 @@ OTHER_HEAVY_HINTS = re.compile(
 VID_BARE_RE = re.compile(r"^/vid(?:@\w+)?\s*$", re.IGNORECASE)
 VID_WITH_URL_RE = re.compile(r"^/vid(?:@\w+)?\s+(https?://\S+)", re.IGNORECASE)
 
+
+def _normalize_vid_url(url: str) -> str:
+    """Inline /vid URL'ini xavfsiz normallashtiradi.
+    Ba'zi inline mijozlarda bir xil URL ketma-ket ikki marta kelib qolishi
+    mumkin; Telegram/yt-dlp ga bunday URL yuborilmasligi kerak.
+    """
+    url = (url or "").strip()
+    if not url:
+        return url
+    # Exact duplicate: URL + URL
+    if len(url) % 2 == 0:
+        half = len(url) // 2
+        if url[:half] == url[half:]:
+            logger.warning("🎬 INLINE /vid URL DUPLICATE: bir xil URL ikki marta kelgan — bitta URL qoldirildi")
+            return url[:half]
+    return url
+
 # Apostrofning barcha variantlari — handlers/qoshiq.py'dagi bilan bir xil.
 QOSHIQ_BARE_RE = re.compile(r"^/(?:qo[`'\u00b4\u2018\u2019\u02bb\u02bc]shiq|qoshiq)(?:@\w+)?\s*$", re.IGNORECASE)
 QOSHIQ_WITH_QUERY_RE = re.compile(r"^/(?:qo[`'\u00b4\u2018\u2019\u02bb\u02bc]shiq|qoshiq)(?:@\w+)?\s+(.+)$", re.IGNORECASE)
@@ -312,7 +329,7 @@ async def on_inline_query(
             await _answer_redirect(update, query, "PUBLIC_BASE_URL sozlanmagan — /vid inline rejimda ishlay olmaydi")
             return
 
-        url = VID_WITH_URL_RE.match(query).group(1)
+        url = _normalize_vid_url(VID_WITH_URL_RE.match(query).group(1))
         result_id = str(uuid.uuid4())
         cache[result_id] = {"type": "vid", "url": url}
 
@@ -774,7 +791,7 @@ async def on_chosen_inline_result(
         # yerdan qayta tiklab ishga tushiramiz (foydalanuvchi uchun
         # ko'rinmas tarzda tuzatiladi).
         if not entry:
-            url = VID_WITH_URL_RE.match(special_query).group(1)
+            url = _normalize_vid_url(VID_WITH_URL_RE.match(special_query).group(1))
             logger.warning(
                 f"🎬 [CHOSEN_INLINE] /vid uchun kesh topilmadi — URL so'rovdan "
                 f"qayta tiklanib, yuklash boshlanmoqda (url={url})."
