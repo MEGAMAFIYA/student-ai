@@ -920,6 +920,10 @@ def build_developer_conv():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, developer.on_text),
                 CallbackQueryHandler(developer.on_callback, pattern="^dev:"),
             ],
+            developer.DEV_WAIT_AUDIO: [
+                MessageHandler(filters.AUDIO | filters.Document.ALL, developer.on_audio),
+                CallbackQueryHandler(developer.on_callback, pattern="^dev:"),
+            ],
             developer.DEV_WAIT_BULK_MODEL: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, developer.on_bulk_text),
                 CallbackQueryHandler(developer.on_callback, pattern="^dev:"),
