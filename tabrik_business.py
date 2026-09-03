@@ -40,6 +40,7 @@ from telegram.error import BadRequest, Forbidden, RetryAfter
 import business_storage
 import tabrik_logic
 import telegram_effects
+import config
 
 logger = logging.getLogger(__name__)
 
@@ -141,7 +142,7 @@ async def handle_claim(update, context) -> None:
         log("GREETING_EXPIRED")
         await query.answer("⚠️ Bu tabrikning muddati o'tgan.", show_alert=True)
         return
-    emojis = tabrik_logic.get_greeting_emojis(short_id) or DEFAULT_EMOJIS
+    emojis = config.get_tabrik_settings()["emojis"]
 
     celebration = _get_celebration(short_id)
     if not celebration:
@@ -249,11 +250,13 @@ async def _run_cycle(context, business_connection_id, chat_id, greeting_text, em
 
     # --- AUDIO ---
     log("AUDIO_SEND_STARTED")
-    if os.path.exists(TABRIK_AUDIO_PATH):
+    audio_id = config.get_tabrik_settings().get("audio_file_id")
+    if audio_id:
         try:
-            with open(TABRIK_AUDIO_PATH, "rb") as f:
-                sent = await bot.send_audio(business_connection_id=business_connection_id, chat_id=chat_id, audio=f)
-            log("AUDIO_SEND_SUCCESS", message_id=sent.message_id)
+            sent = await bot.send_audio(
+                business_connection_id=business_connection_id, chat_id=chat_id, audio=audio_id
+            )
+            log("AUDIO_SEND_SUCCESS", message_id=sent.message_id, source="developer_file_id")
             log("AUDIO_AUTOPLAY_NOT_CONTROLLED_BY_BOT")
         except (BadRequest, Forbidden) as e:
             if _looks_not_eligible(e):
@@ -263,7 +266,7 @@ async def _run_cycle(context, business_connection_id, chat_id, greeting_text, em
         except Exception as e:
             log_error("AUDIO_SEND", e)
     else:
-        log("AUDIO_NOT_FOUND", path=TABRIK_AUDIO_PATH)
+        log("AUDIO_NOT_CONFIGURED")
         log("AUDIO_SKIPPED")
 
     # --- 5 EMOJI ---
@@ -296,7 +299,7 @@ async def _run_cycle(context, business_connection_id, chat_id, greeting_text, em
 
         log(f"EMOJI_{idx}_SEND_SUCCESS", message_id=sent.message_id)
         log(f"EMOJI_{idx}_WAIT", seconds=EMOJI_DISPLAY_DELAY_SEC)
-        await asyncio.sleep(EMOJI_DISPLAY_DELAY_SEC)
+        await asyncio.sleep(config.get_tabrik_settings()["emoji_delay"])
 
         log(f"EMOJI_{idx}_DELETE_STARTED", message_id=sent.message_id)
         try:
@@ -323,7 +326,7 @@ async def _run_cycle(context, business_connection_id, chat_id, greeting_text, em
 async def _schedule_revert(context, inline_message_id: str, short_id: str, recipient_user_id: int, trace_id: str) -> None:
     log, log_error = _make_logger(trace_id, short_id)
     try:
-        await asyncio.sleep(REVERT_DELAY_SEC)
+        await asyncio.sleep(config.get_tabrik_settings()["revert_minutes"] * 60)
         await context.bot.edit_message_text(
             inline_message_id=inline_message_id,
             text=tabrik_logic.build_ready_card(),
