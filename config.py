@@ -94,6 +94,28 @@ VID_DOWNLOAD_TIMEOUT_SEC = int(os.getenv("VID_DOWNLOAD_TIMEOUT_SEC", "180"))
 # sifatida chiqarib tashlanishi mumkin.
 QOSHIQ_SEARCH_COUNT = int(os.getenv("QOSHIQ_SEARCH_COUNT", "14"))
 QOSHIQ_DOWNLOAD_TIMEOUT_SEC = int(os.getenv("QOSHIQ_DOWNLOAD_TIMEOUT_SEC", "120"))
+# Inline /qo'shiq qidiruvi Telegram inline query muddati tugashidan oldin
+# javob berishi kerak. 8.5 soniya — qidiruvni 7 soniyada bekor qilib yuborishdan
+# ko'ra biroz ko'proq imkon beradi, lekin Telegram javob muddati uchun xavfsiz
+# zaxira qoldiradi. Render/Telegram tarmog'i sekin bo'lsa ham, qiymatni ENV orqali
+# 5-9 soniya oralig'ida sozlash mumkin.
+try:
+    QOSHIQ_INLINE_SEARCH_TIMEOUT_SEC = min(
+        9.0, max(5.0, float(os.getenv("QOSHIQ_INLINE_SEARCH_TIMEOUT_SEC", "8.5")))
+    )
+except (TypeError, ValueError):
+    QOSHIQ_INLINE_SEARCH_TIMEOUT_SEC = 8.5
+
+# Render'da yangi deploy ishga tushayotgan paytda eski instance bir necha soniya
+# hali getUpdates qilayotgan bo'lishi mumkin. PTB bootstrapping bosqichida qayta
+# urinish shu qisqa overlap sababli keladigan Telegram Conflict'ni yumshatadi.
+# Bu duplicate bot instance'ni yashirmaydi: retries tugasa xato yana ko'rinadi.
+try:
+    POLLING_BOOTSTRAP_RETRIES = max(
+        0, int(os.getenv("POLLING_BOOTSTRAP_RETRIES", "10"))
+    )
+except (TypeError, ValueError):
+    POLLING_BOOTSTRAP_RETRIES = 10
 # 🐞 MUHIM TUZATISH: bu qiymat avval BU YERDA UMUMAN YO'Q edi, lekin
 # handlers/qoshiq.py va handlers/inline_query.py uni `config.QOSHIQ_MAX_MB`
 # sifatida ishlatadi — natijada HAR BIR "/qo'shiq" yuklab olish urinishi
