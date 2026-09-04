@@ -32,13 +32,26 @@ _SYSTEM = (
 
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    voice = update.message.voice
-    chat_id = update.effective_chat.id
+    # Telegram Business/inline/service update'larida update.message bo'lmasligi
+    # mumkin. Voice handler bunday update'ni xato sifatida global error handler'ga
+    # uzatmasligi kerak.
+    message = update.effective_message
+    voice = getattr(message, "voice", None)
+    if message is None or voice is None:
+        logger.debug("🎙 Voice handler o'tkazib yuborildi: voice message topilmadi.")
+        return
+
+    chat = update.effective_chat
+    if chat is None:
+        logger.debug("🎙 Voice handler o'tkazib yuborildi: effective_chat yo'q.")
+        return
+
+    chat_id = chat.id
     user_id = update.effective_user.id if update.effective_user else 0
     logger.info(f"🎙 Ovozli xabar qabul qilindi: chat_id={chat_id}, davomiyligi={voice.duration}s, hajmi={voice.file_size} bayt.")
 
     await context.bot.send_chat_action(chat_id, ChatAction.TYPING)
-    status = await update.message.reply_text("⏳ Ovozli xabar tinglanmoqda...")
+    status = await message.reply_text("⏳ Ovozli xabar tinglanmoqda...")
 
     try:
         file = await context.bot.get_file(voice.file_id)
@@ -80,7 +93,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass
 
     text = f"🎙 _\"{transcript}\"_\n\n{answer}" if transcript else answer
-    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+    await message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
 
 
 def _split_response(raw: str) -> tuple[str, str]:
