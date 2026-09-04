@@ -871,6 +871,37 @@ def _render_logs_text(service: dict, logs: list[dict], category: str) -> str:
     return "\n\n".join(lines)[:3950]
 
 
+async def _latest_render_deploy_start(service_id: str):
+    """Eng so'nggi deploy vaqtini topadi; Render log oynasi shu vaqtdan boshlanadi."""
+    try:
+        deploys = await render_api.list_deploys(service_id, limit=20)
+    except Exception as exc:
+        logger.warning(
+            "☁️ Eng so'nggi deployni aniqlab bo'lmadi: %s: %s",
+            type(exc).__name__, exc,
+        )
+        return None
+
+    if not deploys:
+        return None
+
+    from datetime import datetime, timezone
+
+    def deploy_time(deploy):
+        for key in ("createdAt", "created_at", "updatedAt", "updated_at"):
+            value = deploy.get(key)
+            if value:
+                try:
+                    raw = str(value).replace("Z", "+00:00")
+                    dt = datetime.fromisoformat(raw)
+                    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+                except ValueError:
+                    pass
+        return datetime.min.replace(tzinfo=timezone.utc)
+
+    latest = max(deploys, key=deploy_time)
+    return latest.get("createdAt") or latest.get("created_at") or latest.get("updatedAt") or latest.get("updated_at")
+
 def _render_log_keyboard(service_id: str, category: str) -> InlineKeyboardMarkup:
     rows = [
         [
@@ -1642,11 +1673,14 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _safe_edit_query(query, f"☁️ {_RENDER_LEVEL_LABELS[category]} olinmoqda...", parse_mode="HTML")
         try:
             service = await render_api.get_service(service_id)
+            latest_deploy_raw = await _latest_render_deploy_start(service_id)
+            latest_deploy = render_api._parse_dt(latest_deploy_raw) if latest_deploy_raw else None
             logs = await render_api.list_logs_for_service(
                 service_id=service_id,
                 owner_id=str(service.get("ownerId") or service.get("owner_id") or config.RENDER_OWNER_ID or ""),
                 levels=_RENDER_LEVEL_FILTERS[category],
                 limit=100,
+                start_time=latest_deploy,
             )
             await _safe_edit_query(
                 query, _render_logs_text(service, logs, category),
@@ -1662,9 +1696,11 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             service = await render_api.get_service(service_id)
             owner_id = str(service.get("ownerId") or service.get("owner_id") or config.RENDER_OWNER_ID or "")
+            latest_deploy_raw = await _latest_render_deploy_start(service_id)
+            latest_deploy = render_api._parse_dt(latest_deploy_raw) if latest_deploy_raw else None
             logs = await render_api.list_logs_for_service(
                 service_id=service_id, owner_id=owner_id, levels=None, limit=5000,
-                hours=config.RENDER_LOG_PDF_HOURS,
+                hours=config.RENDER_LOG_PDF_HOURS, start_time=latest_deploy,
             )
             pdf_path = render_api.create_logs_pdf(service, logs)
             try:
@@ -2162,7 +2198,7 @@ async def on_github_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             target_path = action.get("target_path") or ""
             if not repo:
                 raise github_dev.GitHubDevError("Repository tanlanmagan.")
-            await _edit_menu(context, "📤 ZIP tekshirilmoqda va GitHub'ga tayyorlanmoqda...", parse_mode="HTML")
+            await _edit_menu(context, "📤 ZIP tekshirilmoqda va GitHub'ga tayyorlanmoqda...", _back_keyboard("dev:gh:file"))
             result = await asyncio.to_thread(
                 github_dev.upload_zip_project, repo, data, target_path, branch
             )
@@ -2186,12 +2222,11 @@ async def on_github_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "ZIP'da bo'lmagan repository fayllariga tegilmadi.\n\n"
                 "<b>ZIP fayllari:</b>\n" + preview,
                 _back_keyboard("dev:gh:file"),
-                parse_mode="HTML",
             )
             return DEV_MENU
         except Exception as exc:
             logger.error("GitHub ZIP upload xatosi: %s", exc, exc_info=True)
-            await _edit_menu(context, f"❌ <b>ZIP yuklash xatosi</b>\n\n{_esc(str(exc))}", _back_keyboard("dev:gh:file"), parse_mode="HTML")
+            await _edit_menu(context, f"❌ <b>ZIP yuklash xatosi</b>\n\n{_esc(str(exc))}", _back_keyboard("dev:gh:file"))
             return DEV_WAIT_GITHUB
 
     content: str | None = None
