@@ -132,23 +132,11 @@ async def _safe_edit_bot(bot, chat_id, message_id, text: str, reply_markup=None,
             raise
 
 
-async def _edit_menu(
-    context: ContextTypes.DEFAULT_TYPE,
-    text: str,
-    keyboard: InlineKeyboardMarkup,
-    parse_mode: str = "HTML",
-):
+async def _edit_menu(context: ContextTypes.DEFAULT_TYPE, text: str, keyboard: InlineKeyboardMarkup):
     """Menyu xabarini saqlangan chat/message_id orqali yangilaydi (matnli
     javobdan keyin, query bo'lmaganda ishlatiladi)."""
     chat_id, message_id = context.user_data["dev_msg"]
-    await _safe_edit_bot(
-        context.bot,
-        chat_id,
-        message_id,
-        text,
-        reply_markup=keyboard,
-        parse_mode=parse_mode,
-    )
+    await _safe_edit_bot(context.bot, chat_id, message_id, text, reply_markup=keyboard, parse_mode="HTML")
 
 
 # ============================================================
@@ -1417,7 +1405,6 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "• Bitta umumiy loyiha papkasi bo'lsa (masalan <code>project-main/</code>), u avtomatik olib tashlanadi.\n\n"
                 "⚠️ O'zgarishlar bitta GitHub commit sifatida qo'llanadi.",
                 reply_markup=_back_keyboard("dev:gh:file"),
-                parse_mode="HTML",
             )
             return DEV_WAIT_GITHUB
 
@@ -1430,7 +1417,6 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Masalan: <code>papka_nomi/fayil_nomi.py</code>\n\n"
                 "So'ng fayl mazmunini yuborasiz. Yangi papkalar kerak bo'lsa, GitHub ularni avtomatik yaratadi.",
                 reply_markup=_back_keyboard("dev:gh:file"),
-                parse_mode="HTML",
             )
             return DEV_WAIT_GITHUB
 
@@ -1448,7 +1434,6 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Katta fayl bo'lsa uni Telegram hujjati (.py/.js/.txt va hokazo) sifatida yuborishingiz mumkin.\n\n"
                 "⚠️ Yuborilgan mazmun GitHub'dagi eski mazmunni to'liq almashtiradi.",
                 reply_markup=_back_keyboard("dev:gh:file"),
-                parse_mode="HTML",
             )
             return DEV_WAIT_GITHUB
 
@@ -1459,7 +1444,6 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"🗑 <b>Faylni o'chirish</b>\n\n<code>{_esc(file_path or '')}</code>\n\n"
                 "⚠️ Bu amal GitHub'da darhol commit qilinadi. Davom etasizmi?",
                 reply_markup=_github_confirm_delete_keyboard(),
-                parse_mode="HTML",
             )
             return DEV_MENU
 
@@ -2088,7 +2072,6 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 f"✅ <code>{_esc(key)}</code> Render Environment Variables'ga saqlandi.\n"
                 "Qiymat xavfsizlik sababli ko'rsatilmaydi. Deploy qilish uchun RENDER → 🚀 Deploy ni bosing.",
-                parse_mode="HTML",
             )
         except Exception as exc:
             await update.message.reply_text("❌ " + _esc(render_api.human_error(exc)), parse_mode="HTML")
@@ -2203,16 +2186,34 @@ async def on_github_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return DEV_WAIT_GITHUB
         try:
+            logger.info(
+                "GitHub ZIP stage=telegram_download filename=%s size=%s user_id=%s",
+                doc.file_name, getattr(doc, "file_size", None), update.effective_user.id if update.effective_user else None,
+            )
             tg_file = await doc.get_file()
             data = bytes(await tg_file.download_as_bytearray())
+            logger.info("GitHub ZIP stage=telegram_download_done bytes=%d", len(data))
             repo = context.user_data.get("github_repo")
             branch = context.user_data.get("github_branch") or "main"
             target_path = action.get("target_path") or ""
             if not repo:
                 raise github_dev.GitHubDevError("Repository tanlanmagan.")
-            await _edit_menu(context, "📤 ZIP tekshirilmoqda va GitHub'ga tayyorlanmoqda...", parse_mode="HTML")
+            logger.info(
+                "GitHub ZIP stage=preparing repo=%s branch=%s target=%s bytes=%d",
+                repo, branch, target_path, len(data),
+            )
+            await _edit_menu(
+                context,
+                "📤 ZIP tekshirilmoqda va GitHub'ga tayyorlanmoqda...",
+                _back_keyboard("dev:gh:file"),
+            )
+            logger.info("GitHub ZIP stage=github_upload_start repo=%s branch=%s", repo, branch)
             result = await asyncio.to_thread(
                 github_dev.upload_zip_project, repo, data, target_path, branch
+            )
+            logger.info(
+                "GitHub ZIP stage=github_upload_done repo=%s branch=%s files=%s commit=%s",
+                repo, result.get("branch"), result.get("file_count"), result.get("commit_sha"),
             )
             context.user_data.pop("dev_action", None)
             files = result["files"]
@@ -2223,13 +2224,6 @@ async def on_github_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"\n🧹 ZIP root papkasi olib tashlandi: <code>{_esc(result['common_root_removed'])}/</code>"
                 if result.get("common_root_removed") else ""
             )
-            skipped = result.get("skipped_protected") or []
-            protected_note = (
-                "\n🔒 Maxfiy fayllar GitHub'ga yuborilmadi: "
-                + ", ".join(f"<code>{_esc(x)}</code>" for x in skipped[:10])
-                + (f" (+{len(skipped) - 10} ta)" if len(skipped) > 10 else "")
-                if skipped else ""
-            )
             await _edit_menu(
                 context,
                 "✅ <b>ZIP loyiha GitHub'ga muvaffaqiyatli yuklandi.</b>\n\n"
@@ -2238,16 +2232,16 @@ async def on_github_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"📁 Joy: <code>/{_esc(target_path)}</code>\n"
                 f"📄 Yangilangan/qo'shilgan fayllar: <b>{result['file_count']}</b> ta"
                 f"{root_note}"
-                f"{protected_note}\n\n"
+                f"\n🔐 Maxfiy/local fayllar o'tkazib yuborildi: <b>{result.get('protected_skipped', 0)}</b> ta"
+                "\n\n"
                 "ZIP'da bo'lmagan repository fayllariga tegilmadi.\n\n"
                 "<b>ZIP fayllari:</b>\n" + preview,
                 _back_keyboard("dev:gh:file"),
-                parse_mode="HTML",
             )
             return DEV_MENU
         except Exception as exc:
             logger.error("GitHub ZIP upload xatosi: %s", exc, exc_info=True)
-            await _edit_menu(context, f"❌ <b>ZIP yuklash xatosi</b>\n\n{_esc(str(exc))}", _back_keyboard("dev:gh:file"), parse_mode="HTML")
+            await _edit_menu(context, f"❌ <b>ZIP yuklash xatosi</b>\n\n{_esc(str(exc))}", _back_keyboard("dev:gh:file"))
             return DEV_WAIT_GITHUB
 
     content: str | None = None
