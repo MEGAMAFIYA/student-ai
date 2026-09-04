@@ -24,6 +24,22 @@ logger = logging.getLogger(__name__)
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 
+# ============================================================
+# ☁️ RENDER API — /developer > RENDER
+# ============================================================
+# Render API key Account Settings > API Keys'dan olinadi. Hech qachon
+# kodga hardcode qilinmaydi yoki GitHub'ga commit qilinmaydi.
+RENDER_API_KEY = os.getenv("RENDER_API_KEY", "").strip()
+# Ixtiyoriy: tea-... workspace ID. Bo'sh bo'lsa /developer > RENDER
+# API orqali ko'rinadigan servislarning ownerId qiymatidan avtomatik aniqlaydi.
+RENDER_OWNER_ID = os.getenv("RENDER_OWNER_ID", "").strip()
+# Ixtiyoriy: standart servisni oldindan tanlash uchun.
+RENDER_SERVICE_ID = os.getenv("RENDER_SERVICE_ID", "").strip()
+# PDF uchun qancha vaqt ichidagi Render loglari olinadi. Render log retention
+# workspace rejasiga bog'liq; API mavjud bo'lgan davr ichidan shu oynani oladi.
+RENDER_LOG_PDF_HOURS = max(1, int(os.getenv("RENDER_LOG_PDF_HOURS", "168")))
+
+
 # /developer buyrug'iga faqat shu Telegram user_id'larga ruxsat beriladi.
 # .env da: ADMIN_IDS=123456789,987654321 (vergul bilan, bo'sh joysiz ham bo'ladi)
 ADMIN_IDS = {
