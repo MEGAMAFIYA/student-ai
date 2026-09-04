@@ -417,7 +417,7 @@ async def on_inline_query(
         try:
             # Telegram query ID muddati tugashidan oldin javob berish uchun
             # qidiruvga qat'iy vaqt chegarasi qo'yiladi.
-            tracks = await asyncio.wait_for(task, timeout=7.0)
+            tracks = await asyncio.wait_for(task, timeout=config.QOSHIQ_INLINE_SEARCH_TIMEOUT_SEC)
             logger.info(
                 "🎵 INLINE /qo'shiq SEARCH OK: user_id=%s query=%r results=%d elapsed=%.2fs",
                 user.id, search_text, len(tracks), time.monotonic() - started,
@@ -457,6 +457,7 @@ async def on_inline_query(
             # to'g'ri havola beramiz (talab #4 — "preview mavjud emas"
             # holatini soxta imkoniyat bilan almashtirmaslik).
             preview_markup = InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬇️ Yuklab olish", callback_data=f"iq:{result_id}")],
                 [InlineKeyboardButton("🎧 Manbada eshitish", url=t["webpage_url"])],
                 [InlineKeyboardButton("🤖 Talaba AI", url=f"https://t.me/{BOT_USERNAME}")],
             ])
@@ -760,21 +761,31 @@ async def on_chosen_inline_result(
 
     inline_message_id = chosen.inline_message_id
 
+    cache = context.bot_data.get("inline_queries", {})
+    entry = cache.pop(chosen.result_id, None)
+
     if not inline_message_id:
-        logger.error(
-            "🔴 CHOSEN INLINE ERROR: inline_message_id YO'Q. result_id=%s query=%r user_id=%s. "
-            "/setinlinefeedback=Enabled va reply_markup tekshirilsin.",
+        # Telegram hujjatlariga ko'ra inline_message_id faqat inline natija
+        # inline keyboard bilan yuborilganda keladi. Biz /qo'shiq natijasiga
+        # fallback callback tugmasini ham qo'shamiz, shuning uchun bitta
+        # Telegram/client holati inline_message_id bermasa ham tanlangan trek
+        # yo'qolib ketmaydi: foydalanuvchi "⬇️ Yuklab olish"ni bosishi mumkin.
+        # Bu yerda cache entry'ni qayta saqlaymiz, chunki callback keyin
+        # result_id orqali aynan shu trekni oladi.
+        if entry:
+            cache[chosen.result_id] = entry
+        logger.warning(
+            "⚠️ CHOSEN INLINE: inline_message_id kelmadi. result_id=%s query=%r user_id=%s. "
+            "Fallback callback orqali davom etish mumkin.",
             chosen.result_id, chosen.query, getattr(chosen.from_user, "id", "?"),
         )
-        _log_inline(chosen.from_user, chosen.query or "", "error", "chosen_inline_result: inline_message_id yo'q")
+        _log_inline(
+            chosen.from_user,
+            chosen.query or "",
+            "warning",
+            "chosen_inline_result: inline_message_id yo'q; fallback tugmasi mavjud",
+        )
         return
-
-    cache = context.bot_data.get("inline_queries", {})
-
-    entry = cache.pop(
-        chosen.result_id,
-        None
-    )
 
     # 🔍📜 /developer > "🔍 Inline jurnali" uchun — natijani TANLAGAN
     # foydalanuvchi (ChosenInlineResult'ning o'zida keladi, qayta so'rash
@@ -1346,6 +1357,53 @@ async def _handle_qoshiq(
         _log_inline(user, f"/qo'shiq {title}", "error", f"{type(e).__name__}: {e}")
     finally:
         shutil.rmtree(dest_dir, ignore_errors=True)
+
+
+# ============================================================
+# 🎵 INLINE /qo'shiq FALLBACK CALLBACK
+# ============================================================
+
+async def inline_qoshiq_download_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """ChosenInlineResult inline_message_id bermagan holat uchun zaxira.
+
+    Natijaga qo'shilgan ``⬇️ Yuklab olish`` tugmasi callback_query sifatida
+    keladi va odatda shu inline xabarning ``inline_message_id`` sini beradi.
+    Shunday qilib /setinlinefeedback/Telegram clientdagi vaqtinchalik
+    metadata muammosi qo'shiq oqimini to'liq to'xtatmaydi.
+    """
+    callback = update.callback_query
+    if callback is None:
+        return
+    result_id = (callback.data or "")[3:]
+    if not result_id:
+        await callback.answer("Natija identifikatori topilmadi.", show_alert=True)
+        return
+
+    cache = context.bot_data.get("inline_queries", {})
+    entry = cache.pop(result_id, None)
+    if not entry or entry.get("type") != "qoshiq":
+        await callback.answer("Bu natijaning muddati o'tgan. Qidiruvni qaytadan boshlang.", show_alert=True)
+        logger.warning("🎵 Inline /qo'shiq fallback: result_id topilmadi: %s", result_id)
+        return
+
+    inline_message_id = callback.inline_message_id
+    if not inline_message_id:
+        # Noodatiy holatda callback ham inline_message_id bermasa, natijani
+        # o'chirib yubormaymiz — foydalanuvchi boshqa qurilmadan/tugmadan
+        # qayta urinishi mumkin.
+        cache[result_id] = entry
+        await callback.answer(
+            "Inline xabar identifikatori topilmadi. Iltimos, natijani qaytadan tanlang.",
+            show_alert=True,
+        )
+        logger.warning(
+            "🎵 Inline /qo'shiq fallback: callback'da inline_message_id ham yo'q, result_id=%s",
+            result_id,
+        )
+        return
+
+    await callback.answer("⬇️ Qo'shiq yuklanmoqda...")
+    await _handle_qoshiq(context, inline_message_id, entry.get("track") or {}, callback.from_user)
 
 
 # ============================================================
