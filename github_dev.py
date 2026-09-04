@@ -16,8 +16,11 @@ GitHub and respects the token's actual permissions.
 from __future__ import annotations
 
 import base64
+import io
 import logging
 import mimetypes
+import posixpath
+import zipfile
 from typing import Any
 
 import httpx
@@ -261,6 +264,206 @@ def delete_file(repo: str, path: str, branch: str | None = None, sha: str | None
     response = _request("DELETE", _contents_url(repo, path), json=body)
     return response.json()
 
+
+
+_MAX_ZIP_BYTES = 20 * 1024 * 1024
+_MAX_ZIP_FILES = 1000
+_MAX_ZIP_UNCOMPRESSED_BYTES = 50 * 1024 * 1024
+_MAX_ZIP_FILE_BYTES = 20 * 1024 * 1024
+
+
+def _normalize_zip_path(name: str) -> str:
+    """Normalize and validate a ZIP member path before sending it to GitHub."""
+    name = (name or "").replace("\\", "/")
+    name = name.lstrip("/")
+    if not name or name.endswith("/"):
+        return ""
+    parts = []
+    for part in name.split("/"):
+        if part in ("", "."):
+            continue
+        if part == "..":
+            raise GitHubDevError(f"ZIP ichida xavfli yo'l aniqlandi: {name}")
+        parts.append(part)
+    normalized = posixpath.join(*parts) if parts else ""
+    if not normalized:
+        return ""
+    first = normalized.split("/", 1)[0].lower()
+    if first == ".git" or normalized.lower().startswith(".git/"):
+        raise GitHubDevError("ZIP ichidagi .git katalogi yuklanmaydi.")
+    return normalized
+
+
+def _zip_project_root(paths: list[str]) -> str:
+    """Strip one artificial archive root (e.g. project-main/) when all files share it."""
+    if not paths:
+        return ""
+    first_parts = {p.split("/", 1)[0] for p in paths}
+    if len(first_parts) != 1:
+        return ""
+    root = next(iter(first_parts))
+    # Only strip a directory when every member is actually below it.
+    if all("/" in p for p in paths):
+        return root
+    return ""
+
+
+def upload_zip_project(
+    repo: str,
+    zip_bytes: bytes,
+    target_path: str = "",
+    branch: str | None = None,
+) -> dict[str, Any]:
+    """Merge a ZIP project into a repository without deleting omitted files.
+
+    Existing paths in the ZIP are replaced; new paths are added. Files that
+    are not present in the ZIP are left untouched. The whole merge is published
+    as one Git commit using the Git Trees API, which is safer and much faster
+    than creating one commit per file.
+    """
+    if len(zip_bytes) > _MAX_ZIP_BYTES:
+        raise GitHubDevError(f"ZIP hajmi juda katta: {len(zip_bytes):,} bayt. Maksimum {_MAX_ZIP_BYTES:,} bayt.")
+
+    target_path = (target_path or "").replace("\\", "/").strip("/")
+    if target_path == ".":
+        target_path = ""
+    if ".." in target_path.split("/"):
+        raise GitHubDevError("Yuklash papkasi noto'g'ri.")
+
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
+    except (zipfile.BadZipFile, OSError) as exc:
+        raise GitHubDevError("Yuborilgan fayl haqiqiy ZIP arxiv emas.") from exc
+
+    members: dict[str, bytes] = {}
+    total_uncompressed = 0
+    try:
+        infos = zf.infolist()
+        if len(infos) > _MAX_ZIP_FILES:
+            raise GitHubDevError(f"ZIP ichida juda ko'p fayl bor: {len(infos)} ta. Maksimum {_MAX_ZIP_FILES} ta.")
+        normalized_names: list[str] = []
+        for info in infos:
+            name = _normalize_zip_path(info.filename)
+            if not name:
+                continue
+            # Do not follow links/special filesystem entries from archives.
+            mode = (info.external_attr >> 16) & 0o170000
+            if mode == 0o120000:
+                raise GitHubDevError(f"ZIP ichidagi symbolic link yuklanmaydi: {info.filename}")
+            if name in members:
+                raise GitHubDevError(f"ZIP ichida bir xil fayl ikki marta bor: {name}")
+            if info.file_size > _MAX_ZIP_FILE_BYTES:
+                raise GitHubDevError(f"Fayl juda katta: {name} ({info.file_size:,} bayt).")
+            total_uncompressed += info.file_size
+            if total_uncompressed > _MAX_ZIP_UNCOMPRESSED_BYTES:
+                raise GitHubDevError("ZIP ochilgandagi umumiy hajm juda katta.")
+            normalized_names.append(name)
+            with zf.open(info, "r") as fh:
+                data = fh.read(_MAX_ZIP_FILE_BYTES + 1)
+            if len(data) > _MAX_ZIP_FILE_BYTES:
+                raise GitHubDevError(f"Fayl juda katta: {name}")
+            members[name] = data
+    finally:
+        zf.close()
+
+    if not members:
+        raise GitHubDevError("ZIP ichida yuklanadigan fayl topilmadi.")
+
+    # ZIP exports commonly contain one artificial top-level project folder.
+    # Removing it avoids creating e.g. repo/student-ai-main/... unintentionally.
+    common_root = _zip_project_root(list(members))
+    if common_root:
+        prefix = common_root + "/"
+        members = {name[len(prefix):]: data for name, data in members.items()}
+        members = {name: data for name, data in members.items() if name}
+
+    final_files: dict[str, bytes] = {}
+    for relative_path, data in members.items():
+        final_path = "/".join(x for x in (target_path, relative_path) if x)
+        final_path = _normalize_zip_path(final_path)
+        if not final_path:
+            continue
+        if final_path in final_files:
+            raise GitHubDevError(f"ZIP yo'llari to'qnashdi: {final_path}")
+        final_files[final_path] = data
+
+    if not final_files:
+        raise GitHubDevError("ZIP ichida yuklanadigan fayl topilmadi.")
+
+    repo_info = get_repository(repo)
+    branch = branch or repo_info.get("default_branch") or "main"
+    owner, name = _repo_parts(repo)
+
+    # Read the current branch tip and base tree. `base_tree` makes this an
+    # additive/overwrite merge: every repository path not mentioned by the ZIP
+    # remains in the resulting tree exactly as it was.
+    ref = _request("GET", f"{_API}/repos/{owner}/{name}/git/ref/heads/{branch}").json()
+    old_commit_sha = ((ref.get("object") or {}).get("sha"))
+    if not old_commit_sha:
+        raise GitHubDevError("Branch HEAD aniqlanmadi.")
+    commit = _request("GET", f"{_API}/repos/{owner}/{name}/git/commits/{old_commit_sha}").json()
+    base_tree = ((commit.get("tree") or {}).get("sha"))
+    if not base_tree:
+        raise GitHubDevError("Repository tree aniqlanmadi.")
+
+    tree_entries = []
+    for path, data in sorted(final_files.items()):
+        blob = _request(
+            "POST",
+            f"{_API}/repos/{owner}/{name}/git/blobs",
+            json={
+                "content": base64.b64encode(data).decode("ascii"),
+                "encoding": "base64",
+            },
+        ).json()
+        blob_sha = blob.get("sha")
+        if not blob_sha:
+            raise GitHubDevError(f"GitHub blob yaratilmadi: {path}")
+        tree_entries.append({"path": path, "mode": "100644", "type": "blob", "sha": blob_sha})
+
+    new_tree = _request(
+        "POST",
+        f"{_API}/repos/{owner}/{name}/git/trees",
+        json={"base_tree": base_tree, "tree": tree_entries},
+    ).json()
+    new_tree_sha = new_tree.get("sha")
+    if not new_tree_sha:
+        raise GitHubDevError("GitHub yangi tree yaratmadi.")
+
+    commit_message = f"Update project from ZIP ({len(final_files)} files)"
+    new_commit = _request(
+        "POST",
+        f"{_API}/repos/{owner}/{name}/git/commits",
+        json={"message": commit_message, "tree": new_tree_sha, "parents": [old_commit_sha]},
+    ).json()
+    new_commit_sha = new_commit.get("sha")
+    if not new_commit_sha:
+        raise GitHubDevError("GitHub commit yaratmadi.")
+
+    # No force push: if somebody changed the branch while the ZIP was being
+    # prepared, GitHub rejects the ref update instead of overwriting their work.
+    try:
+        _request(
+            "PATCH",
+            f"{_API}/repos/{owner}/{name}/git/refs/heads/{branch}",
+            json={"sha": new_commit_sha, "force": False},
+        )
+    except GitHubDevError as exc:
+        raise GitHubDevError(
+            "ZIP commit tayyorlandi, lekin branch boshqa commitga o'zgarib ketgani uchun "
+            "avtomatik qo'llanmadi. Hech narsa ustidan majburan yozilmadi. Qayta urinib ko'ring."
+        ) from exc
+
+    return {
+        "repo": repo,
+        "branch": branch,
+        "commit_sha": new_commit_sha,
+        "files": sorted(final_files),
+        "file_count": len(final_files),
+        "bytes": sum(len(v) for v in final_files.values()),
+        "target_path": target_path,
+        "common_root_removed": common_root,
+    }
 
 def display_text(text: str, limit: int = _MAX_VIEW_CHARS) -> str:
     if len(text) <= limit:
