@@ -952,6 +952,7 @@ def _github_path_keyboard(repo: str, path_value: str, items: list[dict]) -> Inli
         rows.append([InlineKeyboardButton(label[:64], callback_data=f"dev:gh:item:{i}")])
 
     rows.append([InlineKeyboardButton("➕ Yangi fayl qo'shish", callback_data="dev:gh:new")])
+    rows.append([InlineKeyboardButton("📤 ZIP loyihani yuklash", callback_data="dev:gh:zip")])
     if path_value:
         rows.append([InlineKeyboardButton("⬆️ Yuqoriga", callback_data="dev:gh:up")])
     rows.append([InlineKeyboardButton("📦 Repositorilar", callback_data="dev:gh:repos")])
@@ -1352,6 +1353,30 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as exc:
                 await _github_error(context)
             return DEV_MENU
+
+        if sub == "zip":
+            repo = context.user_data.get("github_repo")
+            target_path = context.user_data.get("github_path") or ""
+            if not repo:
+                await _github_error(context, github_dev.GitHubDevError("Repository tanlanmagan."), "dev:github")
+                return DEV_MENU
+            context.user_data["dev_action"] = {"type": "github_zip_upload", "target_path": target_path}
+            target_label = f"<code>/{_esc(target_path)}</code>" if target_path else "<code>/</code>"
+            await _safe_edit_query(
+                query,
+                "📤 <b>ZIP loyihani GitHub'ga yuklash</b>\n\n"
+                f"📦 Repository: <code>{_esc(repo)}</code>\n"
+                f"📁 Belgilangan joy: {target_label}\n\n"
+                "ZIP faylni yuboring. ZIP ichidagi fayllar shu joyga joylanadi.\n"
+                "• ZIP'dagi mavjud fayl → GitHub'dagi eski fayl o'rniga yangisi yoziladi.\n"
+                "• ZIP'dagi yangi fayl → qo'shiladi.\n"
+                "• ZIP'da yo'q fayllar → <b>o'chirilmaydi va o'z holicha qoladi.</b>\n"
+                "• Bitta umumiy loyiha papkasi bo'lsa (masalan <code>project-main/</code>), u avtomatik olib tashlanadi.\n\n"
+                "⚠️ O'zgarishlar bitta GitHub commit sifatida qo'llanadi.",
+                reply_markup=_back_keyboard("dev:gh:file"),
+                parse_mode="HTML",
+            )
+            return DEV_WAIT_GITHUB
 
         if sub == "new":
             context.user_data["dev_action"] = {"type": "github_new_path"}
@@ -2114,8 +2139,60 @@ async def on_github_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_admin(update) or not update.message:
         return ConversationHandler.END
     action = context.user_data.get("dev_action") or {}
-    if action.get("type") not in ("github_new_content", "github_edit"):
+    if action.get("type") not in ("github_new_content", "github_edit", "github_zip_upload"):
         return DEV_MENU
+
+    # ZIP project upload is intentionally handled separately from normal text/file editing.
+    # It merges into the selected repository/folder and never deletes omitted files.
+    if action.get("type") == "github_zip_upload":
+        doc = update.message.document
+        filename = (doc.file_name or "").lower() if doc else ""
+        if not doc or not filename.endswith(".zip"):
+            await _edit_menu(
+                context,
+                "⚠️ Iltimos, aynan <b>.zip</b> loyiha faylini yuboring.",
+                _back_keyboard("dev:gh:file"),
+            )
+            return DEV_WAIT_GITHUB
+        try:
+            tg_file = await doc.get_file()
+            data = bytes(await tg_file.download_as_bytearray())
+            repo = context.user_data.get("github_repo")
+            branch = context.user_data.get("github_branch") or "main"
+            target_path = action.get("target_path") or ""
+            if not repo:
+                raise github_dev.GitHubDevError("Repository tanlanmagan.")
+            await _edit_menu(context, "📤 ZIP tekshirilmoqda va GitHub'ga tayyorlanmoqda...", parse_mode="HTML")
+            result = await asyncio.to_thread(
+                github_dev.upload_zip_project, repo, data, target_path, branch
+            )
+            context.user_data.pop("dev_action", None)
+            files = result["files"]
+            preview = "\n".join(f"• <code>{_esc(x)}</code>" for x in files[:20])
+            if len(files) > 20:
+                preview += f"\n• ... yana {len(files) - 20} ta"
+            root_note = (
+                f"\n🧹 ZIP root papkasi olib tashlandi: <code>{_esc(result['common_root_removed'])}/</code>"
+                if result.get("common_root_removed") else ""
+            )
+            await _edit_menu(
+                context,
+                "✅ <b>ZIP loyiha GitHub'ga muvaffaqiyatli yuklandi.</b>\n\n"
+                f"📦 Repository: <code>{_esc(repo)}</code>\n"
+                f"🌿 Branch: <code>{_esc(result['branch'])}</code>\n"
+                f"📁 Joy: <code>/{_esc(target_path)}</code>\n"
+                f"📄 Yangilangan/qo'shilgan fayllar: <b>{result['file_count']}</b> ta"
+                f"{root_note}\n\n"
+                "ZIP'da bo'lmagan repository fayllariga tegilmadi.\n\n"
+                "<b>ZIP fayllari:</b>\n" + preview,
+                _back_keyboard("dev:gh:file"),
+                parse_mode="HTML",
+            )
+            return DEV_MENU
+        except Exception as exc:
+            logger.error("GitHub ZIP upload xatosi: %s", exc, exc_info=True)
+            await _edit_menu(context, f"❌ <b>ZIP yuklash xatosi</b>\n\n{_esc(str(exc))}", _back_keyboard("dev:gh:file"), parse_mode="HTML")
+            return DEV_WAIT_GITHUB
 
     content: str | None = None
     if update.message.text is not None:
