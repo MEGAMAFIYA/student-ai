@@ -231,6 +231,7 @@ async def list_logs_for_service(
     levels: list[str] | None = None,
     limit: int = 100,
     hours: int = 1,
+    start_time: datetime | None = None,
 ) -> list[dict[str, Any]]:
     """Fetch paginated logs for one service.
 
@@ -242,8 +243,13 @@ async def list_logs_for_service(
     if not owner_id:
         raise RenderAPIError(400, "Render workspace ID (ownerId) aniqlanmadi.")
     now = datetime.now(timezone.utc)
-    start = now - timedelta(hours=max(1, hours))
     end = now
+    if start_time is not None:
+        start = start_time.astimezone(timezone.utc) if start_time.tzinfo else start_time.replace(tzinfo=timezone.utc)
+        if start > end:
+            start = end
+    else:
+        start = now - timedelta(hours=max(1, hours))
     wanted = max(1, min(limit, 5000))
     collected: list[dict[str, Any]] = []
 
