@@ -28,9 +28,12 @@ HTML rejimida esa faqat &, <, > belgilarini escape qilish kifoya (_esc()).
 
 import asyncio
 import html
+import io
 import logging
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+
+import github_dev
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes, ConversationHandler
 
@@ -45,7 +48,7 @@ from handlers import payment_admin as pay_ui
 
 logger = logging.getLogger(__name__)
 
-DEV_MENU, DEV_WAIT_TEXT, DEV_WAIT_BULK_MODEL, DEV_WAIT_AUDIO = range(4)
+DEV_MENU, DEV_WAIT_TEXT, DEV_WAIT_BULK_MODEL, DEV_WAIT_AUDIO, DEV_WAIT_GITHUB = range(5)
 
 _FIELD_LABELS = {
     "provider": "PROVIDER",
@@ -183,6 +186,7 @@ def _main_menu_keyboard() -> InlineKeyboardMarkup:
     rows.append([InlineKeyboardButton("💳 To'lovlar", callback_data="dev:pay"),
                  InlineKeyboardButton("💰 Balanslar", callback_data="dev:paybal")])
     rows.append([InlineKeyboardButton("📈 Moliyaviy statistika", callback_data="dev:finstats")])
+    rows.append([InlineKeyboardButton("☁️ GitHub", callback_data="dev:github")])
     rows.append([InlineKeyboardButton("⚙️ Funksiya narxlari", callback_data="dev:payprice"),
                  InlineKeyboardButton("💳 To'lov sozlamalari", callback_data="dev:paysettings")])
     rows.append([InlineKeyboardButton("❌ Yopish", callback_data="dev:close")])
@@ -892,6 +896,154 @@ async def _render_api_error(query, exc: Exception, back_callback: str = "dev:ren
     )
 
 
+
+# ============================================================
+# ☁️ GitHub — repository / papka / fayl boshqaruvi
+# ============================================================
+
+def _github_menu_text() -> str:
+    if not github_dev.configured():
+        return (
+            "☁️ <b>GitHub boshqaruvi</b>\n\n"
+            "❌ <code>GITHUB_TOKEN</code> sozlanmagan.\n\n"
+            "Render Environment Variables'ga GITHUB_TOKEN qo'shing. "
+            "Token kamida repository uchun <b>Contents: Read and write</b> "
+            "huquqiga ega bo'lishi kerak."
+        )
+
+    configured_repo = _esc(getattr(config, "GITHUB_REPO", "") or "(belgilanmagan)")
+    return (
+        "☁️ <b>GitHub boshqaruvi</b>\n\n"
+        "Bu bo'lim tokeningiz kira oladigan repositorylarni GitHub'dan "
+        "to'g'ridan-to'g'ri oladi.\n\n"
+        f"⚙️ Eski default repo: <code>{configured_repo}</code>\n\n"
+        "Repositoryni tanlang:"
+    )
+
+
+def _github_menu_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📦 Repositorilarni yuklash", callback_data="dev:gh:repos")],
+        [InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:menu")],
+    ])
+
+
+def _github_repo_keyboard(repos: list[dict]) -> InlineKeyboardMarkup:
+    rows = []
+    for i, repo in enumerate(repos):
+        private = "🔒 " if repo.get("private") else "🌐 "
+        rows.append([
+            InlineKeyboardButton(
+                f"{private}{repo['full_name']}"[:64],
+                callback_data=f"dev:gh:repo:{i}",
+            )
+        ])
+    rows.append([InlineKeyboardButton("🔄 Yangilash", callback_data="dev:gh:repos")])
+    rows.append([InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:github")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _github_path_keyboard(repo: str, path_value: str, items: list[dict]) -> InlineKeyboardMarkup:
+    rows = []
+    for i, item in enumerate(items):
+        label = f"{github_dev.item_icon(item['type'])} {item['name']}"
+        if item["type"] == "file":
+            label += f"  ({github_dev.format_size(item['size'])})"
+        rows.append([InlineKeyboardButton(label[:64], callback_data=f"dev:gh:item:{i}")])
+
+    rows.append([InlineKeyboardButton("➕ Yangi fayl qo'shish", callback_data="dev:gh:new")])
+    if path_value:
+        rows.append([InlineKeyboardButton("⬆️ Yuqoriga", callback_data="dev:gh:up")])
+    rows.append([InlineKeyboardButton("📦 Repositorilar", callback_data="dev:gh:repos")])
+    rows.append([InlineKeyboardButton("⬅️ GitHub", callback_data="dev:github")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _github_path_text(repo: str, path_value: str, items: list[dict]) -> str:
+    title = f"📦 <b>{_esc(repo)}</b>"
+    title += f"\n📁 <code>/{_esc(path_value)}</code>" if path_value else "\n📁 <code>/</code>"
+    if not items:
+        title += "\n\n<i>Bu papka bo'sh.</i>"
+    else:
+        dirs = sum(1 for x in items if x["type"] == "dir")
+        files = sum(1 for x in items if x["type"] == "file")
+        title += f"\n\n📁 Papkalar: <b>{dirs}</b>  📄 Fayllar: <b>{files}</b>"
+    return title
+
+
+def _github_file_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✏️ Tahrirlash", callback_data="dev:gh:edit")],
+        [InlineKeyboardButton("🗑 O'chirish", callback_data="dev:gh:delete")],
+        [InlineKeyboardButton("⬅️ Papkaga", callback_data="dev:gh:backfile")],
+    ])
+
+
+async def _github_open_path(context: ContextTypes.DEFAULT_TYPE, path_value: str = ""):
+    repo = context.user_data.get("github_repo")
+    branch = context.user_data.get("github_branch") or "main"
+    if not repo:
+        raise github_dev.GitHubDevError("Repository tanlanmagan.")
+    items = await asyncio.to_thread(github_dev.list_directory, repo, path_value, branch)
+    context.user_data["github_path"] = path_value
+    context.user_data["github_items"] = items
+    await _edit_menu(
+        context,
+        _github_path_text(repo, path_value, items),
+        _github_path_keyboard(repo, path_value, items),
+    )
+
+
+async def _github_send_file_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    repo = context.user_data.get("github_repo")
+    path_value = context.user_data.get("github_file")
+    branch = context.user_data.get("github_branch") or "main"
+    if not repo or not path_value:
+        raise github_dev.GitHubDevError("Fayl tanlanmagan.")
+
+    info = await asyncio.to_thread(github_dev.read_file, repo, path_value, branch)
+    context.user_data["github_sha"] = info["sha"]
+    context.user_data["github_file_text"] = info["text"]
+    text = (
+        f"📄 <b>{_esc(repo)}</b>\n"
+        f"📁 <code>{_esc(info['path'])}</code>\n"
+        f"📏 {github_dev.format_size(info['size'])}\n\n"
+        f"<pre>{_esc(github_dev.display_text(info['text']))}</pre>"
+    )
+    if len(text) <= 4096:
+        await _edit_menu(context, text, _github_file_keyboard())
+    else:
+        # Telegram matn limitidan oshadigan faylni hujjat sifatida yuboramiz.
+        data = info["text"].encode("utf-8")
+        await update.effective_chat.send_document(
+            document=io.BytesIO(data),
+            filename=path_value.rsplit("/", 1)[-1] or "file.txt",
+            caption=f"📄 {_esc(repo)}:{_esc(path_value)}",
+        )
+        await _edit_menu(
+            context,
+            f"📄 <b>{_esc(path_value)}</b>\n\n"
+            "Fayl katta bo'lgani uchun yuqorida to'liq ko'rinishida hujjat qilib yuborildi.",
+            _github_file_keyboard(),
+        )
+
+
+def _github_confirm_delete_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⚠️ Ha, o'chirish", callback_data="dev:gh:delete_yes")],
+        [InlineKeyboardButton("⬅️ Bekor qilish", callback_data="dev:gh:file")],
+    ])
+
+
+async def _github_error(context: ContextTypes.DEFAULT_TYPE, exc: Exception, back: str = "dev:github"):
+    logger.error("GitHub Developer xatosi: %s", exc, exc_info=True)
+    await _edit_menu(
+        context,
+        f"❌ <b>GitHub xatosi</b>\n\n{_esc(str(exc))}",
+        _back_keyboard(back),
+    )
+
+
 # ============================================================
 # Kirish nuqtasi va callback dispatcher
 # ============================================================
@@ -924,7 +1076,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # oldingi "kutilayotgan matn kiritish" holatini tozalaydi — pastda
     # tegishli branch (edit/keyaddprov/keyrepl/keymodel/bulkprov/keybulkscope)
     # kerak bo'lsa uni qaytadan o'rnatadi.
-    if action not in ("edit", "bulkprov", "keyaddprov", "keyrepl", "keymodel", "keybulkscope", "priceedit", "balsearch", "ptsong", "ptemoji", "ptdelay", "ptrevert"):
+    if action not in ("edit", "bulkprov", "keyaddprov", "keyrepl", "keymodel", "keybulkscope", "priceedit", "balsearch", "ptsong", "ptemoji", "ptdelay", "ptrevert", "gh", "github"):
         context.user_data.pop("dev_action", None)
 
     # ---------- Asosiy menyu ----------
@@ -1092,6 +1244,178 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=_back_keyboard(f"dev:keybulkprov:{provider}"),
         )
         return DEV_WAIT_BULK_MODEL
+
+
+    # ---------- ☁️ GitHub ----------
+    if action == "github":
+        await _safe_edit_query(
+            query, _github_menu_text(), reply_markup=_github_menu_keyboard(), parse_mode="HTML"
+        )
+        return DEV_MENU
+
+    if action == "gh":
+        sub = parts[2] if len(parts) > 2 else ""
+        if sub == "repos":
+            await _safe_edit_query(query, "☁️ <b>Repositorilar olinmoqda...</b>", parse_mode="HTML")
+            try:
+                repos = await asyncio.to_thread(github_dev.list_repositories)
+                context.user_data["github_repos"] = repos
+                if not repos:
+                    await _safe_edit_query(
+                        query,
+                        "📦 <b>Repositorilar</b>\n\n❗ Token kira oladigan repository topilmadi.",
+                        reply_markup=_github_menu_keyboard(), parse_mode="HTML",
+                    )
+                else:
+                    text = "📦 <b>GitHub repositorilari</b>\n\n"
+                    text += "\n".join(
+                        f"{i+1}. {'🔒' if r['private'] else '🌐'} <code>{_esc(r['full_name'])}</code>"
+                        for i, r in enumerate(repos)
+                    )
+                    text += f"\n\nJami: <b>{len(repos)}</b> ta. Keraklisini tanlang:"
+                    if len(text) > 4096:
+                        text = f"📦 <b>GitHub repositorilari</b>\n\nJami: <b>{len(repos)}</b> ta.\nKeraklisini pastdagi tugmalardan tanlang."
+                    await _safe_edit_query(
+                        query, text, reply_markup=_github_repo_keyboard(repos), parse_mode="HTML"
+                    )
+            except Exception as exc:
+                await _github_error(context, exc)
+            return DEV_MENU
+
+        if sub == "repo":
+            idx = int(parts[3])
+            repos = context.user_data.get("github_repos") or []
+            if not (0 <= idx < len(repos)):
+                await _github_error(context, github_dev.GitHubDevError("Repository ro'yxati eskirgan. Yangilang."), "dev:gh:repos")
+                return DEV_MENU
+            repo_info = repos[idx]
+            repo = repo_info["full_name"]
+            branch = repo_info.get("default_branch") or "main"
+            context.user_data["github_repo"] = repo
+            context.user_data["github_branch"] = branch
+            context.user_data["github_path"] = ""
+            context.user_data["github_file"] = None
+            await _safe_edit_query(query, f"📦 <b>{_esc(repo)}</b>\n\n📁 Repository ochilmoqda...", parse_mode="HTML")
+            try:
+                await _github_open_path(context, "")
+            except Exception as exc:
+                await _github_error(context, exc, "dev:gh:repos")
+            return DEV_MENU
+
+        if sub == "item":
+            idx = int(parts[3])
+            items = context.user_data.get("github_items") or []
+            if not (0 <= idx < len(items)):
+                await _github_error(context, github_dev.GitHubDevError("Papka ro'yxati eskirgan. Yangilang."), "dev:gh:repos")
+                return DEV_MENU
+            item = items[idx]
+            if item["type"] == "dir":
+                context.user_data["github_path"] = item["path"]
+                try:
+                    await _github_open_path(context, item["path"])
+                except Exception as exc:
+                    await _github_error(context, exc)
+                return DEV_MENU
+            if item["type"] != "file":
+                await _safe_edit_query(query, "⚠️ Bu obyekt matnli fayl sifatida ochilmaydi.", reply_markup=_github_path_keyboard(
+                    context.user_data.get("github_repo", ""), context.user_data.get("github_path", ""), items
+                ))
+                return DEV_MENU
+            context.user_data["github_file"] = item["path"]
+            await _safe_edit_query(query, "📄 Fayl o'qilmoqda...", parse_mode="HTML")
+            try:
+                await _github_send_file_view(update, context)
+            except Exception as exc:
+                await _github_error(context, exc)
+            return DEV_MENU
+
+        if sub == "file":
+            try:
+                await _github_send_file_view(update, context)
+            except Exception as exc:
+                await _github_error(context)
+            return DEV_MENU
+
+        if sub == "backfile":
+            path_value = context.user_data.get("github_path") or ""
+            try:
+                await _github_open_path(context, path_value)
+            except Exception as exc:
+                await _github_error(context)
+            return DEV_MENU
+
+        if sub == "up":
+            current = context.user_data.get("github_path") or ""
+            parent = current.rsplit("/", 1)[0] if "/" in current else ""
+            try:
+                await _github_open_path(context, parent)
+            except Exception as exc:
+                await _github_error(context)
+            return DEV_MENU
+
+        if sub == "new":
+            context.user_data["dev_action"] = {"type": "github_new_path"}
+            await _safe_edit_query(
+                query,
+                "➕ <b>Yangi fayl</b>\n\n"
+                "Avval fayl yo'lini yuboring.\n"
+                "Masalan: <code>papka_nomi/fayil_nomi.py</code>\n\n"
+                "So'ng fayl mazmunini yuborasiz. Yangi papkalar kerak bo'lsa, GitHub ularni avtomatik yaratadi.",
+                reply_markup=_back_keyboard("dev:gh:file"),
+                parse_mode="HTML",
+            )
+            return DEV_WAIT_GITHUB
+
+        if sub == "edit":
+            repo = context.user_data.get("github_repo")
+            file_path = context.user_data.get("github_file")
+            if not repo or not file_path:
+                await _github_error(context, github_dev.GitHubDevError("Fayl tanlanmagan."), "dev:github")
+                return DEV_MENU
+            context.user_data["dev_action"] = {"type": "github_edit", "repo": repo, "path": file_path}
+            await _safe_edit_query(
+                query,
+                f"✏️ <b>Faylni tahrirlash</b>\n\n<code>{_esc(file_path)}</code>\n\n"
+                "Yangi <b>to'liq</b> fayl mazmunini yuboring.\n"
+                "Katta fayl bo'lsa uni Telegram hujjati (.py/.js/.txt va hokazo) sifatida yuborishingiz mumkin.\n\n"
+                "⚠️ Yuborilgan mazmun GitHub'dagi eski mazmunni to'liq almashtiradi.",
+                reply_markup=_back_keyboard("dev:gh:file"),
+                parse_mode="HTML",
+            )
+            return DEV_WAIT_GITHUB
+
+        if sub == "delete":
+            file_path = context.user_data.get("github_file")
+            await _safe_edit_query(
+                query,
+                f"🗑 <b>Faylni o'chirish</b>\n\n<code>{_esc(file_path or '')}</code>\n\n"
+                "⚠️ Bu amal GitHub'da darhol commit qilinadi. Davom etasizmi?",
+                reply_markup=_github_confirm_delete_keyboard(),
+                parse_mode="HTML",
+            )
+            return DEV_MENU
+
+        if sub == "delete_yes":
+            repo = context.user_data.get("github_repo")
+            file_path = context.user_data.get("github_file")
+            branch = context.user_data.get("github_branch") or "main"
+            if not repo or not file_path:
+                await _github_error(context, github_dev.GitHubDevError("Fayl tanlanmagan."), "dev:github")
+                return DEV_MENU
+            await _safe_edit_query(query, "🗑 GitHub'dan o'chirilmoqda...", parse_mode="HTML")
+            try:
+                await asyncio.to_thread(
+                    github_dev.delete_file, repo, file_path, branch, context.user_data.get("github_sha")
+                )
+                await _safe_edit_query(
+                    query,
+                    f"✅ <b>Fayl o'chirildi.</b>\n\n<code>{_esc(file_path)}</code>",
+                    reply_markup=_back_keyboard("dev:gh:backfile"),
+                    parse_mode="HTML",
+                )
+            except Exception as exc:
+                await _github_error(context, exc, "dev:gh:file")
+            return DEV_MENU
 
     # ---------- ☁️ RENDER ----------
     if action == "render":
@@ -1567,6 +1891,94 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action_type is None:
         return DEV_MENU
 
+    if action_type == "github_new_path":
+        # Path is intentionally accepted separately from content to support
+        # arbitrary nested directories without a fragile delimiter protocol.
+        file_path = raw_value.strip().strip("/")
+        if (
+            not file_path
+            or file_path.endswith("/")
+            or "\n" in file_path
+            or file_path.startswith(".git/")
+            or "/.git/" in file_path
+            or file_path == ".git"
+        ):
+            await _edit_menu(
+                context,
+                "❌ Fayl yo'li noto'g'ri.\n\nMasalan: <code>src/main.py</code>",
+                _back_keyboard("dev:gh:file"),
+            )
+            context.user_data["dev_action"] = action
+            return DEV_WAIT_GITHUB
+        context.user_data["dev_action"] = {"type": "github_new_content", "path": file_path}
+        await _edit_menu(
+            context,
+            f"📝 <b>Yangi fayl mazmuni</b>\n\n<code>{_esc(file_path)}</code>\n\n"
+            "To'liq mazmunni yuboring. Katta faylni hujjat sifatida ham yuborishingiz mumkin.",
+            _back_keyboard("dev:gh:file"),
+        )
+        return DEV_WAIT_GITHUB
+
+    if action_type in ("github_new_content", "github_edit"):
+        content = raw_value
+        if action_type == "github_new_content":
+            repo = context.user_data.get("github_repo")
+            file_path = action.get("path")
+            branch = context.user_data.get("github_branch") or "main"
+            if not repo or not file_path:
+                await _edit_menu(context, "❌ Repository yoki fayl yo'li topilmadi.", _github_menu_keyboard())
+                context.user_data.pop("dev_action", None)
+                return DEV_MENU
+            try:
+                result = await asyncio.to_thread(github_dev.create_file, repo, file_path, content, branch)
+                context.user_data.pop("dev_action", None)
+                await _edit_menu(
+                    context,
+                    f"✅ <b>Yangi fayl GitHub'ga qo'shildi.</b>\n\n"
+                    f"📦 <code>{_esc(repo)}</code>\n📄 <code>{_esc(file_path)}</code>\n"
+                    f"🔗 Commit: <code>{_esc((result.get('commit') or {}).get('sha', '')[:12])}</code>",
+                    _back_keyboard("dev:gh:file"),
+                )
+            except Exception as exc:
+                context.user_data["dev_action"] = action
+                await _edit_menu(context, f"❌ {_esc(str(exc))}", _back_keyboard("dev:gh:file"))
+                return DEV_WAIT_GITHUB
+            return DEV_MENU
+
+        repo = action.get("repo") or context.user_data.get("github_repo")
+        file_path = action.get("path") or context.user_data.get("github_file")
+        branch = context.user_data.get("github_branch") or "main"
+        if not repo or not file_path:
+            await _edit_menu(context, "❌ Repository yoki fayl topilmadi.", _github_menu_keyboard())
+            context.user_data.pop("dev_action", None)
+            return DEV_MENU
+        try:
+            sha = context.user_data.get("github_sha")
+            if not sha:
+                current = await asyncio.to_thread(github_dev.read_file, repo, file_path, branch)
+                sha = current["sha"]
+            result = await asyncio.to_thread(
+                github_dev.write_file,
+                repo, file_path, content,
+                f"Update {file_path}",
+                branch, sha,
+            )
+            context.user_data["github_sha"] = (result.get("content") or {}).get("sha")
+            context.user_data["github_file_text"] = content
+            context.user_data.pop("dev_action", None)
+            await _edit_menu(
+                context,
+                f"✅ <b>Fayl GitHub'da yangilandi.</b>\n\n"
+                f"📦 <code>{_esc(repo)}</code>\n📄 <code>{_esc(file_path)}</code>\n"
+                f"📝 Yangi hajm: <b>{github_dev.format_size(len(content.encode('utf-8')))}</b>",
+                _github_file_keyboard(),
+            )
+        except Exception as exc:
+            context.user_data["dev_action"] = action
+            await _edit_menu(context, f"❌ {_esc(str(exc))}", _back_keyboard("dev:gh:file"))
+            return DEV_WAIT_GITHUB
+        return DEV_MENU
+
     if action_type == "pt_emoji":
         # Telegram sticker/emoji uchun alohida parser o'rniga mavjud emoji
         # parseridan foydalanamiz: matnda faqat 5 ta emoji bo'lishi kerak.
@@ -1695,6 +2107,84 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data.pop("dev_action", None)
     return DEV_MENU
+
+
+async def on_github_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle GitHub edit/create content sent as text or a UTF-8 document."""
+    if not _is_admin(update) or not update.message:
+        return ConversationHandler.END
+    action = context.user_data.get("dev_action") or {}
+    if action.get("type") not in ("github_new_content", "github_edit"):
+        return DEV_MENU
+
+    content: str | None = None
+    if update.message.text is not None:
+        content = update.message.text
+    elif update.message.document:
+        doc = update.message.document
+        try:
+            tg_file = await doc.get_file()
+            data = await tg_file.download_as_bytearray()
+            content = bytes(data).decode("utf-8")
+        except UnicodeDecodeError:
+            content = None
+        except Exception as exc:
+            await _edit_menu(context, f"❌ Hujjatni o'qib bo'lmadi: {_esc(exc)}", _back_keyboard("dev:gh:file"))
+            return DEV_WAIT_GITHUB
+
+    if content is None:
+        await _edit_menu(
+            context,
+            "⚠️ Faqat matn yoki UTF-8 kod faylini yuboring.",
+            _back_keyboard("dev:gh:file"),
+        )
+        return DEV_WAIT_GITHUB
+
+    # Reuse the exact same write logic as text input, without exposing the
+    # uploaded content back to the Telegram chat.
+    if action["type"] == "github_new_content":
+        repo = context.user_data.get("github_repo")
+        file_path = action.get("path")
+        branch = context.user_data.get("github_branch") or "main"
+        try:
+            result = await asyncio.to_thread(github_dev.create_file, repo, file_path, content, branch)
+            await _edit_menu(
+                context,
+                f"✅ <b>Yangi fayl GitHub'ga qo'shildi.</b>\n\n"
+                f"📦 <code>{_esc(repo)}</code>\n📄 <code>{_esc(file_path)}</code>",
+                _back_keyboard("dev:gh:file"),
+            )
+            context.user_data.pop("dev_action", None)
+            return DEV_MENU
+        except Exception as exc:
+            await _edit_menu(context, f"❌ {_esc(str(exc))}", _back_keyboard("dev:gh:file"))
+            return DEV_WAIT_GITHUB
+
+    repo = action.get("repo") or context.user_data.get("github_repo")
+    file_path = action.get("path") or context.user_data.get("github_file")
+    branch = context.user_data.get("github_branch") or "main"
+    try:
+        sha = context.user_data.get("github_sha")
+        if not sha:
+            current = await asyncio.to_thread(github_dev.read_file, repo, file_path, branch)
+            sha = current["sha"]
+        await asyncio.to_thread(
+            github_dev.write_file, repo, file_path, content,
+            f"Update {file_path}", branch, sha,
+        )
+        context.user_data["github_sha"] = None
+        context.user_data["github_file_text"] = content
+        context.user_data.pop("dev_action", None)
+        await _edit_menu(
+            context,
+            f"✅ <b>Fayl GitHub'da yangilandi.</b>\n\n"
+            f"📦 <code>{_esc(repo)}</code>\n📄 <code>{_esc(file_path)}</code>",
+            _github_file_keyboard(),
+        )
+        return DEV_MENU
+    except Exception as exc:
+        await _edit_menu(context, f"❌ {_esc(str(exc))}", _back_keyboard("dev:gh:file"))
+        return DEV_WAIT_GITHUB
 
 
 async def on_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
