@@ -2198,7 +2198,7 @@ async def on_github_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             target_path = action.get("target_path") or ""
             if not repo:
                 raise github_dev.GitHubDevError("Repository tanlanmagan.")
-            await _edit_menu(context, "📤 ZIP tekshirilmoqda va GitHub'ga tayyorlanmoqda...", _back_keyboard("dev:gh:file"))
+            await _edit_menu(context, "📤 ZIP tekshirilmoqda va GitHub'ga tayyorlanmoqda...", parse_mode="HTML")
             result = await asyncio.to_thread(
                 github_dev.upload_zip_project, repo, data, target_path, branch
             )
@@ -2222,11 +2222,12 @@ async def on_github_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "ZIP'da bo'lmagan repository fayllariga tegilmadi.\n\n"
                 "<b>ZIP fayllari:</b>\n" + preview,
                 _back_keyboard("dev:gh:file"),
+                parse_mode="HTML",
             )
             return DEV_MENU
         except Exception as exc:
             logger.error("GitHub ZIP upload xatosi: %s", exc, exc_info=True)
-            await _edit_menu(context, f"❌ <b>ZIP yuklash xatosi</b>\n\n{_esc(str(exc))}", _back_keyboard("dev:gh:file"))
+            await _edit_menu(context, f"❌ <b>ZIP yuklash xatosi</b>\n\n{_esc(str(exc))}", _back_keyboard("dev:gh:file"), parse_mode="HTML")
             return DEV_WAIT_GITHUB
 
     content: str | None = None
