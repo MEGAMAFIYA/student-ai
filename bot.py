@@ -928,6 +928,10 @@ def build_developer_conv():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, developer.on_bulk_text),
                 CallbackQueryHandler(developer.on_callback, pattern="^dev:"),
             ],
+            developer.DEV_WAIT_GITHUB: [
+                MessageHandler((filters.TEXT & ~filters.COMMAND) | filters.Document.ALL, developer.on_github_input),
+                CallbackQueryHandler(developer.on_callback, pattern="^dev:"),
+            ],
         },
         fallbacks=[CommandHandler("cancel", developer.cancel)],
         name="developer_conv",
