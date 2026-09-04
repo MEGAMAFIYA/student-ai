@@ -176,3 +176,4 @@ async def _do_translate(update, context, target_lang: str, edit_query=None, stat
     # 💰 Tarjima muvaffaqiyatli yakunlandi va foydalanuvchiga yetkazildi.
     await wallet_ui.finalize_success(context, update=update, chat_id=chat_id)
     context.user_data.clear()
+    return ConversationHandler.END
