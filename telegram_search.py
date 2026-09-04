@@ -149,21 +149,38 @@ async def _search_public_audio_async(query: str, count: int, max_channels: int |
         per_channel = max(1, -(-count // max(1, len(config.TG_SEARCH_CHANNELS))))
         results: list[dict] = []
         channels = config.TG_SEARCH_CHANNELS[:max_channels] if max_channels else config.TG_SEARCH_CHANNELS
-        for channel in channels:
-            # 🔌 Render loglarida ko'ringan "Disconnecting.../Disconnection
-            # complete!" — Telethon ulanishi qidiruv davomida uzilib
-            # qolishi mumkin. Bitta bunday uzilish QOLGAN 19 ta kanalni
-            # qidirishni to'xtatib qo'ymasligi kerak (talab #12/#13) — shu
-            # sabab har bir kanaldan OLDIN ulanish holatini tekshirib,
-            # kerak bo'lsa qayta ulanamiz.
+
+        async def _search_one_channel(channel: str) -> list[dict]:
+            # 🔌 Har bir kanal mustaqil qidiriladi. Oldingi versiyada kanallar
+            # ketma-ket ishlangani sabab 4 ta kanalning umumiy vaqti inline
+            # query uchun ajratilgan 8-9 soniyalik oynadan oshib ketishi mumkin
+            # edi. Endi birinchi 4 kanal PARALLEL ishlaydi — bitta kanal sekin
+            # bo'lsa qolganlari natijani kutib turmaydi.
             if not client.is_connected():
                 try:
                     await client.connect()
                 except Exception as e:
-                    logger.warning(f"📡 Telegram qidiruv: qayta ulanib bo'lmadi ('{channel}' oldidan): {type(e).__name__}: {e} — bu kanal o'tkazib yuboriladi.")
-                    continue
+                    logger.warning(
+                        f"📡 Telegram qidiruv: qayta ulanib bo'lmadi ('{channel}' oldidan): "
+                        f"{type(e).__name__}: {e} — bu kanal o'tkazib yuboriladi."
+                    )
+                    return []
             channel_title = await _channel_display_title(client, channel)
-            results.extend(await _search_channel(client, channel, query, per_channel, channel_title))
+            return await _search_channel(client, channel, query, per_channel, channel_title)
+
+        batches = await asyncio.gather(
+            *(_search_one_channel(channel) for channel in channels),
+            return_exceptions=True,
+        )
+        for channel, batch in zip(channels, batches):
+            if isinstance(batch, Exception):
+                logger.warning(
+                    f"📡 Telegram qidiruv: '{channel}' kanalida kutilmagan xato "
+                    f"(o'tkazib yuborildi): {type(batch).__name__}: {batch}"
+                )
+                continue
+            results.extend(batch or [])
+
         return results[:count]
     finally:
         await client.disconnect()
