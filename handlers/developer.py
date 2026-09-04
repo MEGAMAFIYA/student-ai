@@ -35,6 +35,7 @@ from telegram.error import BadRequest
 from telegram.ext import ContextTypes, ConversationHandler
 
 import ai_clients
+import render_api
 import config
 import pro_subscription
 import storage
@@ -175,6 +176,7 @@ def _main_menu_keyboard() -> InlineKeyboardMarkup:
     rows.append([InlineKeyboardButton("🎵 Qo'shiq qidirish", callback_data="dev:music")])
     rows.append([InlineKeyboardButton("➕ Barcha modellar", callback_data="dev:bulk")])
     rows.append([InlineKeyboardButton("📊 Statistika", callback_data="dev:stats")])
+    rows.append([InlineKeyboardButton("☁️ RENDER", callback_data="dev:render")])
     rows.append([InlineKeyboardButton("🔍 Inline jurnali (@Bot ...)", callback_data="dev:inlinelog:all")])
     rows.append([InlineKeyboardButton("💎 Pro / Tabrik sozlamalari", callback_data="dev:pt")])
     rows.append([InlineKeyboardButton("💎 Pro obunalar", callback_data="dev:prosub")])
@@ -651,6 +653,246 @@ async def _run_music_check() -> str:
 
 
 # ============================================================
+# ☁️ RENDER — Render API boshqaruv paneli
+# ============================================================
+
+_RENDER_LEVEL_FILTERS = {
+    "all": None,
+    "error": ["error", "critical", "alert", "emergency"],
+    "medium": ["notice", "warning"],
+}
+_RENDER_LEVEL_LABELS = {
+    "all": "📋 Barcha log",
+    "error": "❌ Hato log",
+    "medium": "🟡 O'rta log",
+}
+
+
+def _render_status_icon(status: str | None) -> str:
+    return {
+        "live": "🟢",
+        "build_in_progress": "🔵",
+        "update_in_progress": "🔵",
+        "created": "⚪",
+        "deactivated": "⚫",
+        "suspended": "⏸️",
+    }.get(str(status or "").lower(), "⚪")
+
+
+def _render_service_name(service: dict) -> str:
+    name = service.get("name") or service.get("slug") or service.get("id") or "Noma'lum servis"
+    return str(name)
+
+
+def _render_service_keyboard(services: list[dict]) -> InlineKeyboardMarkup:
+    rows = []
+    for service in services[:30]:
+        sid = str(service.get("id", ""))
+        if not sid:
+            continue
+        status = service.get("suspended") or service.get("status")
+        label = f"{_render_status_icon(status)} {_render_service_name(service)}"
+        rows.append([InlineKeyboardButton(label[:60], callback_data=f"dev:rsvc:{sid}")])
+    rows.append([InlineKeyboardButton("🔄 Yangilash", callback_data="dev:render")])
+    rows.append([InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:menu")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _render_menu_text(services: list[dict], owner_id: str) -> str:
+    if not services:
+        return (
+            "☁️ <b>RENDER</b>\n\n"
+            "Servis topilmadi. Render API kaliti yoki workspace sozlamasini tekshiring.\n\n"
+            f"Workspace: <code>{_esc(owner_id or 'avtomatik')}</code>"
+        )
+    lines = [
+        "☁️ <b>RENDER boshqaruv paneli</b>",
+        f"🏢 Workspace: <code>{_esc(owner_id or 'avtomatik')}</code>",
+        f"📦 Servislar: <b>{len(services)}</b>",
+        "",
+        "Render API orqali servis, deploy va loglarni boshqarishingiz mumkin.",
+        "Servisni tanlang:",
+    ]
+    return "\n".join(lines)
+
+
+def _render_service_text(service: dict) -> str:
+    sid = str(service.get("id", ""))
+    status = service.get("suspended") or service.get("status") or "—"
+    service_type = service.get("type") or "—"
+    repo = service.get("repo") or "—"
+    branch = service.get("branch") or "—"
+    auto = service.get("autoDeploy")
+    url = service.get("serviceDetails", {}).get("url") if isinstance(service.get("serviceDetails"), dict) else None
+    if not url:
+        url = service.get("url") or "—"
+    return (
+        f"☁️ <b>{_esc(_render_service_name(service))}</b>\n\n"
+        f"🆔 ID: <code>{_esc(sid)}</code>\n"
+        f"📦 Turi: <code>{_esc(service_type)}</code>\n"
+        f"📡 Holat: {_render_status_icon(str(status))} <code>{_esc(status)}</code>\n"
+        f"🌿 Branch: <code>{_esc(branch)}</code>\n"
+        f"🔄 Auto Deploy: <code>{_esc(auto if auto is not None else '—')}</code>\n"
+        f"🔗 Repo: <code>{_esc(repo)}</code>\n"
+        f"🌐 URL: <code>{_esc(url)}</code>\n\n"
+        "Kerakli amalni tanlang:"
+    )
+
+
+def _render_service_keyboard_for(service: dict) -> InlineKeyboardMarkup:
+    sid = str(service.get("id", ""))
+    suspended = str(service.get("suspended", "")).lower() == "suspended"
+    rows = [
+        [
+            InlineKeyboardButton("🚀 Deploy", callback_data=f"dev:rdeploy:{sid}"),
+            InlineKeyboardButton("🔄 Restart", callback_data=f"dev:rrestart:{sid}"),
+        ],
+        [
+            InlineKeyboardButton("📋 Deploylar", callback_data=f"dev:rdeploys:{sid}"),
+            InlineKeyboardButton("⚙️ Sozlamalar", callback_data=f"dev:rsettings:{sid}"),
+        ],
+        [
+            InlineKeyboardButton("📋 Barcha log", callback_data=f"dev:rlogs:{sid}:all"),
+            InlineKeyboardButton("❌ Hato log", callback_data=f"dev:rlogs:{sid}:error"),
+        ],
+        [InlineKeyboardButton("🟡 O'rta log", callback_data=f"dev:rlogs:{sid}:medium")],
+        [InlineKeyboardButton("📄 Loglarni ko'chirish (PDF)", callback_data=f"dev:rpdf:{sid}")],
+        [
+            InlineKeyboardButton("⏸️ Resume" if suspended else "⏸️ Suspend", callback_data=f"dev:r{'resume' if suspended else 'suspend'}:{sid}"),
+            InlineKeyboardButton("🔄 Yangilash", callback_data=f"dev:rsvc:{sid}"),
+        ],
+        [InlineKeyboardButton("⬅️ RENDER", callback_data="dev:render")],
+    ]
+    return InlineKeyboardMarkup(rows)
+
+
+def _render_settings_text(service: dict, env_vars: list[dict]) -> str:
+    auto = service.get("autoDeploy")
+    branch = service.get("branch") or "—"
+    repo = service.get("repo") or "—"
+    lines = [
+        f"⚙️ <b>{_esc(_render_service_name(service))} — Render sozlamalari</b>",
+        "",
+        f"🔄 Auto Deploy: <code>{_esc(auto if auto is not None else '—')}</code>",
+        f"🌿 Branch: <code>{_esc(branch)}</code>",
+        f"🔗 Repo: <code>{_esc(repo)}</code>",
+        "",
+        f"🔐 Environment variables: <b>{len(env_vars)}</b>",
+        "<i>Maxfiy qiymatlar Telegramda ko'rsatilmaydi.</i>",
+    ]
+    if env_vars:
+        for item in env_vars[:30]:
+            key = item.get("key") or item.get("name") or item.get("envVarKey") or "?"
+            lines.append(f"• <code>{_esc(key)}</code>")
+        if len(env_vars) > 30:
+            lines.append(f"• … yana {len(env_vars) - 30} ta")
+    return "\n".join(lines)[:3900]
+
+
+def _render_settings_keyboard(service: dict) -> InlineKeyboardMarkup:
+    sid = str(service.get("id", ""))
+    auto = str(service.get("autoDeploy", "")).lower() in {"true", "yes"}
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕/✏️ ENV qo'shish/o'zgartirish", callback_data=f"dev:renvadd:{sid}")],
+        [InlineKeyboardButton("🗑 ENV o'chirish", callback_data=f"dev:renvdel:{sid}")],
+        [InlineKeyboardButton(
+            "🔴 Auto Deploy o'chirish" if auto else "🟢 Auto Deploy yoqish",
+            callback_data=f"dev:rautodeploy:{sid}:{'no' if auto else 'yes'}",
+        )],
+        [InlineKeyboardButton("🔄 Yangilash", callback_data=f"dev:rsettings:{sid}")],
+        [InlineKeyboardButton("⬅️ Servis", callback_data=f"dev:rsvc:{sid}")],
+    ])
+
+
+def _render_deploys_text(service: dict, deploys: list[dict]) -> str:
+    lines = [f"🚀 <b>{_esc(_render_service_name(service))} — deploylar</b>", ""]
+    if not deploys:
+        lines.append("<i>Deploy tarixi topilmadi.</i>")
+    else:
+        for d in deploys[:15]:
+            status = d.get("status") or "—"
+            created = str(d.get("createdAt") or d.get("created_at") or "")[:19].replace("T", " ")
+            commit = d.get("commit", {}) if isinstance(d.get("commit"), dict) else {}
+            commit_id = commit.get("id") or d.get("commitId") or "—"
+            commit_id = str(commit_id)
+            lines.append(
+                f"{_render_status_icon(status)} <b>{_esc(status)}</b> | {_esc(created)}\n"
+                f"   commit: <code>{_esc(commit_id[:12])}</code>"
+            )
+    lines.append("")
+    lines.append("Faol deploy bo'lsa, uni bekor qilish uchun pastdagi tugmadan foydalaning.")
+    return "\n".join(lines)[:3900]
+
+
+def _render_deploy_keyboard(service_id: str, deploys: list[dict]) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton("🚀 Yangi deploy", callback_data=f"dev:rdeploy:{service_id}"),
+            InlineKeyboardButton("🧹 Cache bilan", callback_data=f"dev:rdeployclear:{service_id}"),
+        ],
+        [InlineKeyboardButton("📋 Loglar", callback_data=f"dev:rlogs:{service_id}:all")],
+    ]
+    for deploy in deploys[:10]:
+        status = str(deploy.get("status") or "").lower()
+        deploy_id = str(deploy.get("id") or "")
+        if deploy_id and status in {"created", "build_in_progress", "update_in_progress", "queued"}:
+            rows.append([InlineKeyboardButton(f"🛑 Bekor qilish: {deploy_id[:10]}", callback_data=f"dev:rcancel:{service_id}:{deploy_id}")])
+    rows.append([InlineKeyboardButton("🔄 Yangilash", callback_data=f"dev:rdeploys:{service_id}")])
+    rows.append([InlineKeyboardButton("⬅️ Servis", callback_data=f"dev:rsvc:{service_id}")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _render_logs_text(service: dict, logs: list[dict], category: str) -> str:
+    label = _RENDER_LEVEL_LABELS.get(category, category)
+    lines = [
+        f"{label} — <b>{_esc(_render_service_name(service))}</b>",
+        f"📊 Ko'rsatilgan: <b>{len(logs)}</b>",
+        "",
+    ]
+    if not logs:
+        lines.append("<i>Tanlangan turdagi log topilmadi.</i>")
+        return "\n".join(lines)
+    for log in logs[:24]:
+        ts = str(log.get("timestamp") or log.get("time") or log.get("createdAt") or "")[:19].replace("T", " ")
+        level = str(log.get("level") or "info").upper()
+        message = str(log.get("message") or log.get("text") or log.get("msg") or "")
+        message = message.replace("\x00", "")
+        if len(message) > 230:
+            message = message[:230] + "…"
+        instance = log.get("instance") or log.get("instanceId") or ""
+        suffix = f" | {_esc(str(instance)[:16])}" if instance else ""
+        lines.append(f"<code>{_esc(ts)}</code> <b>{_esc(level)}</b>{suffix}\n{_esc(message)}")
+    if len(logs) > 24:
+        lines.append(f"\n<i>… yana {len(logs) - 24} ta log bor. PDF orqali to'liq nusxa olinadi.</i>")
+    return "\n\n".join(lines)[:3950]
+
+
+def _render_log_keyboard(service_id: str, category: str) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton("📋 Barchasi", callback_data=f"dev:rlogs:{service_id}:all"),
+            InlineKeyboardButton("❌ Hato", callback_data=f"dev:rlogs:{service_id}:error"),
+        ],
+        [InlineKeyboardButton("🟡 O'rta", callback_data=f"dev:rlogs:{service_id}:medium")],
+        [InlineKeyboardButton("🔄 Yangilash", callback_data=f"dev:rlogs:{service_id}:{category}")],
+        [InlineKeyboardButton("📄 PDF — barcha log", callback_data=f"dev:rpdf:{service_id}")],
+        [InlineKeyboardButton("⬅️ Servis", callback_data=f"dev:rsvc:{service_id}")],
+    ]
+    return InlineKeyboardMarkup(rows)
+
+
+async def _render_api_error(query, exc: Exception, back_callback: str = "dev:render"):
+    logger.exception("☁️ Render API xatosi")
+    message = render_api.human_error(exc)
+    await _safe_edit_query(
+        query,
+        "❌ <b>Render API xatosi</b>\n\n" + _esc(message),
+        reply_markup=_back_keyboard(back_callback),
+        parse_mode="HTML",
+    )
+
+
+# ============================================================
 # Kirish nuqtasi va callback dispatcher
 # ============================================================
 
@@ -850,6 +1092,248 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=_back_keyboard(f"dev:keybulkprov:{provider}"),
         )
         return DEV_WAIT_BULK_MODEL
+
+    # ---------- ☁️ RENDER ----------
+    if action == "render":
+        if not config.RENDER_API_KEY:
+            await _safe_edit_query(
+                query,
+                "☁️ <b>RENDER</b>\n\n❌ <code>RENDER_API_KEY</code> sozlanmagan.\n\n"
+                "Render Dashboard → Account Settings → API Keys orqali API Key yarating "
+                "va Render Environment Variables'ga <code>RENDER_API_KEY</code> nomi bilan qo'ying.",
+                reply_markup=_back_keyboard("dev:menu"), parse_mode="HTML",
+            )
+            return DEV_MENU
+        await _safe_edit_query(query, "☁️ Render servislar olinmoqda...", parse_mode="HTML")
+        try:
+            owner_id = config.RENDER_OWNER_ID
+            services = await render_api.list_services(owner_id=owner_id)
+            if config.RENDER_SERVICE_ID:
+                services.sort(key=lambda item: str(item.get("id", "")) != config.RENDER_SERVICE_ID)
+            if not owner_id and services:
+                owner_id = str(services[0].get("ownerId") or services[0].get("owner_id") or "")
+            context.user_data["render_owner_id"] = owner_id
+            await _safe_edit_query(
+                query, _render_menu_text(services, owner_id),
+                reply_markup=_render_service_keyboard(services), parse_mode="HTML",
+            )
+        except Exception as exc:
+            await _render_api_error(query, exc)
+        return DEV_MENU
+
+    if action == "rsvc":
+        service_id = parts[2]
+        await _safe_edit_query(query, "☁️ Servis ma'lumotlari olinmoqda...", parse_mode="HTML")
+        try:
+            service = await render_api.get_service(service_id)
+            context.user_data["render_service"] = service
+            await _safe_edit_query(
+                query, _render_service_text(service),
+                reply_markup=_render_service_keyboard_for(service), parse_mode="HTML",
+            )
+        except Exception as exc:
+            await _render_api_error(query, exc)
+        return DEV_MENU
+
+    if action == "rdeploy":
+        service_id = parts[2]
+        await _safe_edit_query(query, "🚀 Deploy ishga tushirilmoqda...", parse_mode="HTML")
+        try:
+            deploy = await render_api.trigger_deploy(service_id)
+            status = deploy.get("status") or "queued"
+            await _safe_edit_query(
+                query,
+                f"✅ <b>Deploy ishga tushdi.</b>\n\nHolat: <code>{_esc(status)}</code>\n"
+                f"Deploy ID: <code>{_esc(deploy.get('id') or '—')}</code>",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📋 Deploylar", callback_data=f"dev:rdeploys:{service_id}"),
+                     InlineKeyboardButton("📋 Loglar", callback_data=f"dev:rlogs:{service_id}:all")],
+                    [InlineKeyboardButton("⬅️ Servis", callback_data=f"dev:rsvc:{service_id}")],
+                ]), parse_mode="HTML",
+            )
+        except Exception as exc:
+            await _render_api_error(query, exc, f"dev:rsvc:{service_id}")
+        return DEV_MENU
+
+    if action == "rdeployclear":
+        service_id = parts[2]
+        await _safe_edit_query(query, "🧹🚀 Cache tozalanib deploy qilinmoqda...", parse_mode="HTML")
+        try:
+            deploy = await render_api.trigger_deploy(service_id, clear_cache=True)
+            await _safe_edit_query(
+                query,
+                "✅ <b>Cache tozalangan deploy ishga tushdi.</b>\n\n"
+                f"Holat: <code>{_esc(deploy.get('status') or 'queued')}</code>\n"
+                f"Deploy ID: <code>{_esc(deploy.get('id') or '—')}</code>",
+                reply_markup=_back_keyboard(f"dev:rsvc:{service_id}"), parse_mode="HTML",
+            )
+        except Exception as exc:
+            await _render_api_error(query, exc, f"dev:rsvc:{service_id}")
+        return DEV_MENU
+
+    if action == "rcancel":
+        service_id, deploy_id = parts[2], parts[3]
+        await _safe_edit_query(query, "🛑 Deploy bekor qilinmoqda...", parse_mode="HTML")
+        try:
+            await render_api.cancel_deploy(service_id, deploy_id)
+            await _safe_edit_query(
+                query, f"✅ <b>Deploy bekor qilindi.</b>\n\nID: <code>{_esc(deploy_id)}</code>",
+                reply_markup=_back_keyboard(f"dev:rdeploys:{service_id}"), parse_mode="HTML",
+            )
+        except Exception as exc:
+            await _render_api_error(query, exc, f"dev:rdeploys:{service_id}")
+        return DEV_MENU
+
+    if action == "rrestart":
+        service_id = parts[2]
+        await _safe_edit_query(query, "🔄 Servis restart qilinmoqda...", parse_mode="HTML")
+        try:
+            await render_api.restart_service(service_id)
+            await _safe_edit_query(
+                query, "✅ <b>Restart buyrug'i Render'ga yuborildi.</b>",
+                reply_markup=_back_keyboard(f"dev:rsvc:{service_id}"), parse_mode="HTML",
+            )
+        except Exception as exc:
+            await _render_api_error(query, exc, f"dev:rsvc:{service_id}")
+        return DEV_MENU
+
+    if action == "rsuspend":
+        service_id = parts[2]
+        await _safe_edit_query(query, "⏸️ Servis to'xtatilmoqda...", parse_mode="HTML")
+        try:
+            await render_api.suspend_service(service_id)
+            await _safe_edit_query(query, "✅ <b>Servis suspend qilindi.</b>", reply_markup=_back_keyboard(f"dev:rsvc:{service_id}"), parse_mode="HTML")
+        except Exception as exc:
+            await _render_api_error(query, exc, f"dev:rsvc:{service_id}")
+        return DEV_MENU
+
+    if action == "rresume":
+        service_id = parts[2]
+        await _safe_edit_query(query, "▶️ Servis tiklanmoqda...", parse_mode="HTML")
+        try:
+            await render_api.resume_service(service_id)
+            await _safe_edit_query(query, "✅ <b>Servis resume qilindi.</b>", reply_markup=_back_keyboard(f"dev:rsvc:{service_id}"), parse_mode="HTML")
+        except Exception as exc:
+            await _render_api_error(query, exc, f"dev:rsvc:{service_id}")
+        return DEV_MENU
+
+    if action == "rsettings":
+        service_id = parts[2]
+        await _safe_edit_query(query, "⚙️ Render sozlamalari olinmoqda...", parse_mode="HTML")
+        try:
+            service = await render_api.get_service(service_id)
+            env_vars = await render_api.list_env_vars(service_id)
+            await _safe_edit_query(
+                query, _render_settings_text(service, env_vars),
+                reply_markup=_render_settings_keyboard(service), parse_mode="HTML",
+            )
+        except Exception as exc:
+            await _render_api_error(query, exc, f"dev:rsvc:{service_id}")
+        return DEV_MENU
+
+    if action == "renvadd":
+        service_id = parts[2]
+        context.user_data["dev_action"] = {"type": "render_env_upsert", "service_id": service_id}
+        await _safe_edit_query(
+            query,
+            "🔐 <b>Environment variable qo'shish/o'zgartirish</b>\n\n"
+            "Shu formatda yuboring:\n<code>KEY=VALUE</code>\n\n"
+            "Masalan: <code>RENDER_LOG_PDF_HOURS=24</code>\n"
+            "Xabar qayta ishlangach Telegramdan o'chiriladi.",
+            reply_markup=_back_keyboard(f"dev:rsettings:{service_id}"), parse_mode="HTML",
+        )
+        return DEV_WAIT_TEXT
+
+    if action == "renvdel":
+        service_id = parts[2]
+        context.user_data["dev_action"] = {"type": "render_env_delete", "service_id": service_id}
+        await _safe_edit_query(
+            query,
+            "🗑 <b>Environment variable o'chirish</b>\n\n"
+            "O'chiriladigan KEY nomini yuboring.\nMasalan: <code>TEST_KEY</code>\n\n"
+            "⚠️ Bu amal Render'dagi qiymatni darhol o'chiradi; keyin deploy qilish kerak bo'lishi mumkin.",
+            reply_markup=_back_keyboard(f"dev:rsettings:{service_id}"), parse_mode="HTML",
+        )
+        return DEV_WAIT_TEXT
+
+    if action == "rautodeploy":
+        service_id, value = parts[2], parts[3]
+        await _safe_edit_query(query, "⚙️ Auto Deploy sozlanmoqda...", parse_mode="HTML")
+        try:
+            await render_api.update_service(service_id, {"autoDeploy": value})
+            service = await render_api.get_service(service_id)
+            env_vars = await render_api.list_env_vars(service_id)
+            await _safe_edit_query(
+                query, "✅ <b>Auto Deploy yangilandi.</b>\n\n" + _render_settings_text(service, env_vars),
+                reply_markup=_render_settings_keyboard(service), parse_mode="HTML",
+            )
+        except Exception as exc:
+            await _render_api_error(query, exc, f"dev:rsettings:{service_id}")
+        return DEV_MENU
+
+    if action == "rdeploys":
+        service_id = parts[2]
+        await _safe_edit_query(query, "📋 Deploylar olinmoqda...", parse_mode="HTML")
+        try:
+            service = await render_api.get_service(service_id)
+            deploys = await render_api.list_deploys(service_id, limit=30)
+            await _safe_edit_query(
+                query, _render_deploys_text(service, deploys),
+                reply_markup=_render_deploy_keyboard(service_id, deploys), parse_mode="HTML",
+            )
+        except Exception as exc:
+            await _render_api_error(query, exc, f"dev:rsvc:{service_id}")
+        return DEV_MENU
+
+    if action == "rlogs":
+        service_id = parts[2]
+        category = parts[3] if len(parts) > 3 else "all"
+        if category not in _RENDER_LEVEL_FILTERS:
+            category = "all"
+        await _safe_edit_query(query, f"☁️ {_RENDER_LEVEL_LABELS[category]} olinmoqda...", parse_mode="HTML")
+        try:
+            service = await render_api.get_service(service_id)
+            logs = await render_api.list_logs_for_service(
+                service_id=service_id,
+                owner_id=str(service.get("ownerId") or service.get("owner_id") or config.RENDER_OWNER_ID or ""),
+                levels=_RENDER_LEVEL_FILTERS[category],
+                limit=100,
+            )
+            await _safe_edit_query(
+                query, _render_logs_text(service, logs, category),
+                reply_markup=_render_log_keyboard(service_id, category), parse_mode="HTML",
+            )
+        except Exception as exc:
+            await _render_api_error(query, exc, f"dev:rsvc:{service_id}")
+        return DEV_MENU
+
+    if action == "rpdf":
+        service_id = parts[2]
+        await _safe_edit_query(query, "📄 <b>PDF tayyorlanmoqda...</b>\nRender'dan mavjud loglar olinmoqda, biroz kuting.", parse_mode="HTML")
+        try:
+            service = await render_api.get_service(service_id)
+            owner_id = str(service.get("ownerId") or service.get("owner_id") or config.RENDER_OWNER_ID or "")
+            logs = await render_api.list_logs_for_service(
+                service_id=service_id, owner_id=owner_id, levels=None, limit=5000,
+                hours=config.RENDER_LOG_PDF_HOURS,
+            )
+            pdf_path = render_api.create_logs_pdf(service, logs)
+            try:
+                await context.bot.send_document(
+                    chat_id=update.effective_chat.id,
+                    document=pdf_path,
+                    caption=(
+                        f"📄 {_render_service_name(service)} — barcha Render loglari\n"
+                        f"🧾 Jami: {len(logs)} ta\n"
+                        f"⏱ Oxirgi {config.RENDER_LOG_PDF_HOURS} soat"
+                    ),
+                )
+            finally:
+                render_api.remove_temp_file(pdf_path)
+            await _safe_edit_query(query, "✅ <b>PDF tayyor va yuborildi.</b>", reply_markup=_back_keyboard(f"dev:rsvc:{service_id}"), parse_mode="HTML")
+        except Exception as exc:
+            await _render_api_error(query, exc, f"dev:rsvc:{service_id}")
+        return DEV_MENU
 
     if action == "stats":
         await _safe_edit_query(query, _stats_text(), reply_markup=_stats_keyboard(), parse_mode="HTML")
@@ -1098,6 +1582,47 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return DEV_WAIT_TEXT
         config.set_tabrik_setting("emojis", emojis)
         await _edit_menu(context, "✅ 5 ta emoji saqlandi.\n\n" + _pt_text(), _pt_keyboard())
+        context.user_data.pop("dev_action", None)
+        return DEV_MENU
+
+    if action_type == "render_env_upsert":
+        service_id = action.get("service_id")
+        if not service_id:
+            return DEV_MENU
+        if "=" not in raw_value:
+            await update.message.reply_text("❌ Format noto'g'ri. <code>KEY=VALUE</code> ko'rinishida yuboring.", parse_mode="HTML")
+            return DEV_WAIT_TEXT
+        key, value = raw_value.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key or not key.replace("_", "").isalnum() or key[0].isdigit():
+            await update.message.reply_text("❌ KEY nomi noto'g'ri. Faqat harf, raqam va _ ishlating; raqam bilan boshlamang.")
+            return DEV_WAIT_TEXT
+        try:
+            await render_api.upsert_env_var(service_id, key, value)
+            await update.message.reply_text(
+                f"✅ <code>{_esc(key)}</code> Render Environment Variables'ga saqlandi.\n"
+                "Qiymat xavfsizlik sababli ko'rsatilmaydi. Deploy qilish uchun RENDER → 🚀 Deploy ni bosing.",
+                parse_mode="HTML",
+            )
+        except Exception as exc:
+            await update.message.reply_text("❌ " + _esc(render_api.human_error(exc)), parse_mode="HTML")
+        context.user_data.pop("dev_action", None)
+        return DEV_MENU
+
+    if action_type == "render_env_delete":
+        service_id = action.get("service_id")
+        key = raw_value.strip()
+        if not service_id or not key:
+            return DEV_MENU
+        if not key.replace("_", "").isalnum() or key[0].isdigit():
+            await update.message.reply_text("❌ KEY nomi noto'g'ri.")
+            return DEV_WAIT_TEXT
+        try:
+            await render_api.delete_env_var(service_id, key)
+            await update.message.reply_text(f"✅ <code>{_esc(key)}</code> o'chirildi. Deploy qilish kerak bo'lishi mumkin.", parse_mode="HTML")
+        except Exception as exc:
+            await update.message.reply_text("❌ " + _esc(render_api.human_error(exc)), parse_mode="HTML")
         context.user_data.pop("dev_action", None)
         return DEV_MENU
 
