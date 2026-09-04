@@ -187,6 +187,7 @@ def read_file(repo: str, path: str, branch: str | None = None) -> dict[str, Any]
         text = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise GitHubDevError("Bu binary fayl. Uni matn muharriri orqali tahrirlash xavfsiz emas.") from exc
+    logger.info("GitHub ZIP stage=completed repo=%s branch=%s files=%d commit=%s", repo, branch, len(final_files), new_commit_sha)
     return {
         "repo": repo,
         "path": data.get("path") or path,
@@ -271,6 +272,24 @@ _MAX_ZIP_FILES = 1000
 _MAX_ZIP_UNCOMPRESSED_BYTES = 50 * 1024 * 1024
 _MAX_ZIP_FILE_BYTES = 20 * 1024 * 1024
 
+# Files that must never be copied from an uploaded project archive into GitHub.
+# This protects deployment secrets and local session credentials even when the
+# ZIP was created with an accidental .env/cookie file inside it.
+_PROTECTED_ZIP_BASENAMES = {
+    ".env",
+    "cookies.txt",
+}
+_PROTECTED_ZIP_SUFFIXES = (".cookies.txt",)
+
+
+def _is_protected_zip_path(path: str) -> bool:
+    name = posixpath.basename(path).lower()
+    if name in _PROTECTED_ZIP_BASENAMES:
+        return True
+    if name.startswith(".env.") or name.endswith(_PROTECTED_ZIP_SUFFIXES):
+        return True
+    return False
+
 
 def _normalize_zip_path(name: str) -> str:
     """Normalize and validate a ZIP member path before sending it to GitHub."""
@@ -292,16 +311,6 @@ def _normalize_zip_path(name: str) -> str:
     if first == ".git" or normalized.lower().startswith(".git/"):
         raise GitHubDevError("ZIP ichidagi .git katalogi yuklanmaydi.")
     return normalized
-
-
-def _is_protected_zip_path(path: str) -> bool:
-    """Return True for local-secret files that should never be copied to GitHub."""
-    basename = posixpath.basename(path).lower()
-    if basename == ".env" or (basename.startswith(".env.") and basename != ".env.example"):
-        return True
-    if basename == "cookies.txt" or basename.endswith(".cookies.txt"):
-        return True
-    return False
 
 
 def _zip_project_root(paths: list[str]) -> str:
@@ -331,11 +340,7 @@ def upload_zip_project(
     as one Git commit using the Git Trees API, which is safer and much faster
     than creating one commit per file.
     """
-    logger.info(
-        "GitHub ZIP upload start: repo=%s target_path=%r branch=%r zip_bytes=%d",
-        repo, target_path, branch, len(zip_bytes),
-    )
-
+    logger.info("GitHub ZIP stage=validate_start repo=%s branch=%s target=%s bytes=%d", repo, branch, target_path, len(zip_bytes))
     if len(zip_bytes) > _MAX_ZIP_BYTES:
         raise GitHubDevError(f"ZIP hajmi juda katta: {len(zip_bytes):,} bayt. Maksimum {_MAX_ZIP_BYTES:,} bayt.")
 
@@ -350,30 +355,26 @@ def upload_zip_project(
     except (zipfile.BadZipFile, OSError) as exc:
         raise GitHubDevError("Yuborilgan fayl haqiqiy ZIP arxiv emas.") from exc
 
-    logger.info("GitHub ZIP upload stage=zip_opened: repo=%s", repo)
     members: dict[str, bytes] = {}
-    skipped_protected: list[str] = []
     total_uncompressed = 0
     try:
         infos = zf.infolist()
         if len(infos) > _MAX_ZIP_FILES:
             raise GitHubDevError(f"ZIP ichida juda ko'p fayl bor: {len(infos)} ta. Maksimum {_MAX_ZIP_FILES} ta.")
+        skipped_protected = 0
         normalized_names: list[str] = []
         for info in infos:
             name = _normalize_zip_path(info.filename)
             if not name:
                 continue
-            if _is_protected_zip_path(name):
-                skipped_protected.append(name)
-                logger.warning(
-                    "GitHub ZIP upload stage=protected_file_skipped: repo=%s path=%s",
-                    repo, name,
-                )
-                continue
             # Do not follow links/special filesystem entries from archives.
             mode = (info.external_attr >> 16) & 0o170000
             if mode == 0o120000:
                 raise GitHubDevError(f"ZIP ichidagi symbolic link yuklanmaydi: {info.filename}")
+            if _is_protected_zip_path(name):
+                skipped_protected += 1
+                logger.warning("GitHub ZIP stage=skip_protected path=%s", name)
+                continue
             if name in members:
                 raise GitHubDevError(f"ZIP ichida bir xil fayl ikki marta bor: {name}")
             if info.file_size > _MAX_ZIP_FILE_BYTES:
@@ -392,11 +393,6 @@ def upload_zip_project(
 
     if not members:
         raise GitHubDevError("ZIP ichida yuklanadigan fayl topilmadi.")
-
-    logger.info(
-        "GitHub ZIP upload stage=zip_validated: repo=%s members=%d protected_skipped=%d uncompressed_bytes=%d",
-        repo, len(members), len(skipped_protected), total_uncompressed,
-    )
 
     # ZIP exports commonly contain one artificial top-level project folder.
     # Removing it avoids creating e.g. repo/student-ai-main/... unintentionally.
@@ -419,9 +415,10 @@ def upload_zip_project(
     if not final_files:
         raise GitHubDevError("ZIP ichida yuklanadigan fayl topilmadi.")
 
+    skipped = len(members) - len(final_files)
     logger.info(
-        "GitHub ZIP upload stage=paths_prepared: repo=%s files=%d target_path=%r common_root=%r bytes=%d",
-        repo, len(final_files), target_path, common_root, sum(len(v) for v in final_files.values()),
+        "GitHub ZIP stage=zip_validated repo=%s files=%d bytes=%d common_root=%s protected_skipped=%d",
+        repo, len(final_files), sum(len(v) for v in final_files.values()), common_root or "-", skipped_protected,
     )
 
     repo_info = get_repository(repo)
@@ -431,6 +428,7 @@ def upload_zip_project(
     # Read the current branch tip and base tree. `base_tree` makes this an
     # additive/overwrite merge: every repository path not mentioned by the ZIP
     # remains in the resulting tree exactly as it was.
+    logger.info("GitHub ZIP stage=base_ref_read repo=%s branch=%s", repo, branch)
     ref = _request("GET", f"{_API}/repos/{owner}/{name}/git/ref/heads/{branch}").json()
     old_commit_sha = ((ref.get("object") or {}).get("sha"))
     if not old_commit_sha:
@@ -440,90 +438,53 @@ def upload_zip_project(
     if not base_tree:
         raise GitHubDevError("Repository tree aniqlanmadi.")
 
-    logger.info(
-        "GitHub ZIP upload stage=base_tree_ready: repo=%s branch=%s head=%s base_tree=%s",
-        repo, branch, old_commit_sha, base_tree,
-    )
-
+    logger.info("GitHub ZIP stage=blob_create_start repo=%s files=%d", repo, len(final_files))
     tree_entries = []
     for index, (path, data) in enumerate(sorted(final_files.items()), start=1):
-        logger.info(
-            "GitHub ZIP upload stage=blob_create: repo=%s branch=%s file=%d/%d path=%s bytes=%d",
-            repo, branch, index, len(final_files), path, len(data),
-        )
-        try:
-            blob = _request(
-                "POST",
-                f"{_API}/repos/{owner}/{name}/git/blobs",
-                json={
-                    "content": base64.b64encode(data).decode("ascii"),
-                    "encoding": "base64",
-                },
-            ).json()
-        except Exception as exc:
-            raise GitHubDevError(
-                f"GitHub blob yaratishda xato: {path}: {exc}"
-            ) from exc
+        blob = _request(
+            "POST",
+            f"{_API}/repos/{owner}/{name}/git/blobs",
+            json={
+                "content": base64.b64encode(data).decode("ascii"),
+                "encoding": "base64",
+            },
+        ).json()
         blob_sha = blob.get("sha")
+        if index == 1 or index % 25 == 0 or index == len(final_files):
+            logger.info("GitHub ZIP stage=blob_create progress=%d/%d path=%s", index, len(final_files), path)
         if not blob_sha:
             raise GitHubDevError(f"GitHub blob yaratilmadi: {path}")
         tree_entries.append({"path": path, "mode": "100644", "type": "blob", "sha": blob_sha})
 
-    logger.info(
-        "GitHub ZIP upload stage=blobs_created: repo=%s branch=%s blobs=%d",
-        repo, branch, len(tree_entries),
-    )
-
-    logger.info(
-        "GitHub ZIP upload stage=tree_create: repo=%s branch=%s entries=%d",
-        repo, branch, len(tree_entries),
-    )
-    try:
-        new_tree = _request(
-            "POST",
-            f"{_API}/repos/{owner}/{name}/git/trees",
-            json={"base_tree": base_tree, "tree": tree_entries},
-        ).json()
-    except Exception as exc:
-        raise GitHubDevError(f"GitHub tree yaratishda xato: {exc}") from exc
+    logger.info("GitHub ZIP stage=tree_create repo=%s entries=%d", repo, len(tree_entries))
+    new_tree = _request(
+        "POST",
+        f"{_API}/repos/{owner}/{name}/git/trees",
+        json={"base_tree": base_tree, "tree": tree_entries},
+    ).json()
     new_tree_sha = new_tree.get("sha")
     if not new_tree_sha:
         raise GitHubDevError("GitHub yangi tree yaratmadi.")
 
-    logger.info(
-        "GitHub ZIP upload stage=tree_created: repo=%s branch=%s tree=%s",
-        repo, branch, new_tree_sha,
-    )
+    logger.info("GitHub ZIP stage=tree_created repo=%s tree=%s", repo, new_tree_sha)
 
     commit_message = f"Update project from ZIP ({len(final_files)} files)"
-    logger.info(
-        "GitHub ZIP upload stage=commit_create: repo=%s branch=%s tree=%s parent=%s",
-        repo, branch, new_tree_sha, old_commit_sha,
-    )
-    try:
-        new_commit = _request(
-            "POST",
-            f"{_API}/repos/{owner}/{name}/git/commits",
-            json={"message": commit_message, "tree": new_tree_sha, "parents": [old_commit_sha]},
-        ).json()
-    except Exception as exc:
-        raise GitHubDevError(f"GitHub commit yaratishda xato: {exc}") from exc
+    logger.info("GitHub ZIP stage=commit_create repo=%s", repo)
+    new_commit = _request(
+        "POST",
+        f"{_API}/repos/{owner}/{name}/git/commits",
+        json={"message": commit_message, "tree": new_tree_sha, "parents": [old_commit_sha]},
+    ).json()
     new_commit_sha = new_commit.get("sha")
     if not new_commit_sha:
         raise GitHubDevError("GitHub commit yaratmadi.")
 
-    logger.info(
-        "GitHub ZIP upload stage=commit_created: repo=%s branch=%s commit=%s files=%d",
-        repo, branch, new_commit_sha, len(final_files),
-    )
+    logger.info("GitHub ZIP stage=commit_created repo=%s commit=%s", repo, new_commit_sha)
 
     # No force push: if somebody changed the branch while the ZIP was being
     # prepared, GitHub rejects the ref update instead of overwriting their work.
-    logger.info(
-        "GitHub ZIP upload stage=ref_update: repo=%s branch=%s new_commit=%s",
-        repo, branch, new_commit_sha,
-    )
     try:
+        logger.info("GitHub ZIP stage=ref_update repo=%s branch=%s commit=%s", repo, branch, new_commit_sha)
         _request(
             "PATCH",
             f"{_API}/repos/{owner}/{name}/git/refs/heads/{branch}",
@@ -535,11 +496,7 @@ def upload_zip_project(
             "avtomatik qo'llanmadi. Hech narsa ustidan majburan yozilmadi. Qayta urinib ko'ring."
         ) from exc
 
-    logger.info(
-        "GitHub ZIP upload stage=completed: repo=%s branch=%s commit=%s files=%d bytes=%d",
-        repo, branch, new_commit_sha, len(final_files), sum(len(v) for v in final_files.values()),
-    )
-
+    logger.info("GitHub ZIP stage=completed repo=%s branch=%s files=%d commit=%s", repo, branch, len(final_files), new_commit_sha)
     return {
         "repo": repo,
         "branch": branch,
@@ -549,7 +506,7 @@ def upload_zip_project(
         "bytes": sum(len(v) for v in final_files.values()),
         "target_path": target_path,
         "common_root_removed": common_root,
-        "skipped_protected": sorted(skipped_protected),
+        "protected_skipped": skipped_protected,
     }
 
 def display_text(text: str, limit: int = _MAX_VIEW_CHARS) -> str:
