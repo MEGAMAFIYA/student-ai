@@ -713,6 +713,7 @@ def build_course_work_conv():
         },
         fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
         name="course_work_conv",
+        allow_reentry=True,
     )
 
 
@@ -732,6 +733,7 @@ def build_translate_conv():
         },
         fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
         name="translate_conv",
+        allow_reentry=True,
     )
 
 
@@ -746,6 +748,7 @@ def build_images_pdf_conv():
         },
         fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
         name="images_pdf_conv",
+        allow_reentry=True,
     )
 
 
@@ -758,6 +761,7 @@ def build_edit_pdf_conv():
         },
         fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
         name="edit_pdf_conv",
+        allow_reentry=True,
     )
 
 
@@ -772,6 +776,7 @@ def build_guide_conv():
         },
         fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
         name="guide_conv",
+        allow_reentry=True,
     )
 
 
@@ -784,6 +789,7 @@ def build_pptx_conv():
         },
         fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
         name="pptx_conv",
+        allow_reentry=True,
     )
 
 
@@ -797,6 +803,7 @@ def build_essay_conv():
         },
         fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
         name="essay_conv",
+        allow_reentry=True,
     )
 
 
@@ -812,6 +819,7 @@ def build_quiz_conv():
         },
         fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
         name="quiz_conv",
+        allow_reentry=True,
     )
 
 
@@ -826,6 +834,7 @@ def build_solve_conv():
         },
         fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
         name="solve_conv",
+        allow_reentry=True,
     )
 
 
@@ -839,6 +848,7 @@ def build_summarize_conv():
         },
         fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
         name="summarize_conv",
+        allow_reentry=True,
     )
 
 
@@ -850,6 +860,7 @@ def build_grammar_conv():
         },
         fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
         name="grammar_conv",
+        allow_reentry=True,
     )
 
 
@@ -867,6 +878,7 @@ def build_citation_conv():
         },
         fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
         name="citation_conv",
+        allow_reentry=True,
     )
 
 
@@ -902,6 +914,7 @@ def build_wallet_topup_conv():
         },
         fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
         name="wallet_topup_conv",
+        allow_reentry=True,
     )
 
 
