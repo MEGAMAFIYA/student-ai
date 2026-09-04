@@ -132,11 +132,23 @@ async def _safe_edit_bot(bot, chat_id, message_id, text: str, reply_markup=None,
             raise
 
 
-async def _edit_menu(context: ContextTypes.DEFAULT_TYPE, text: str, keyboard: InlineKeyboardMarkup):
+async def _edit_menu(
+    context: ContextTypes.DEFAULT_TYPE,
+    text: str,
+    keyboard: InlineKeyboardMarkup,
+    parse_mode: str = "HTML",
+):
     """Menyu xabarini saqlangan chat/message_id orqali yangilaydi (matnli
     javobdan keyin, query bo'lmaganda ishlatiladi)."""
     chat_id, message_id = context.user_data["dev_msg"]
-    await _safe_edit_bot(context.bot, chat_id, message_id, text, reply_markup=keyboard, parse_mode="HTML")
+    await _safe_edit_bot(
+        context.bot,
+        chat_id,
+        message_id,
+        text,
+        reply_markup=keyboard,
+        parse_mode=parse_mode,
+    )
 
 
 # ============================================================
@@ -2211,6 +2223,13 @@ async def on_github_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"\n🧹 ZIP root papkasi olib tashlandi: <code>{_esc(result['common_root_removed'])}/</code>"
                 if result.get("common_root_removed") else ""
             )
+            skipped = result.get("skipped_protected") or []
+            protected_note = (
+                "\n🔒 Maxfiy fayllar GitHub'ga yuborilmadi: "
+                + ", ".join(f"<code>{_esc(x)}</code>" for x in skipped[:10])
+                + (f" (+{len(skipped) - 10} ta)" if len(skipped) > 10 else "")
+                if skipped else ""
+            )
             await _edit_menu(
                 context,
                 "✅ <b>ZIP loyiha GitHub'ga muvaffaqiyatli yuklandi.</b>\n\n"
@@ -2218,7 +2237,8 @@ async def on_github_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"🌿 Branch: <code>{_esc(result['branch'])}</code>\n"
                 f"📁 Joy: <code>/{_esc(target_path)}</code>\n"
                 f"📄 Yangilangan/qo'shilgan fayllar: <b>{result['file_count']}</b> ta"
-                f"{root_note}\n\n"
+                f"{root_note}"
+                f"{protected_note}\n\n"
                 "ZIP'da bo'lmagan repository fayllariga tegilmadi.\n\n"
                 "<b>ZIP fayllari:</b>\n" + preview,
                 _back_keyboard("dev:gh:file"),
