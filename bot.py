@@ -992,7 +992,15 @@ def main():
     # (min(32, os.cpu_count()+4)) — bu bir nechta foydalanuvchi bir vaqtda
     # PDF generatsiya qilganda navbatga sabab bo'lishi mumkin, shuning
     # uchun uni CONCURRENT_UPDATES bilan mos hajmga kengaytiramiz.
-    loop = asyncio.get_event_loop()
+    # Python 3.13+ da main thread uchun implicit event loop har doim ham
+    # yaratilmaydi. Loop'ni o'zimiz aniq yaratish `DeprecationWarning`ni
+    # yo'qotadi va PTB run_polling() aynan shu loop'dan foydalanishini
+    # kafolatlaydi.
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
     loop.set_default_executor(ThreadPoolExecutor(max_workers=CONCURRENT_UPDATES))
 
     # 🎨 /rasim Mini App'ining upload endpoint'i (alohida HTTP thread'da)
@@ -1020,6 +1028,7 @@ def main():
     # 🔍 Xuddi shu, lekin do'st bilan chatda inline rejimda kelgan /tabrik
     # uchun (inline_message_id bilan ishlaydi, oddiy Message emas).
     app.add_handler(CallbackQueryHandler(inline_query.inline_tabrik_claim_callback, pattern="^itabrik:claim:"))
+    app.add_handler(CallbackQueryHandler(inline_query.inline_qoshiq_download_callback, pattern=r"^iq:"))
     # 📇 Telegram Business — foydalanuvchi botni Settings → Telegram
     # Business → Chatbots orqali ulaganda/uzganda/sozlamasini
     # o'zgartirganda keladigan update. /tabrik'ning Business oqimi
@@ -1114,27 +1123,20 @@ def main():
     app.add_error_handler(_error_handler)
 
     print("✅ Bot tayyor! /start yuboring.")
-    # drop_pending_updates=True: ishga tushganda (ayniqsa Render'da QAYTA
-    # DEPLOY qilingandan keyin) eski/navbatdagi update'larni tashlab
-    # yuboradi va getUpdates seansini "toza" boshlaydi — bu ba'zida
-    # "Conflict: terminated by other getUpdates request" xatosining oldini
-    # olishga yordam beradi, agar u eski jarayon hali TO'LIQ to'xtamagan
-    # bir lahzali qisqa muddatli overlapdan kelib chiqqan bo'lsa.
+    # Render'da deploy almashayotganda eski instance hali bir necha soniya
+    # getUpdates qilayotgan bo'lishi mumkin. PTB'ning bootstrap_retries
+    # parametri aynan ishga tushirish bosqichidagi Telegram xatolarini qayta
+    # urinib ko'rish uchun mo'ljallangan. Bu transient Conflict'ni botni
+    # yiqitmasdan kutib o'tishga imkon beradi.
     #
-    # MUHIM: agar bu xato DOIMIY ravishda takrorlansa, sabab kodda EMAS —
-    # bu HAR DOIM bir xil TELEGRAM_TOKEN bilan BIR VAQTNING O'ZIDA IKKITA
-    # (yoki ko'proq) bot jarayoni ishlab turgani (masalan: Render'da bir
-    # xil token bilan ikkita alohida servis/environment, yoki eski deploy
-    # hali to'liq to'xtamagan, yoki kimdir shu tokenni mahalliy kompyuterda
-    # ham ishga tushirgan). Bu holatda Render dashboard'ni tekshiring:
-    # (1) shu TELEGRAM_TOKEN faqat BITTA servisda ishlatilayotganini,
-    # (2) "Instance Count"/scaling 1 taga sozlanganini,
-    # (3) eski deploylar/preview environment'lar to'xtatilganini
-    # tasdiqlang. Bu fayldagi main()/run_polling() FAQAT BIR MARTA,
-    # FAQAT `if __name__ == "__main__":` ostida chaqiriladi — kodda
-    # ikkinchi instansiya yaratadigan joy yo'q.
+    # `drop_pending_updates` faqat navbatdagi eski update'larni tozalaydi;
+    # Conflict'ning o'zini hal qilmaydi. Agar boshqa instance doimiy ravishda
+    # shu token bilan polling qilsa, retries tugagach xato ataylab ko'rinadi.
     try:
-        app.run_polling(drop_pending_updates=True)
+        app.run_polling(
+            drop_pending_updates=True,
+            bootstrap_retries=config.POLLING_BOOTSTRAP_RETRIES,
+        )
     except telegram.error.Conflict as e:
         logger.critical(
             "🚫 Telegram Conflict: boshqa bir jarayon HAM shu TELEGRAM_TOKEN bilan "
