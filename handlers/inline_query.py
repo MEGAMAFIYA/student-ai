@@ -813,6 +813,22 @@ async def on_chosen_inline_result(
 
     inline_message_id = chosen.inline_message_id
 
+    # 🎬 /kino natijalari faqat Watch Party Mini App uchun mo'ljallangan.
+    # Tanlangan kino hech qachon Universal AI oqimiga tushmasligi kerak.
+    # Kesh server restartidan keyin yo'qolgan bo'lsa ham `chosen.query`
+    # orqali bu maxsus oqimni aniqlab, shu yerning o'zida to'xtatamiz.
+    special_query = (chosen.query or "").strip()
+    if re.match(r"^kino(?:\\s+|$)", special_query, re.IGNORECASE):
+        logger.info(
+            "🎬 [CHOSEN_INLINE] /kino natijasi tanlandi — AI'ga YUBORILMAYDI "
+            "(user_id=%s, query=%r, result_id=%s)",
+            getattr(chosen.from_user, "id", "?"), special_query[:120], chosen.result_id,
+        )
+        # Kino natijasi xabar sifatida yuborilgach, uning ichidagi
+        # "▶️ Birga ko'rish" direct Mini App tugmasi ishlaydi. Bu yerda
+        # hech qanday edit/AI chaqiruvi kerak emas.
+        return
+
     cache = context.bot_data.get("inline_queries", {})
     entry = cache.pop(chosen.result_id, None)
 
@@ -889,8 +905,6 @@ async def on_chosen_inline_result(
     # (kesh yo'qolib qolsa) uchun ham AYNAN shu xato takrorlanardi. Shu
     # sabab BARCHA maxsus buyruqlar bu yerda ANIQ to'xtatiladi — hech
     # qachon AI'ga yuborilmaydi:
-    special_query = chosen.query or ""
-
     if re.match(r"^/tabrik(?:@\w+)?(\s|$)", special_query, re.IGNORECASE):
         logger.info(
             f"🎁 [CHOSEN_INLINE] /tabrik natijasi tanlandi — AI'ga YUBORILMAYDI "

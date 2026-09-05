@@ -77,8 +77,12 @@ def room_url(movie_id: str, room_id: str) -> str:
     # initData + startapp=room_<id> beradi va link 1:1 chatda ham ishlaydi.
     username = config.BOT_USERNAME_FALLBACK.lstrip("@")
     if getattr(config, "KINO_APP_SHORT_NAME", ""):
-        return f"https://t.me/{username}/{config.KINO_APP_SHORT_NAME}?startapp=room_{room_id}"
-    return f"https://t.me/{username}?startapp=room_{room_id}"
+        # Named Direct Mini App (agar alohida app short name berilgan bo'lsa).
+        return f"https://t.me/{username}/{config.KINO_APP_SHORT_NAME}?startapp=room_{room_id}&mode=fullscreen"
+    # Asosiy Mini App Direct Link. BotFather'da Main Mini App URL sifatida
+    # /miniapp/ yoki loyihaning root URL'i berilgan bo'lishi kerak.
+    # startapp qiymati Mini App ichida tgWebAppStartParam orqali olinadi.
+    return f"https://t.me/{username}?startapp=room_{room_id}&mode=fullscreen"
 
 
 def _get_room(rid):

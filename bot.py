@@ -18,6 +18,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from threading import Thread, Timer
+from urllib.parse import urlparse
 
 import telegram.error
 from telegram import BotCommand, BotCommandScopeDefault, BotCommandScopeAllGroupChats, BotCommandScopeChat, InlineQueryResultPhoto
@@ -518,6 +519,33 @@ def _handle_rasim_upload_inline(handler, rid, verified_user, image_bytes, _json_
     _json_ok()
 
 
+def _serve_kino_router(handler: "HealthHandler") -> bool:
+    """Main Mini App router.
+
+    Direct Mini App link `t.me/<bot>?startapp=room_...` ochilganda Telegram
+    Main Mini App sifatida qaysi URL sozlanganidan qat'i nazar, shu router
+    start_paramni o'qib `/miniapp/kino/` ga o'tkazadi. Bu `/` health endpoint
+    avvalgi oddiy "bot ishlamoqda" matnini qaytarib, kino Mini App'ni sindirib
+    qo'ygan holatni tuzatadi.
+    """
+    path = urlparse(handler.path).path
+    if path not in ("/", "/miniapp", "/miniapp/"):
+        return False
+    router_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webapp", "index.html")
+    try:
+        with open(router_path, "rb") as f:
+            body = f.read()
+    except OSError:
+        return False
+    handler.send_response(200)
+    handler.send_header("Content-Type", "text/html; charset=utf-8")
+    handler.send_header("Cache-Control", "no-store")
+    handler.send_header("Content-Length", str(len(body)))
+    handler.end_headers()
+    handler.wfile.write(body)
+    return True
+
+
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == _PLACEHOLDER_PDF_PATH and _PLACEHOLDER_PDF_BYTES:
@@ -584,6 +612,11 @@ class HealthHandler(BaseHTTPRequestHandler):
                 return
             self.send_response(404)
             self.end_headers()
+            return
+
+        # Main Mini App router: / yoki /miniapp/ ga kirilganda Telegram
+        # start_param orqali room_<id> aniqlanadi va kino Mini App ochiladi.
+        if _serve_kino_router(self):
             return
 
         self.send_response(200)
