@@ -103,6 +103,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info("🎬 Kino Watch Party xabari AI oqimidan o'tkazilmadi: chat_id=%s", chat.id)
         return
 
+    # 🎮 Inline GAME natijasi chatga joylashtirilganda bu xabar oddiy
+    # Message sifatida ham kelishi mumkin. Uni Universal AI savoli deb
+    # qabul qilmaslik kerak — foydalanuvchi faqat o'yin Mini App'ini
+    # ochgan bo'ladi.
+    if ("1v1 o'yin xonasi tayyor" in user_text
+            and ("♟ Shaxmat" in user_text or "⚪ Rus shashkasi" in user_text)):
+        logger.info("🎮 Game xonasi xabari AI oqimidan o'tkazilmadi: chat_id=%s", chat.id)
+        return
+
     # 🔑 AVVAL HAMMASIDAN OLDIN: foydalanuvchi "/my > 🔑 Shaxsiy
     # kalitlarim"da kalit/model matnini kiritishini kutayotganmi? Bo'lsa,
     # shu yerda "iste'mol qilinadi" — pastdagi mention/AI mantiqiga

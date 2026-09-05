@@ -126,6 +126,60 @@ def join_room(rid: str, init_data: str):
         }, None
 
 
+def _room_movie_payload(room: dict, rid: str):
+    movie = storage.get_movie(room.get("movie_id"))
+    return {
+        "movie": movie,
+        "stream_path": f"/api/kino/stream/{rid}/{movie['id']}" if movie else "",
+    }
+
+
+def change_movie(rid: str, init_data: str, movie_id: str):
+    """Xonadagi kinoni barcha qatnashchilar uchun almashtiradi.
+    Xona va WebRTC ulanishi saqlanadi; faqat video holati boshidan boshlanadi."""
+    user = _verify(init_data)
+    movie = storage.get_movie(str(movie_id))
+    if not user:
+        return None, "Tasdiqlash xatosi."
+    if not movie:
+        return None, "Kino topilmadi."
+    room = _get_room(rid)
+    if not room:
+        return None, "Xona topilmadi."
+    uid = str(user["id"])
+    with ROOM_LOCK:
+        if uid not in room["participants"]:
+            return None, "Siz bu xonaga qo'shilmagansiz."
+        room["movie_id"] = str(movie["id"])
+        room["state"].update({
+            "playing": False,
+            "position": 0.0,
+            "updated_at": time.time(),
+            "actor_id": int(user["id"]),
+        })
+        room["state"]["version"] += 1
+        room["signals"] = {}
+        room["updated_at"] = time.time()
+        payload = {
+            **room["state"],
+            "participants": [int(x) for x in room["participants"]],
+            "server_now": time.time(),
+            **_room_movie_payload(room, rid),
+        }
+        return payload, None
+
+
+def list_movies(rid: str, init_data: str):
+    user = _verify(init_data)
+    room = _get_room(rid)
+    if not user or not room:
+        return None, "Xona topilmadi yoki tasdiqlash xatosi."
+    if str(user["id"]) not in room["participants"]:
+        return None, "Siz bu xonaga qo'shilmagansiz."
+    movies = storage.search_movies("")
+    return [{"id": str(m["id"]), "title": m["title"]} for m in movies[:50]], None
+
+
 def room_state(rid: str, init_data: str, playing=None, position=None):
     user = _verify(init_data)
     if not user:
@@ -153,6 +207,7 @@ def room_state(rid: str, init_data: str, playing=None, position=None):
             **room["state"],
             "participants": [int(x) for x in room["participants"]],
             "server_now": time.time(),
+            **_room_movie_payload(room, rid),
         }, None
 
 
@@ -449,6 +504,9 @@ def handle_api(handler):
             return _json(handler, 400, {"ok": False, "error": "Kino yoki sessiya noto'g'ri."})
         rid = create_room(movie_id, int(user["id"]))
         return _json(handler, 200, {"ok": True, "data": {"room": rid, "url": room_url(movie_id, rid)}})
+    if path == "/api/kino/change_movie":
+        data, err = change_movie(body.get("room", ""), init_data, body.get("movie_id", ""))
+        return _json(handler, 200 if not err else 400, {"ok": not bool(err), "data": data, "error": err})
     if path == "/api/kino/state":
         qs = parse_qs(parsed.query)
         data, err = room_state(qs.get("room", [""])[0], handler.headers.get("X-Telegram-Init-Data", ""))
@@ -456,6 +514,10 @@ def handle_api(handler):
     if path == "/api/kino/chat":
         qs = parse_qs(parsed.query)
         data, err = get_chat(qs.get("room", [""])[0], handler.headers.get("X-Telegram-Init-Data", ""), qs.get("after", [""])[0])
+        return _json(handler, 200 if not err else 400, {"ok": not bool(err), "data": data, "error": err})
+    if path == "/api/kino/movies":
+        qs = parse_qs(parsed.query)
+        data, err = list_movies(qs.get("room", [""])[0], handler.headers.get("X-Telegram-Init-Data", ""))
         return _json(handler, 200 if not err else 400, {"ok": not bool(err), "data": data, "error": err})
     if path == "/api/kino/signals":
         qs = parse_qs(parsed.query)

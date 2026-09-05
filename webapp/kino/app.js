@@ -10,6 +10,7 @@
   if (!room && startParam.startsWith("room_")) room = startParam.slice(5);
   const movieId = qs.get("movie") || "";
   const initData = tg?.initData || "";
+  let currentMovieId = movieId;
 
   let me = 0;
   let participants = [];
@@ -40,6 +41,8 @@
   const localVideo = $("localVideo");
   const localWrap = $("localVideoWrap");
   const playOverlay = $("playOverlay");
+  const moviePicker = $("moviePicker");
+  const movieList = $("movieList");
 
   async function api(path, body = null, query = {}) {
     let url = path;
@@ -82,10 +85,8 @@
       me = d.user_id;
       participants = d.participants || [];
       shareUrl = d.share_url || location.href;
-      $("title").textContent = "🎬 " + d.movie.title;
+      applyMovie(d);
       $("roomInfo").textContent = `2 kishilik xona • ${room.slice(0, 6)}`;
-      video.src = d.stream_path;
-      video.load();
       setStatus("⏳ Kino yuklanmoqda...");
       playOverlay.classList.remove("hidden");
       renderPeople();
@@ -102,6 +103,29 @@
     } catch (e) {
       console.error("KINO boot", e);
       setStatus("❌ " + e.message);
+    }
+  }
+
+  function applyMovie(d) {
+    if (!d?.movie || !d?.stream_path) return;
+    const nextId = String(d.movie.id);
+    const changed = currentMovieId && currentMovieId !== nextId;
+    currentMovieId = nextId;
+    $("title").textContent = "🎬 " + d.movie.title;
+    if (changed) {
+      suppressVideoEvents = true;
+      try {
+        video.pause();
+        video.src = d.stream_path;
+        video.load();
+        video.currentTime = 0;
+        playOverlay.classList.remove("hidden");
+      } finally {
+        setTimeout(() => { suppressVideoEvents = false; }, 0);
+      }
+    } else if (!video.src || !video.getAttribute("src")) {
+      video.src = d.stream_path;
+      video.load();
     }
   }
 
@@ -130,6 +154,7 @@
 
       participants = d.participants || participants;
       renderPeople();
+      applyMovie(d);
       if (participants.length === 2) ensurePeer();
 
       const version = Number(d.version ?? -1);
@@ -313,6 +338,42 @@
     }[c]));
   }
 
+  async function openMoviePicker() {
+    try {
+      const movies = await api("/api/kino/movies", null, { room });
+      movieList.innerHTML = (movies || []).map(m => {
+        const current = String(m.id) === String(currentMovieId);
+        return `<button class="movie-item ${current ? "current" : ""}" type="button" data-movie-id="${escapeHtml(m.id)}" ${current ? "disabled" : ""}>
+          🎬 ${escapeHtml(m.title)}${current ? " • Hozirgi kino" : ""}
+        </button>`;
+      }).join("") || "<div>📭 Kino katalogi bo‘sh.</div>";
+      moviePicker.classList.remove("hidden");
+    } catch (e) {
+      tg?.showAlert?.(e.message);
+    }
+  }
+
+  movieList.addEventListener("click", async (e) => {
+    const btn = e.target.closest("[data-movie-id]");
+    if (!btn || btn.disabled) return;
+    try {
+      btn.disabled = true;
+      const d = await api("/api/kino/change_movie", { room, movie_id: btn.dataset.movieId });
+      applyMovie(d);
+      lastVersion = Number(d.version ?? lastVersion);
+      stateReady = true;
+      moviePicker.classList.add("hidden");
+      setStatus("🎬 Yangi kino tanlandi.");
+      setTimeout(() => setStatus(""), 1200);
+    } catch (err) {
+      btn.disabled = false;
+      tg?.showAlert?.(err.message);
+    }
+  });
+
+  $("nextMovie").onclick = openMoviePicker;
+  $("closeMoviePicker").onclick = () => moviePicker.classList.add("hidden");
+
   async function sendSignal(target, payload) {
     try {
       await api("/api/kino/signal", { room, target_user_id: target, payload });
@@ -403,10 +464,27 @@
       if (s === "connected") {
         remoteWrap.classList.remove("hidden");
         if (participants.length >= 2) setStatus("");
-      } else if (s === "failed") {
-        // ICE failed bo‘lsa RTCPeerConnection'ni yangilab, yana negotiation
-        // boshlashga imkon beramiz. TURN bo‘lsa aynan shu fallback foydali.
-        console.warn("KINO WebRTC connection failed");
+      } else if (s === "failed" || s === "disconnected") {
+        // Mobil operator/NAT yo‘llari vaqtincha uzilganda ICE restart qilamiz.
+        // TURN sozlangan bo‘lsa bu fallback P2P ishlamagan tarmoqlarda ham
+        // kamerani qayta ulashga yordam beradi.
+        console.warn("KINO WebRTC connection", s);
+        const failedPeer = peer;
+        setTimeout(async () => {
+          if (peer !== failedPeer || !peerTarget) return;
+          try {
+            peer.restartIce?.();
+            if (peer.signalingState === "stable" && !makingOffer) {
+              makingOffer = true;
+              await peer.setLocalDescription(await peer.createOffer({ iceRestart: true }));
+              await sendSignal(peerTarget, { type: "offer", sdp: peer.localDescription.sdp });
+            }
+          } catch (e) {
+            console.warn("KINO ICE restart", e);
+          } finally {
+            makingOffer = false;
+          }
+        }, s === "failed" ? 250 : 1200);
       }
     };
 

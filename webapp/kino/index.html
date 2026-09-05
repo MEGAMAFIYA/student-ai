@@ -9,7 +9,7 @@
 </head>
 <body>
 <div class="app">
-  <header><div><b id="title">🎬 Kino</b><small id="roomInfo">Xona tayyorlanmoqda...</small></div><button id="share">🔗</button></header>
+  <header><div><b id="title">🎬 Kino</b><small id="roomInfo">Xona tayyorlanmoqda...</small></div><div class="header-actions"><button id="nextMovie" type="button">⏭️ Keyingi</button><button id="share">🔗</button></div></header>
 
   <main>
     <section class="player-wrap">
@@ -25,6 +25,11 @@
     <section class="controls">
       <button id="mic">🎤 Mikrofon</button>
       <button id="cam">📹 Kamera</button>
+    </section>
+
+    <section id="moviePicker" class="movie-picker hidden">
+      <div class="movie-picker-head"><b>🎬 Keyingi kino</b><button id="closeMoviePicker" type="button">✕</button></div>
+      <div id="movieList" class="movie-list"></div>
     </section>
 
     <section class="chat">
