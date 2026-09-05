@@ -133,9 +133,16 @@ async def _safe_edit_bot(bot, chat_id, message_id, text: str, reply_markup=None,
 
 
 async def _edit_menu(context: ContextTypes.DEFAULT_TYPE, text: str, keyboard: InlineKeyboardMarkup):
-    """Menyu xabarini saqlangan chat/message_id orqali yangilaydi (matnli
-    javobdan keyin, query bo'lmaganda ishlatiladi)."""
-    chat_id, message_id = context.user_data["dev_msg"]
+    """Saqlangan developer menyu xabarini yangilaydi.
+
+    Conversation tiklangan yoki callback xabari boshqa oqimdan kelgan bo'lsa,
+    ``dev_msg`` yo'qolgan bo'lishi mumkin. Bunday holatda KeyError bilan
+    yiqilmaslik uchun caller tomonidan o'rnatilgan fallback xabar ishlatiladi.
+    """
+    dev_msg = context.user_data.get("dev_msg")
+    if not dev_msg:
+        raise RuntimeError("Developer menyu xabari topilmadi. /developer menyusini qayta oching.")
+    chat_id, message_id = dev_msg
     await _safe_edit_bot(context.bot, chat_id, message_id, text, reply_markup=keyboard, parse_mode="HTML")
 
 
@@ -1100,6 +1107,12 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_admin(update):
         await _safe_edit_query(query, "🚫 Ruxsat yo'q.")
         return ConversationHandler.END
+
+    # Callback xabari — developer menyusining eng ishonchli joriy xabari.
+    # Uni saqlab qo'yamiz, shunda keyingi document/text handlerlari _edit_menu()
+    # orqali aynan shu xabarni yangilay oladi.
+    if query.message:
+        context.user_data["dev_msg"] = (query.message.chat_id, query.message.message_id)
 
     parts = query.data.split(":")
     action = parts[1] if len(parts) > 1 else ""
@@ -2172,6 +2185,13 @@ async def on_github_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     action = context.user_data.get("dev_action") or {}
     if action.get("type") not in ("github_new_content", "github_edit", "github_zip_upload"):
         return DEV_MENU
+
+    # Agar menyu xabari boshqa sabab bilan yo'qolgan bo'lsa, document kelgan
+    # chatda yangi developer xabarini yaratib, _edit_menu() uchun manzil sifatida
+    # saqlaymiz. Bu KeyError: dev_msg holatini butunlay bartaraf etadi.
+    if "dev_msg" not in context.user_data and update.message:
+        msg = await update.message.reply_text("⏳ Amal bajarilmoqda...")
+        context.user_data["dev_msg"] = (msg.chat_id, msg.message_id)
 
     # ZIP project upload is intentionally handled separately from normal text/file editing.
     # It merges into the selected repository/folder and never deletes omitted files.

@@ -439,16 +439,33 @@ def upload_zip_project(
         raise GitHubDevError("Repository tree aniqlanmadi.")
 
     logger.info("GitHub ZIP stage=blob_create_start repo=%s files=%d", repo, len(final_files))
+    logger.info(
+        "GitHub ZIP stage=write_permission_check repo=%s owner=%s branch=%s "
+        "token_type=github_pat",
+        repo, owner, branch,
+    )
     tree_entries = []
     for index, (path, data) in enumerate(sorted(final_files.items()), start=1):
-        blob = _request(
-            "POST",
-            f"{_API}/repos/{owner}/{name}/git/blobs",
-            json={
-                "content": base64.b64encode(data).decode("ascii"),
-                "encoding": "base64",
-            },
-        ).json()
+        try:
+            blob = _request(
+                "POST",
+                f"{_API}/repos/{owner}/{name}/git/blobs",
+                json={
+                    "content": base64.b64encode(data).decode("ascii"),
+                    "encoding": "base64",
+                },
+            ).json()
+        except GitHubDevError as exc:
+            message = str(exc)
+            if "403" in message:
+                raise GitHubDevError(
+                    "GitHub ZIP yozish uchun token ruxsati yetarli emas. "
+                    f"Repository: {repo}. Fine-grained PAT bo'lsa: Repository access ichida shu repositoryni tanlang "
+                    "va Repository permissions → Contents → Read and write ni bering. "
+                    "Classic PAT bo'lsa private repository uchun repo scope kerak. "
+                    "Keyin Render Environment'dagi GITHUB_TOKEN ni yangi token bilan almashtirib redeploy qiling."
+                ) from exc
+            raise
         blob_sha = blob.get("sha")
         if index == 1 or index % 25 == 0 or index == len(final_files):
             logger.info("GitHub ZIP stage=blob_create progress=%d/%d path=%s", index, len(final_files), path)
