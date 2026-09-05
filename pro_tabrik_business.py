@@ -94,6 +94,7 @@ def build_ready_card() -> str:
 # saqlaydi (chunki bu yerda BIR NECHTA ketma-ket callback bor).
 # ------------------------------------------------------------------
 _PRO_STATE: dict[str, dict] = {}
+_revert_tasks: dict[int, asyncio.Task] = {}
 ENTRY_TTL_SECONDS = 60 * 60 * 24
 
 

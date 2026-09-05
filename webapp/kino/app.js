@@ -90,7 +90,7 @@
       me = d.user_id;
       participants = d.participants || [];
       shareUrl = d.share_url || location.href;
-      applyMovie(d);
+      await applyMovie(d);
       $("roomInfo").textContent = `2 kishilik xona • ${room.slice(0, 6)}`;
       setStatus("⏳ Kino yuklanmoqda...");
       playOverlay.classList.remove("hidden");
@@ -111,26 +111,39 @@
     }
   }
 
-  function applyMovie(d) {
+  let mediaLoadToken = 0;
+  async function applyMovie(d) {
     if (!d?.movie || !d?.stream_path) return;
     const nextId = String(d.movie.id);
     const changed = currentMovieId && currentMovieId !== nextId;
     currentMovieId = nextId;
     $("title").textContent = "🎬 " + d.movie.title;
-    if (changed) {
-      suppressVideoEvents = true;
-      try {
-        video.pause();
-        video.src = d.stream_path;
-        video.load();
-        video.currentTime = 0;
-        playOverlay.classList.remove("hidden");
-      } finally {
-        setTimeout(() => { suppressVideoEvents = false; }, 0);
+    // State polling may call applyMovie repeatedly. Do not recreate the video
+    // element/source unless the movie actually changed or it has no source.
+    if (!changed && video.getAttribute("data-movie-id") === nextId && video.src) return;
+
+    const token = ++mediaLoadToken;
+    suppressVideoEvents = true;
+    try {
+      video.pause();
+      setStatus("⏳ Kino tayyorlanmoqda...");
+      let source = d.stream_path;
+      if (d.media_url_path) {
+        try {
+          const media = await api(d.media_url_path);
+          if (media?.url) source = media.url;
+        } catch (e) {
+          console.warn("R2 media URL olinmadi, Render fallback ishlaydi", e);
+        }
       }
-    } else if (!video.src || !video.getAttribute("src")) {
-      video.src = d.stream_path;
+      if (token !== mediaLoadToken) return;
+      video.setAttribute("data-movie-id", nextId);
+      video.src = source;
       video.load();
+      video.currentTime = 0;
+      playOverlay.classList.remove("hidden");
+    } finally {
+      setTimeout(() => { suppressVideoEvents = false; }, 0);
     }
   }
 
@@ -159,7 +172,7 @@
 
       participants = d.participants || participants;
       renderPeople();
-      applyMovie(d);
+      await applyMovie(d);
       if (participants.length === 2) ensurePeer();
 
       const version = Number(d.version ?? -1);
@@ -386,7 +399,7 @@
     try {
       btn.disabled = true;
       const d = await api("/api/kino/change_movie", { room, movie_id: btn.dataset.movieId });
-      applyMovie(d);
+      await applyMovie(d);
       lastVersion = Number(d.version ?? lastVersion);
       stateReady = true;
       moviePicker.classList.add("hidden");

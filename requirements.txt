@@ -27,3 +27,5 @@ yt-dlp[default,curl-cffi]>=2026.08.19
 imageio-ffmpeg>=0.5.1
 
 telethon>=1.44.0
+# Optional Cloudflare R2/S3-compatible movie storage
+boto3>=1.35,<2

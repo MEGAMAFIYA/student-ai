@@ -333,6 +333,20 @@ def add_movie(title: str, file_id: str, mime_type: str = "video/mp4",
     return dict(movie)
 
 
+def update_movie(movie_id: str, **fields) -> dict | None:
+    """Kino metadata'sini atomik tarzda yangilaydi (masalan R2 object key)."""
+    with _lock:
+        movie = _data.get("movies", {}).get(str(movie_id))
+        if not movie:
+            return None
+        allowed = {"r2_key", "r2_uploaded_ts", "mime_type", "file_name", "size"}
+        for key, value in fields.items():
+            if key in allowed:
+                movie[key] = value
+        _save()
+        return dict(movie)
+
+
 def get_movie(movie_id: str) -> dict | None:
     movie = _data.get("movies", {}).get(str(movie_id))
     return dict(movie) if movie else None

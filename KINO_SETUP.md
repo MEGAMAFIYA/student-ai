@@ -58,3 +58,26 @@ Chat POST so‘roviga `client_id` yuboriladi. Server bir xil `client_id`ni qayta
 - ICE `failed/disconnected` holatlarida cooldown bilan avtomatik restart qilinadi.
 - Bir nechta TURN URL berilsa, brauzer mos relay transportini tanlaydi.
 - Android/Telegram klaviaturasi ochilganda kino player sticky holatda ko'rinib turadi.
+
+## ☁️ Cloudflare R2 / CDN (ixtiyoriy, tavsiya etiladi)
+
+R2 yoqilganda admin yuklagan kino Telegramdan bir marta R2 bucket'ga ko'chiriladi.
+Mini App keyingi tomoshalarda R2 public/CDN URL yoki 15 daqiqalik presigned URL orqali videoni oladi;
+Render video baytlarini proxy qilmaydi. R2 sozlanmagan bo'lsa eski Telegram→Render fallback ishlaydi.
+
+Render Environment Variables:
+
+```text
+R2_ACCOUNT_ID=Cloudflare Account ID
+R2_ACCESS_KEY_ID=R2 API token access key
+R2_SECRET_ACCESS_KEY=R2 API token secret key
+R2_BUCKET=student-ai-kino
+R2_PUBLIC_BASE_URL=https://cdn.example.com
+R2_PRESIGNED_TTL_SEC=900
+```
+
+`R2_PUBLIC_BASE_URL` faqat bucket Cloudflare custom domain orqali public/read bo'lsa qo'yiladi.
+Aks holda bo'sh qoldiring — backend presigned GET URL yaratadi.
+
+Tavsiya: production uchun R2 bucket'ni public qilish o'rniga Cloudflare custom domain + Cache Rules yoki
+private bucket + presigned URL ishlating. R2 credentials faqat Render Environment Variables'da bo'lsin.

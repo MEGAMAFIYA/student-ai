@@ -284,3 +284,11 @@ BotFather'da bot uchun **Main Mini App** URL sifatida:
 `https://YOUR-RENDER-DOMAIN.onrender.com/miniapp/`
 qo'yiladi. Mavjud root router `startapp=game_<ROOM_ID>` ni avtomatik ravishda
 `/miniapp/game/` ga olib o'tadi.
+
+## 🎬 Kino storage architecture
+
+Kino now supports an optional Cloudflare R2/S3-compatible media layer. New admin uploads are still accepted by Telegram and their `file_id` is retained as a fallback, but when R2 credentials are configured the bot imports the movie once into R2. The Mini App then receives a direct R2/CDN URL or a short-lived presigned URL, so Render does not proxy the video bytes for normal playback.
+
+Required Render variables for R2: `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`. For a CDN/public custom domain set `R2_PUBLIC_BASE_URL`; otherwise leave it empty and the backend creates a short-lived presigned URL.
+
+Existing catalog movies without `r2_key` continue to use the Telegram/Render fallback until they are re-uploaded or migrated.

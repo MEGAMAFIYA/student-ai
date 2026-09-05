@@ -84,6 +84,15 @@ KINO_TURN_URLS = tuple(dict.fromkeys(
 ))
 KINO_TURN_USERNAME = os.getenv("KINO_TURN_USERNAME", "").strip()
 KINO_TURN_CREDENTIAL = os.getenv("KINO_TURN_CREDENTIAL", "").strip()
+
+# ☁️ Cloudflare R2 / S3-compatible Kino storage. Optional; when disabled,
+# Kino falls back to the existing Telegram -> Render runtime cache.
+R2_ACCOUNT_ID = os.getenv("R2_ACCOUNT_ID", "").strip()
+R2_ACCESS_KEY_ID = os.getenv("R2_ACCESS_KEY_ID", "").strip()
+R2_SECRET_ACCESS_KEY = os.getenv("R2_SECRET_ACCESS_KEY", "").strip()
+R2_BUCKET = os.getenv("R2_BUCKET", "").strip()
+R2_PUBLIC_BASE_URL = os.getenv("R2_PUBLIC_BASE_URL", "").strip().rstrip("/")
+R2_PRESIGNED_TTL_SEC = max(60, min(3600, int(os.getenv("R2_PRESIGNED_TTL_SEC", "900"))))
 GAME_TURN_URL = os.getenv("GAME_TURN_URL", "").strip()
 GAME_TURN_USERNAME = os.getenv("GAME_TURN_USERNAME", "").strip()
 GAME_TURN_CREDENTIAL = os.getenv("GAME_TURN_CREDENTIAL", "").strip()

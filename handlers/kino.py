@@ -7,6 +7,8 @@
 
 import logging
 import os
+import asyncio
+import time
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes, ConversationHandler
 
@@ -135,10 +137,25 @@ async def kino_receive_title(update: Update, context: ContextTypes.DEFAULT_TYPE)
         size=pending.get("size") or 0,
         uploaded_by=update.effective_user.id,
     )
+
+    # ☁️ R2 yoqilgan bo'lsa, Telegramdagi originalni faqat BIR MARTA
+    # R2/CDN storage'ga ko'chiramiz. Xato bo'lsa Telegram file_id saqlanadi
+    # va eski fallback stream ishlashda davom etadi.
+    r2_note = ""
+    if getattr(movie_watch.r2_storage, "enabled", lambda: False)():
+        await update.message.reply_text("☁️ Kino R2'ga saqlanmoqda...", disable_notification=True)
+        ok, key, err = await asyncio.to_thread(movie_watch.archive_movie_to_r2, movie)
+        if ok and key:
+            movie = storage.update_movie(movie["id"], r2_key=key, r2_uploaded_ts=time.time()) or movie
+            r2_note = "\n☁️ R2/CDN: tayyor — tomosha paytida Render orqali video o'tmaydi."
+        else:
+            r2_note = "\n⚠️ R2 saqlashda xato bo'ldi; Telegram fallback saqlanib qoldi."
+            logger.warning("Kino R2 archive xatosi: %s", err)
+
     context.user_data.pop("kino_pending", None)
 
     await update.message.reply_text(
-        f"✅ Kino katalogga qo'shildi!\n\n"
+        f"✅ Kino katalogga qo'shildi!{r2_note}\n\n"
         f"🎬 {movie['title']}\n"
         f"🆔 {movie['id']}\n\n"
         f"Endi `@{config.BOT_USERNAME_FALLBACK} kino` yoki "

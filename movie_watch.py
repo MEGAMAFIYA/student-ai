@@ -23,11 +23,13 @@ import time
 import urllib.error
 import urllib.request
 import shutil
+import tempfile
 import uuid
 
 import config
 import storage
 import webapp_security
+import r2_storage
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +133,8 @@ def _room_movie_payload(room: dict, rid: str):
     return {
         "movie": movie,
         "stream_path": f"/api/kino/stream/{rid}/{movie['id']}" if movie else "",
+        "media_r2": bool(movie and movie.get("r2_key") and r2_storage.enabled()),
+        "media_url_path": f"/api/kino/media-url/{rid}/{movie['id']}" if movie else "",
     }
 
 
@@ -295,6 +299,70 @@ def get_signals(rid: str, init_data: str):
         items = room["signals"].get(uid, [])
         room["signals"][uid] = []
     return items, None
+
+
+def archive_movie_to_r2(movie: dict) -> tuple[bool, str, str]:
+    """Telegram media -> R2 one-time import. Returns (ok, key, error).
+
+    This runs only when R2 is configured. The temporary file is deleted after
+    upload, so Render is not used as a permanent movie CDN.
+    """
+    if not r2_storage.enabled():
+        return False, "", "R2 sozlanmagan"
+    movie_id = str(movie.get("id", ""))
+    key = movie.get("r2_key") or r2_storage.make_key(movie_id, movie.get("file_name", ""))
+    if movie.get("r2_key") and r2_storage.exists(key):
+        return True, key, ""
+    fd, tmp = tempfile.mkstemp(prefix="student_ai_r2_", suffix=".media")
+    os.close(fd)
+    try:
+        remote = _telegram_file_url(movie["file_id"])
+        max_bytes = max(1, int(config.KINO_MAX_UPLOAD_MB)) * 1024 * 1024
+        total = 0
+        with urllib.request.urlopen(
+            urllib.request.Request(remote, headers={"User-Agent": "StudentAI-Kino/3.0"}),
+            timeout=180,
+        ) as resp, open(tmp, "wb") as out:
+            while True:
+                chunk = resp.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_bytes:
+                    raise ValueError(f"Kino {total / 1024 / 1024:.1f} MB — KINO_MAX_UPLOAD_MB oshib ketdi")
+                out.write(chunk)
+        r2_storage.upload_file(tmp, key, movie.get("mime_type") or "video/mp4")
+        return True, key, ""
+    except Exception as e:
+        logger.exception("☁️ R2 kino upload xatosi: %s", e)
+        return False, "", str(e)[:240]
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
+def movie_media_url(rid: str, movie_id: str, init_data: str) -> tuple[str | None, str | None]:
+    """Returns a direct R2/CDN URL when available, otherwise legacy stream path."""
+    user = _verify(init_data)
+    if not user:
+        return None, "Tasdiqlash xatosi."
+    room = _get_room(rid)
+    if not room or str(movie_id) != str(room.get("movie_id")):
+        return None, "Kino xonasi topilmadi."
+    if str(user["id"]) not in room.get("participants", {}):
+        return None, "Siz bu xonaga qo'shilmagansiz."
+    movie = storage.get_movie(movie_id)
+    if not movie:
+        return None, "Kino topilmadi."
+    key = movie.get("r2_key")
+    if key and r2_storage.enabled():
+        try:
+            return r2_storage.media_url(key), None
+        except Exception as e:
+            logger.warning("☁️ R2 URL yaratilmadi, fallback ishlaydi: %s", e)
+    return f"/api/kino/stream/{rid}/{movie['id']}", None
 
 
 def _telegram_file_url(file_id: str):
@@ -523,38 +591,34 @@ def handle_api(handler):
     from urllib.parse import parse_qs, urlsplit
     parsed = urlsplit(handler.path)
     path = parsed.path
+    init_data = handler.headers.get("X-Telegram-Init-Data", "")
     if path == "/api/kino/join":
         qs = parse_qs(parsed.query)
-        data, err = join_room(qs.get("room", [""])[0], handler.headers.get("X-Telegram-Init-Data", ""))
+        data, err = join_room(qs.get("room", [""])[0], init_data)
         return _json(handler, 200 if not err else 400, {"ok": not bool(err), "data": data, "error": err})
-    if path == "/api/kino/create":
-        user = _verify(init_data)
-        movie_id = body.get("movie", "")
-        if not user or not storage.get_movie(movie_id):
-            return _json(handler, 400, {"ok": False, "error": "Kino yoki sessiya noto'g'ri."})
-        rid = create_room(movie_id, int(user["id"]))
-        return _json(handler, 200, {"ok": True, "data": {"room": rid, "url": room_url(movie_id, rid)}})
-    if path == "/api/kino/change_movie":
-        data, err = change_movie(body.get("room", ""), init_data, body.get("movie_id", ""))
-        return _json(handler, 200 if not err else 400, {"ok": not bool(err), "data": data, "error": err})
+    if path.startswith("/api/kino/media-url/"):
+        parts = path.split("/api/kino/media-url/", 1)[1].split("/")
+        if len(parts) == 2:
+            url, err = movie_media_url(parts[0], parts[1], init_data)
+            return _json(handler, 200 if not err else 400, {"ok": not bool(err), "data": {"url": url} if url else None, "error": err})
+        return _json(handler, 404, {"ok": False, "error": "Not found."})
     if path == "/api/kino/state":
         qs = parse_qs(parsed.query)
-        data, err = room_state(qs.get("room", [""])[0], handler.headers.get("X-Telegram-Init-Data", ""))
+        data, err = room_state(qs.get("room", [""])[0], init_data)
         return _json(handler, 200 if not err else 400, {"ok": not bool(err), "data": data, "error": err})
     if path == "/api/kino/chat":
         qs = parse_qs(parsed.query)
-        data, err = get_chat(qs.get("room", [""])[0], handler.headers.get("X-Telegram-Init-Data", ""), qs.get("after", [""])[0])
+        data, err = get_chat(qs.get("room", [""])[0], init_data, qs.get("after", [""])[0])
         return _json(handler, 200 if not err else 400, {"ok": not bool(err), "data": data, "error": err})
     if path == "/api/kino/movies":
         qs = parse_qs(parsed.query)
-        data, err = list_movies(qs.get("room", [""])[0], handler.headers.get("X-Telegram-Init-Data", ""))
+        data, err = list_movies(qs.get("room", [""])[0], init_data)
         return _json(handler, 200 if not err else 400, {"ok": not bool(err), "data": data, "error": err})
     if path == "/api/kino/signals":
         qs = parse_qs(parsed.query)
-        data, err = get_signals(qs.get("room", [""])[0], handler.headers.get("X-Telegram-Init-Data", ""))
+        data, err = get_signals(qs.get("room", [""])[0], init_data)
         return _json(handler, 200 if not err else 400, {"ok": not bool(err), "data": data, "error": err})
-    _send_text(handler, 404, "Not found.")
-
+    return _json(handler, 404, {"ok": False, "error": "Not found."})
 
 def handle_post(handler):
     from urllib.parse import parse_qs, urlsplit
