@@ -861,6 +861,16 @@ async def on_chosen_inline_result(
     # Kesh server restartidan keyin yo'qolgan bo'lsa ham `chosen.query`
     # orqali bu maxsus oqimni aniqlab, shu yerning o'zida to'xtatamiz.
     special_query = (chosen.query or "").strip()
+    # 🎮 GAME ham og'ir/AI oqim emas: natija tanlanganda AI chaqirilmasin.
+    # Cache restart bo'lsa ham query/result_id orqali aniqlanadi.
+    if chosen.result_id.startswith("game_") or re.match(r"^game(?:\s+|$)", special_query, re.IGNORECASE):
+        logger.info(
+            "🎮 [CHOSEN_INLINE] /game natijasi tanlandi — AI'ga YUBORILMAYDI "
+            "(user_id=%s, query=%r, result_id=%s)",
+            getattr(chosen.from_user, "id", "?"), special_query[:120], chosen.result_id,
+        )
+        return
+
     if chosen.result_id.startswith("kino_") or re.match(r"^kino(?:\s+|$)", special_query, re.IGNORECASE):
         logger.info(
             "🎬 [CHOSEN_INLINE] /kino natijasi tanlandi — AI'ga YUBORILMAYDI "

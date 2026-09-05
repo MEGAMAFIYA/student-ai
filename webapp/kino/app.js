@@ -30,6 +30,11 @@
   let suppressVideoEvents = false;
   let connectionLost = false;
   let clockOffsetMs = 0;
+  let reconnectTimer = null;
+  let lastIceRestartAt = 0;
+  let statsTimer = null;
+  let lastOutboundStats = null;
+  let goodNetworkSince = 0;
   let stateReady = false;
   const mediaPermissionKey = "student_ai_media_permission_v2";
   const emojiList = ["😀","😂","😍","🥰","😎","😢","😡","😮","👏","🔥","❤️","💯","👍","👎","🎉","🏆","⚡","🤝","😄","🤣","😉","😘","🤗","🙏","💪","🙌","✨","🎯","🎮","😭"];
@@ -96,7 +101,7 @@
       // polling funksiyasi ustma-ust ishlamaydi.
       setInterval(pollState, 900);
       setInterval(pollChat, 700);
-      setInterval(pollSignals, 250);
+      setInterval(pollSignals, 300);
       await pollChat();
       await pollSignals();
       await pollState();
@@ -233,6 +238,21 @@
     setStatus("");
   });
 
+  // 📱 Android/Telegram klaviaturasi ochilganda WebView viewport qisqaradi.
+  // CSS sticky playerni saqlab qoladi, bu listener esa keyboard balandligini
+  // CSS ga beradi va chat inputga fokuslanganda player yo'qolib ketishini oldini oladi.
+  function syncViewport() {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const keyboard = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+    document.documentElement.style.setProperty("--keyboard-height", `${keyboard}px`);
+    document.body.classList.toggle("keyboard-open", keyboard > 120);
+  }
+  window.visualViewport?.addEventListener("resize", syncViewport);
+  window.visualViewport?.addEventListener("scroll", syncViewport);
+  window.addEventListener("resize", syncViewport);
+  syncViewport();
+
   video.addEventListener("error", () => {
     const e = video.error;
     console.error("KINO video error", e?.code, e?.message);
@@ -309,6 +329,13 @@
   $("emojiBtn").onclick=()=>picker.classList.toggle("hidden");
   picker.addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;const input=$("chatInput");input.value+=b.dataset.emoji;input.focus();emojiEffect(b.dataset.emoji,b);picker.classList.add("hidden");});
   document.addEventListener("click",e=>{if(!picker.contains(e.target)&&e.target!==$("emojiBtn"))picker.classList.add("hidden");});
+
+  const chatInput = $("chatInput");
+  chatInput.addEventListener("focus", () => {
+    setTimeout(() => chatInput.scrollIntoView({block:"nearest", inline:"nearest"}), 80);
+    syncViewport();
+  });
+  chatInput.addEventListener("blur", () => setTimeout(syncViewport, 80));
 
   $("chatForm").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -414,32 +441,112 @@
       { urls: "stun:stun.l.google.com:19302" },
       { urls: "stun:stun.cloudflare.com:3478" },
     ];
-    // TURN server berilgan bo‘lsa, mobil/operator NAT holatlarida ham
-    // P2P ulanishni relay orqali tiklash imkoniyati paydo bo‘ladi.
-    const turnUrl = window.KINO_TURN_URL || "";
-    const turnUser = window.KINO_TURN_USERNAME || "";
-    const turnCred = window.KINO_TURN_CREDENTIAL || "";
-    if (turnUrl && turnUser && turnCred) {
-      ice.push({ urls: turnUrl, username: turnUser, credential: turnCred });
+    const urls = Array.isArray(window.KINO_TURN_URLS) && window.KINO_TURN_URLS.length
+      ? window.KINO_TURN_URLS : (window.KINO_TURN_URL ? [window.KINO_TURN_URL] : []);
+    const user = window.KINO_TURN_USERNAME || "";
+    const credential = window.KINO_TURN_CREDENTIAL || "";
+    if (user && credential) {
+      for (const url of urls) if (url) ice.push({ urls: url, username: user, credential });
     }
-    return { iceServers: ice, bundlePolicy: "max-bundle", rtcpMuxPolicy: "require" };
+    return {
+      iceServers: ice,
+      bundlePolicy: "max-bundle",
+      rtcpMuxPolicy: "require",
+      iceCandidatePoolSize: 4,
+    };
+  }
+
+  function videoSenders(pc) {
+    return pc?.getSenders?.().filter(s => s.track?.kind === "video") || [];
+  }
+
+  async function tuneVideoSender(sender, tier = "auto") {
+    if (!sender?.track || sender.track.kind !== "video") return;
+    try {
+      const p = sender.getParameters();
+      p.encodings ||= [{}];
+      const e = p.encodings[0];
+      // WebRTC congestion control remains in charge; these are upper bounds.
+      const limits = { low: 420_000, medium: 850_000, high: 1_650_000, auto: 1_650_000 };
+      e.maxBitrate = limits[tier] || limits.auto;
+      e.maxFramerate = 30;
+      if ("scaleResolutionDownBy" in e) e.scaleResolutionDownBy = tier === "low" ? 2 : tier === "medium" ? 1.5 : 1;
+      if ("degradationPreference" in p) p.degradationPreference = "maintain-framerate";
+      await sender.setParameters(p);
+    } catch (e) { console.debug("KINO video sender tune", e); }
+  }
+
+  async function tuneAllVideoSenders(tier = "auto") {
+    for (const sender of videoSenders(peer)) await tuneVideoSender(sender, tier);
+  }
+
+  function scheduleIceRestart(reason = "network") {
+    const now = Date.now();
+    if (!peer || !peerTarget || makingOffer || now - lastIceRestartAt < 5000) return;
+    clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(async () => {
+      if (!peer || !peerTarget || makingOffer) return;
+      if (!["failed", "disconnected", "checking"].includes(peer.connectionState) &&
+          !["failed", "disconnected", "checking"].includes(peer.iceConnectionState)) return;
+      lastIceRestartAt = Date.now();
+      try {
+        makingOffer = true;
+        if (peer.restartIce) peer.restartIce();
+        await peer.setLocalDescription(await peer.createOffer({ iceRestart: true }));
+        await sendSignal(peerTarget, { type: "offer", sdp: peer.localDescription.sdp, reason });
+      } catch (e) { console.warn("KINO ICE restart", e); }
+      finally { makingOffer = false; }
+    }, reason === "failed" ? 250 : 1200);
+  }
+
+  async function collectRtcStats() {
+    const pc = peer;
+    if (!pc || pc.connectionState === "closed") return;
+    try {
+      const report = await pc.getStats();
+      let outbound = null, candidate = null;
+      report.forEach(r => {
+        if (r.type === "outbound-rtp" && r.kind === "video") outbound = r;
+        if (r.type === "candidate-pair" && r.state === "succeeded" && r.nominated) candidate = r;
+      });
+      if (!outbound) return;
+      const prev = lastOutboundStats;
+      const bytesDelta = prev ? Math.max(0, (outbound.bytesSent || 0) - prev.bytes) : 0;
+      const packetsDelta = prev ? Math.max(0, (outbound.packetsSent || 0) - prev.sent) : 0;
+      const lostDelta = prev ? Math.max(0, (outbound.packetsLost || 0) - prev.lost) : 0;
+      const lossRatio = packetsDelta ? lostDelta / (packetsDelta + lostDelta) : 0;
+      const reason = outbound.qualityLimitationReason || "none";
+      const bad = reason === "bandwidth" || lossRatio > 0.06 || (candidate?.currentRoundTripTime || 0) > 0.65;
+      const good = reason === "none" && lossRatio < 0.015 && (candidate?.currentRoundTripTime || 0) < 0.35;
+      if (bad) {
+        goodNetworkSince = 0;
+        await tuneAllVideoSenders("low");
+      } else if (good) {
+        if (!goodNetworkSince) goodNetworkSince = Date.now();
+        if (Date.now() - goodNetworkSince > 12000) await tuneAllVideoSenders("high");
+      }
+      lastOutboundStats = { bytes: outbound.bytesSent || 0, sent: outbound.packetsSent || 0, lost: outbound.packetsLost || 0 };
+      if (candidate?.availableOutgoingBitrate && candidate.availableOutgoingBitrate < 550_000) await tuneAllVideoSenders("low");
+      else if (candidate?.availableOutgoingBitrate && candidate.availableOutgoingBitrate < 1_000_000) await tuneAllVideoSenders("medium");
+    } catch (e) { console.debug("KINO getStats", e); }
+  }
+
+  function startRtcStats() {
+    clearInterval(statsTimer);
+    statsTimer = setInterval(collectRtcStats, 5000);
+    collectRtcStats();
   }
 
   function makePeer(target) {
-    if (peer && peerTarget === target) return peer;
-    if (peer) {
-      try { peer.close(); } catch (_) {}
-    }
+    if (peer && peerTarget === Number(target)) return peer;
+    if (peer) { try { peer.close(); } catch (_) {} }
     peerTarget = Number(target);
+    makingOffer = false; pendingIce = []; ignoreOffer = false; lastOutboundStats = null;
     const polite = Number(me) > Number(target);
     peer = new RTCPeerConnection(rtcConfig());
-
-    // Foydalanuvchi kamera/mikrofonni keyin yoqqanda ham track qo‘shiladi;
-    // shu sababli transceiverlarni oldindan majburan yaratmaymiz.
     for (const track of localStream.getTracks()) {
       try { peer.addTrack(track, localStream); } catch (_) {}
     }
-
     peer.ontrack = (event) => {
       let stream = event.streams && event.streams[0];
       if (!stream) {
@@ -451,57 +558,39 @@
       remoteWrap.classList.remove("hidden");
       remoteVideo.play().catch(() => {});
     };
-
     peer.onicecandidate = (event) => {
-      if (event.candidate) sendSignal(target, {
-        type: "ice",
-        candidate: event.candidate.toJSON ? event.candidate.toJSON() : event.candidate,
-      });
+      if (event.candidate) sendSignal(target, { type: "ice", candidate: event.candidate.toJSON ? event.candidate.toJSON() : event.candidate });
     };
-
     peer.onconnectionstatechange = () => {
       const s = peer?.connectionState;
       if (s === "connected") {
+        connectionLost = false;
         remoteWrap.classList.remove("hidden");
         if (participants.length >= 2) setStatus("");
+        tuneAllVideoSenders("high");
+        startRtcStats();
       } else if (s === "failed" || s === "disconnected") {
-        // Mobil operator/NAT yo‘llari vaqtincha uzilganda ICE restart qilamiz.
-        // TURN sozlangan bo‘lsa bu fallback P2P ishlamagan tarmoqlarda ham
-        // kamerani qayta ulashga yordam beradi.
         console.warn("KINO WebRTC connection", s);
-        const failedPeer = peer;
-        setTimeout(async () => {
-          if (peer !== failedPeer || !peerTarget) return;
-          try {
-            peer.restartIce?.();
-            if (peer.signalingState === "stable" && !makingOffer) {
-              makingOffer = true;
-              await peer.setLocalDescription(await peer.createOffer({ iceRestart: true }));
-              await sendSignal(peerTarget, { type: "offer", sdp: peer.localDescription.sdp });
-            }
-          } catch (e) {
-            console.warn("KINO ICE restart", e);
-          } finally {
-            makingOffer = false;
-          }
-        }, s === "failed" ? 250 : 1200);
+        setStatus("📡 Kamera aloqasi tiklanmoqda...");
+        scheduleIceRestart(s);
       }
     };
-
+    peer.oniceconnectionstatechange = () => {
+      const s = peer?.iceConnectionState;
+      if (s === "failed" || s === "disconnected") scheduleIceRestart(s);
+      if (s === "connected" || s === "completed") setStatus("");
+    };
     peer.onnegotiationneeded = async () => {
       try {
         if (!peer || peer.signalingState !== "stable" || makingOffer) return;
         makingOffer = true;
         await peer.setLocalDescription(await peer.createOffer());
         await sendSignal(target, { type: "offer", sdp: peer.localDescription.sdp });
-      } catch (e) {
-        console.warn("KINO negotiation xatosi", e);
-      } finally {
-        makingOffer = false;
-      }
+      } catch (e) { console.warn("KINO negotiation xatosi", e); }
+      finally { makingOffer = false; }
     };
-
     peer.__polite = polite;
+    startRtcStats();
     return peer;
   }
 
@@ -553,7 +642,7 @@
     if(a&&v){localStorage.setItem(mediaPermissionKey,"granted");return true;}
     const stream=await navigator.mediaDevices.getUserMedia({
       audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},
-      video:{facingMode:"user",width:{ideal:720},height:{ideal:720}}
+      video:{facingMode:"user",width:{ideal:1280,max:1280},height:{ideal:720,max:720},frameRate:{ideal:30,max:30}}
     });
     for(const track of stream.getTracks()){track.enabled=false;localStream.addTrack(track);}
     localStorage.setItem(mediaPermissionKey,"granted");
@@ -570,8 +659,8 @@
       const pc=peer;
       if(pc){
         let sender=pc.getTransceivers().find(t=>t.receiver?.track?.kind===kind)?.sender;
-        if(sender)await sender.replaceTrack(enable?track:null);
-        else if(enable)pc.addTrack(track,localStream);
+        if(sender){ await sender.replaceTrack(enable?track:null); if(enable) await tuneVideoSender(sender,"high"); }
+        else if(enable){ const s=pc.addTrack(track,localStream); await tuneVideoSender(s,"high"); }
       }
       if(kind==="audio") $("mic").textContent=enable?"🔊 Mikrofon ON":"🔇 Mikrofon";
       else{

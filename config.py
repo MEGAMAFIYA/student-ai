@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import base64
+import re
 import httpx
 from dotenv import load_dotenv
 
@@ -76,6 +77,11 @@ KINO_APP_SHORT_NAME = os.getenv("KINO_APP_SHORT_NAME", "").strip()
 # Ixtiyoriy WebRTC TURN. STUN ko‘p tarmoqlarda yetarli, lekin mobil/operator NAT
 # holatlarida TURN relay kerak bo‘lishi mumkin.
 KINO_TURN_URL = os.getenv("KINO_TURN_URL", "").strip()
+# Bir nechta TURN URL ni vergul yoki yangi qatorda berish mumkin.
+# Masalan Metered bergan UDP/TCP/TLS URL'larini shu yerga qo'shish mumkin.
+KINO_TURN_URLS = tuple(dict.fromkeys(
+    x.strip() for x in re.split(r"[,\n]+", os.getenv("KINO_TURN_URLS", KINO_TURN_URL)) if x.strip()
+))
 KINO_TURN_USERNAME = os.getenv("KINO_TURN_USERNAME", "").strip()
 KINO_TURN_CREDENTIAL = os.getenv("KINO_TURN_CREDENTIAL", "").strip()
 GAME_TURN_URL = os.getenv("GAME_TURN_URL", "").strip()

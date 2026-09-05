@@ -103,12 +103,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info("🎬 Kino Watch Party xabari AI oqimidan o'tkazilmadi: chat_id=%s", chat.id)
         return
 
-    # 🎮 Inline GAME natijasi chatga joylashtirilganda bu xabar oddiy
-    # Message sifatida ham kelishi mumkin. Uni Universal AI savoli deb
-    # qabul qilmaslik kerak — foydalanuvchi faqat o'yin Mini App'ini
-    # ochgan bo'ladi.
-    if ("1v1 o'yin xonasi tayyor" in user_text
-            and ("♟ Shaxmat" in user_text or "⚪ Rus shashkasi" in user_text)):
+    # 🎮 GAME inline natijasi chatga joylashtirilganda Telegram ayrim klientlarda
+    # uni oddiy TEXT update sifatida ham ko'rsatishi mumkin. Bunday xabar hech
+    # qachon Universal AI'ga yuborilmaydi. Himoya bir nechta formatni qamrab oladi.
+    normalized_game = user_text.lower().replace("’", "'").replace("‘", "'")
+    is_game_result = (
+        ("1v1 o'yin xonasi tayyor" in normalized_game and
+         ("♟ shaxmat" in normalized_game or "⚪ rus shashkasi" in normalized_game))
+        or normalized_game.strip() in {"♟ shaxmat", "⚪ rus shashkasi"}
+        or normalized_game.startswith("🎮 o'yinni boshlash")
+    )
+    if is_game_result:
         logger.info("🎮 Game xonasi xabari AI oqimidan o'tkazilmadi: chat_id=%s", chat.id)
         return
 

@@ -35,7 +35,8 @@ yoki R2/S3 kabi object storage tavsiya qilinadi.
 
 Kamera va mikrofon WebRTC orqali uzatiladi. `KINO_TURN_*` o'zgaruvchilari ixtiyoriy:
 
-- `KINO_TURN_URL`
+- `KINO_TURN_URL` (bitta TURN URL uchun)
+- `KINO_TURN_URLS` (ixtiyoriy: bir nechta URL, vergul/yangi qator bilan)
 - `KINO_TURN_USERNAME`
 - `KINO_TURN_CREDENTIAL`
 
@@ -48,3 +49,12 @@ Mini App ichida kamera/mikrofon tugmasi bosilganda brauzer `getUserMedia` ruxsat
 ## Chat duplicate himoyasi
 
 Chat POST so‘roviga `client_id` yuboriladi. Server bir xil `client_id`ni qayta yuborilgan bo‘lsa, yangi xabar yaratmaydi. Frontendda ham message ID bo‘yicha dedupe va polling lock mavjud.
+
+
+## WebRTC sifat va barqarorlik
+
+- Video 720p/30fps gacha olinadi va WebRTC bitrate limiti tarmoq holatiga qarab moslanadi.
+- `getStats()` orqali paket yo'qotilishi, RTT va mavjud outgoing bitrate kuzatiladi.
+- ICE `failed/disconnected` holatlarida cooldown bilan avtomatik restart qilinadi.
+- Bir nechta TURN URL berilsa, brauzer mos relay transportini tanlaydi.
+- Android/Telegram klaviaturasi ochilganda kino player sticky holatda ko'rinib turadi.

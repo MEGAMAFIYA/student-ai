@@ -364,12 +364,41 @@ def _mime_for_movie(movie: dict) -> str:
 
 
 def _ensure_browser_mp4(movie: dict, source_path: str) -> str:
-    """MP4 bo'lmagan katalog faylini H.264/AAC MP4 ga aylantiradi.
-    Browser/Telegram WebView format mosligini oshirish uchun runtime cache'da saqlanadi."""
+    """Browser uchun mos MP4 qaytaradi.
+
+    MP4 konteynerining o'zi yetarli emas: ayrim kinolar HEVC/H.265, AC-3 va
+    boshqa kodeklarda bo'lishi mumkin. Avval ffprobe bilan tekshiramiz va faqat
+    mos kelmaydigan faylni H.264/AAC ga transcode qilamiz. Shu bilan odatiy
+    H.264 MP4 lar ortiqcha CPU ishlatmaydi, Telegram/Android WebView mosligi esa
+    ancha yuqori bo'ladi.
+    """
     name = (movie.get("file_name") or "").lower()
     mime = (movie.get("mime_type") or "").lower()
-    if (name.endswith(".mp4") or mime == "video/mp4") and not os.getenv("KINO_FORCE_TRANSCODE", "0") == "1":
+    force = os.getenv("KINO_FORCE_TRANSCODE", "0") == "1"
+    needs_transcode = force or not (name.endswith(".mp4") or mime == "video/mp4")
+
+    if not needs_transcode:
+        ffprobe = shutil.which("ffprobe")
+        if ffprobe:
+            try:
+                probe = subprocess.run(
+                    [ffprobe, "-v", "error", "-show_entries", "stream=codec_type,codec_name",
+                     "-of", "json", source_path],
+                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                    text=True, timeout=15, check=True,
+                )
+                streams = json.loads(probe.stdout or "{}").get("streams", [])
+                vcodecs = {x.get("codec_name") for x in streams if x.get("codec_type") == "video"}
+                acodecs = {x.get("codec_name") for x in streams if x.get("codec_type") == "audio"}
+                needs_transcode = not bool(vcodecs & {"h264", "avc1"}) or bool(acodecs - {"aac"})
+            except Exception as e:
+                # Probe ishlamasa mavjud MP4 ni buzmasdan serve qilamiz.
+                logger.debug("🎬 ffprobe tekshiruvi o'tmadi: %s", e)
+                needs_transcode = False
+
+    if not needs_transcode:
         return source_path
+
     out = os.path.splitext(source_path)[0] + "_h264.mp4"
     with KINO_CACHE_LOCK:
         if os.path.isfile(out) and os.path.getsize(out) > 0:
@@ -381,7 +410,7 @@ def _ensure_browser_mp4(movie: dict, source_path: str) -> str:
         tmp = out + ".part.mp4"
         cmd = [ffmpeg, "-y", "-i", source_path, "-map", "0:v:0", "-map", "0:a:0?",
                "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-               "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k",
+               "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
                "-ar", "48000", "-movflags", "+faststart", tmp]
         try:
             subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=300, check=True)
@@ -431,6 +460,7 @@ def _serve_local_range(handler, path: str, content_type: str):
     handler.send_response(status)
     handler.send_header("Content-Type", content_type)
     handler.send_header("Accept-Ranges", "bytes")
+    handler.send_header("X-Content-Type-Options", "nosniff")
     handler.send_header("Content-Length", str(length))
     if status == 206:
         handler.send_header("Content-Range", f"bytes {start}-{end}/{size}")
@@ -580,7 +610,11 @@ def serve_static(handler):
     # TURN credentiallardan foydalanish tavsiya etiladi.
     if name == "index.html":
         text = body.decode("utf-8")
-        turn_cfg = (f"<script>window.KINO_TURN_URL={json.dumps(config.KINO_TURN_URL)};"
+        turn_urls = list(getattr(config, "KINO_TURN_URLS", ()) or ())
+        if not turn_urls and config.KINO_TURN_URL:
+            turn_urls = [config.KINO_TURN_URL]
+        turn_cfg = (f"<script>window.KINO_TURN_URLS={json.dumps(turn_urls)};"
+                    f"window.KINO_TURN_URL={json.dumps(config.KINO_TURN_URL)};"
                     f"window.KINO_TURN_USERNAME={json.dumps(config.KINO_TURN_USERNAME)};"
                     f"window.KINO_TURN_CREDENTIAL={json.dumps(config.KINO_TURN_CREDENTIAL)};</script>")
         text = text.replace("</head>", turn_cfg + "</head>", 1)
