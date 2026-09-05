@@ -67,11 +67,19 @@ def add_key(user_id: int, provider: str, api_key: str, model: str) -> tuple[int,
 
     Qaytaradi: (yangi tartib raqami — 1 dan boshlab, GitHub'ga
     muvaffaqiyatli saqlandimi)."""
-    pools = get_pools(user_id)
-    pool = pools.setdefault(provider, [])
-    pool.append({"key": api_key, "model": model})
-    ok = _save_pools(user_id, pools, f"🔑 Shaxsiy AI kaliti qo'shildi: user_id={user_id}, provider={provider}")
-    return len(pool), ok
+    message = f"🔑 Shaxsiy AI kaliti qo'shildi: user_id={user_id}, provider={provider}"
+    last_index = 1
+    for attempt in range(1, 4):
+        pools = get_pools(user_id)
+        pool = pools.setdefault(provider, [])
+        pool.append({"key": api_key, "model": model})
+        last_index = len(pool)
+        if _save_pools(user_id, pools, message):
+            return last_index, True
+        logger.warning(
+            f"🔑 Shaxsiy kalitni saqlash qayta uriniladi: user_id={user_id}, attempt={attempt}/3"
+        )
+    return last_index, False
 
 
 def update_key_field(user_id: int, provider: str, index: int, field: str, value: str) -> bool:

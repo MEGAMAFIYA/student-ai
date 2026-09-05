@@ -667,7 +667,10 @@ def _github_put_content(path: str, content_bytes: bytes, message: str, max_attem
     url = _github_contents_url(path)
     encoded_content = base64.b64encode(content_bytes).decode("ascii")
 
-    for attempt in range(1, max_attempts + 1):
+    import random
+    import time
+    effective_attempts = max(6, max_attempts)
+    for attempt in range(1, effective_attempts + 1):
         sha = _github_get_sha(url)
         body = {
             "message": message,
@@ -680,10 +683,13 @@ def _github_put_content(path: str, content_bytes: bytes, message: str, max_attem
             with httpx.Client(timeout=30.0) as client:
                 r = client.put(url, headers=_github_headers(), json=body)
             if r.status_code == 409:
+                delay = min(0.25 * (2 ** min(attempt - 1, 4)), 4.0) + random.uniform(0.05, 0.25)
                 logger.warning(
-                    f"⚠️ GitHub 409 Conflict ('{path}') — SHA eskirgan bo'lishi mumkin "
-                    f"(parallel yozuv). Qayta urinilmoqda ({attempt}/{max_attempts})..."
+                    f"⚠️ GitHub 409 Conflict ('{path}') — SHA eskirgan yoki parallel yozuv bor. "
+                    f"Yangi SHA olinib {delay:.2f}s dan keyin qayta uriniladi "
+                    f"({attempt}/{effective_attempts})..."
                 )
+                time.sleep(delay)
                 continue
             r.raise_for_status()
             return True
@@ -698,7 +704,7 @@ def _github_put_content(path: str, content_bytes: bytes, message: str, max_attem
             return False
 
     logger.error(
-        f"❌ GitHub'ga '{path}' yozib bo'lmadi — {max_attempts} urinishdan keyin ham "
+        f"❌ GitHub'ga '{path}' yozib bo'lmadi — {effective_attempts} urinishdan keyin ham "
         "409 Conflict davom etmoqda (SHA doimo eskirib qolmoqda, ehtimol bir nechta "
         "so'rov juda tez-tez yozmoqda)."
     )

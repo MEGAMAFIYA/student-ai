@@ -498,29 +498,40 @@ async def on_personal_key_text(update: Update, context: ContextTypes.DEFAULT_TYP
 
     if stage == "model":
         context.user_data.pop("awaiting_personal_key", None)
-        idx = user_ai_keys.add_key(user_id, provider, pending["pending_key"], text)
-        await update.message.reply_text(
-            f"✅ {_provider_label(provider)} kalit #{idx} muvaffaqiyatli qo'shildi!\n\n"
-            f"{_keys_menu_text(user_id)}",
-            parse_mode=ParseMode.HTML,
-            reply_markup=_keys_menu_keyboard(user_id),
-        )
-        logger.info(f"🔑 Shaxsiy kalit qo'shildi: user_id={user_id}, provider={provider}.")
+        idx, ok = user_ai_keys.add_key(user_id, provider, pending["pending_key"], text)
+        if ok:
+            await update.message.reply_text(
+                f"✅ {_provider_label(provider)} kalit #{idx} muvaffaqiyatli qo'shildi!\n\n"
+                f"{_keys_menu_text(user_id)}",
+                parse_mode=ParseMode.HTML,
+                reply_markup=_keys_menu_keyboard(user_id),
+            )
+            logger.info(f"🔑 Shaxsiy kalit qo'shildi va GitHub'ga saqlandi: user_id={user_id}, provider={provider}.")
+        else:
+            await update.message.reply_text(
+                "❌ Kalit qabul qilindi, lekin GitHub'ga saqlash muvaffaqiyatsiz bo'ldi. "
+                "Iltimos, birozdan keyin qayta urinib ko'ring.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=_keys_menu_keyboard(user_id),
+            )
+            logger.error(f"❌ Shaxsiy kalit GitHub'ga saqlanmadi: user_id={user_id}, provider={provider}.")
         return True
 
     if stage == "replace_key":
         context.user_data.pop("awaiting_personal_key", None)
-        user_ai_keys.update_key_field(user_id, provider, pending["index"], "key", text)
+        ok = user_ai_keys.update_key_field(user_id, provider, pending["index"], "key", text)
         await update.message.reply_text(
-            "✅ Kalit almashtirildi.", parse_mode=ParseMode.HTML, reply_markup=_keys_menu_keyboard(user_id),
+            "✅ Kalit almashtirildi." if ok else "❌ Kalitni saqlashda xato yuz berdi. Qayta urinib ko'ring.",
+            parse_mode=ParseMode.HTML, reply_markup=_keys_menu_keyboard(user_id),
         )
         return True
 
     if stage == "replace_model":
         context.user_data.pop("awaiting_personal_key", None)
-        user_ai_keys.update_key_field(user_id, provider, pending["index"], "model", text)
+        ok = user_ai_keys.update_key_field(user_id, provider, pending["index"], "model", text)
         await update.message.reply_text(
-            "✅ Model o'zgartirildi.", parse_mode=ParseMode.HTML, reply_markup=_keys_menu_keyboard(user_id),
+            "✅ Model o'zgartirildi." if ok else "❌ Modelni saqlashda xato yuz berdi. Qayta urinib ko'ring.",
+            parse_mode=ParseMode.HTML, reply_markup=_keys_menu_keyboard(user_id),
         )
         return True
 
