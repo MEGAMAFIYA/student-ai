@@ -60,7 +60,7 @@ def create_room(movie_id: str, creator_id: int) -> str | None:
             "movie_id": movie_id,
             "created_at": time.time(),
             "participants": {str(int(creator_id)): {"joined_at": time.time()}},
-            "state": {"playing": False, "position": 0.0, "version": 0, "updated_at": time.time()},
+            "state": {"playing": False, "position": 0.0, "version": 0, "updated_at": time.time(), "actor_id": int(creator_id)},
             "chat": [],
             "chat_client_keys": {},
             "signals": {},
@@ -138,15 +138,21 @@ def room_state(rid: str, init_data: str, playing=None, position=None):
         if uid not in room["participants"]:
             return None, "Siz bu xonaga qo'shilmagansiz."
         if playing is not None or position is not None:
+            # Only an explicit client action changes the authoritative room state.
+            # Store the actor so clients can distinguish their own echo from a
+            # genuine remote event; this prevents a polling response from
+            # rewinding the local player to an older position.
             if playing is not None:
                 room["state"]["playing"] = bool(playing)
             if position is not None:
                 room["state"]["position"] = max(0.0, float(position))
             room["state"]["version"] += 1
             room["state"]["updated_at"] = time.time()
+            room["state"]["actor_id"] = int(user["id"])
         return {
             **room["state"],
             "participants": [int(x) for x in room["participants"]],
+            "server_now": time.time(),
         }, None
 
 

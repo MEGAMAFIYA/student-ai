@@ -27,6 +27,9 @@
   let makingOffer = false;
   let ignoreOffer = false;
   let suppressVideoEvents = false;
+  let connectionLost = false;
+  let clockOffsetMs = 0;
+  let stateReady = false;
 
   const $ = (id) => document.getElementById(id);
   const video = $("video");
@@ -106,41 +109,102 @@
       .join("");
   }
 
-  async function pollState() {
+  async function pollState(forceSync = false) {
     if (statePolling || !room) return;
     statePolling = true;
     try {
+      const requestStarted = Date.now();
       const d = await api("/api/kino/state", null, { room });
+      const requestFinished = Date.now();
+      connectionLost = false;
+
+      // The server clock is authoritative. The old implementation compared
+      // server epoch time directly with the browser clock, which can differ
+      // and makes the player jump backwards/forwards on every poll.
+      if (Number.isFinite(Number(d.server_now))) {
+        const midpoint = requestStarted + (requestFinished - requestStarted) / 2;
+        clockOffsetMs = Number(d.server_now) * 1000 - midpoint;
+      }
+
       participants = d.participants || participants;
       renderPeople();
       if (participants.length === 2) ensurePeer();
 
-      const desired = d.playing ? d.position + (Date.now() / 1000 - d.updated_at) : d.position;
-      if (d.version !== lastVersion) {
-        lastVersion = d.version;
+      const version = Number(d.version ?? -1);
+      const isNewState = !stateReady || version > lastVersion;
+      const remoteEvent = stateReady && Number(d.actor_id) !== Number(me);
+      const shouldSync = isNewState;
+
+      if (shouldSync) {
+        lastVersion = Math.max(lastVersion, version);
+        stateReady = true;
+
+        // Reconnection is only a trigger to fetch state. If the room version
+        // did not change, never touch the local player. This is essential for
+        // offline playback: coming back online must not rewind buffered video.
+        if (!isNewState) return;
+
+        // Do not apply our own state echo back onto the video. We already have
+        // the exact local position; applying the server echo is what caused
+        // the repeating/re-winding behaviour during playback.
+        if (!remoteEvent && stateReady) return;
+
+        const nowServerMs = Date.now() + clockOffsetMs;
+        let desired = Number(d.position) || 0;
+        if (d.playing && Number.isFinite(Number(d.updated_at))) {
+          desired += Math.max(0, (nowServerMs / 1000) - Number(d.updated_at));
+        }
+
         suppressVideoEvents = true;
         try {
-          if (Number.isFinite(desired) && Math.abs((video.currentTime || 0) - desired) > 0.9) {
-            video.currentTime = Math.max(0, desired);
-          }
-          if (d.playing) {
+          const local = Number(video.currentTime || 0);
+          const drift = Math.abs(local - desired);
+          const remotePaused = !d.playing;
+
+          if (remotePaused) {
+            // A remote pause is authoritative. Even if we were offline and
+            // continued playing buffered data, reconnecting must land exactly
+            // at the position where the other participant paused.
+            if (Number.isFinite(desired) && drift > 0.15) {
+              video.currentTime = Math.max(0, desired);
+            }
+            if (!video.paused) video.pause();
+          } else {
+            // For normal playback never continuously seek on every poll.
+            // Correct only meaningful drift; this removes the periodic jump.
+            if (Number.isFinite(desired) && drift > 1.75) {
+              video.currentTime = Math.max(0, desired);
+            }
             if (video.paused) await video.play().catch(() => {});
-          } else if (!video.paused) {
-            video.pause();
           }
         } finally {
-          // Event loopga qaytishdan oldin flagni o‘chirish video eventlari
-          // remote state'ni yana serverga qaytarib yubormasligi uchun kerak.
           setTimeout(() => { suppressVideoEvents = false; }, 0);
         }
       }
     } catch (_) {
-      // Keyingi poll qayta urinadi.
+      // IMPORTANT: when connectivity disappears, leave the video completely
+      // alone. The browser continues with whatever has already been buffered.
+      // On the next successful request, a newer remote version is reconciled.
+      connectionLost = true;
     } finally {
       statePolling = false;
     }
   }
 
+  window.addEventListener("offline", () => {
+    connectionLost = true;
+    setStatus("📡 Internet uzildi — video mavjud buffer bilan davom etadi.");
+    setTimeout(() => { if (connectionLost) setStatus(""); }, 2500);
+  });
+
+  window.addEventListener("online", async () => {
+    connectionLost = false;
+    setStatus("📡 Internet qaytdi — xona holati sinxronlanmoqda...");
+    // A successful reconnect must immediately reconcile the authoritative
+    // room state (including a pause/seek made by the other participant).
+    await pollState(true);
+    setStatus("");
+  });
 
   video.addEventListener("error", () => {
     const e = video.error;
@@ -164,12 +228,22 @@
   function pushState(playing) {
     if (suppressVideoEvents) return;
     clearTimeout(stateSendTimer);
-    stateSendTimer = setTimeout(() => {
-      api("/api/kino/state", {
-        room,
-        playing: !!playing,
-        position: Number(video.currentTime || 0),
-      }).catch(() => {});
+    stateSendTimer = setTimeout(async () => {
+      try {
+        const d = await api("/api/kino/state", {
+          room,
+          playing: !!playing,
+          position: Number(video.currentTime || 0),
+        });
+        connectionLost = false;
+        if (d && Number.isFinite(Number(d.version))) {
+          lastVersion = Math.max(lastVersion, Number(d.version));
+          stateReady = true;
+        }
+      } catch (_) {
+        // Keep local playback untouched while offline.
+        connectionLost = true;
+      }
     }, 120);
   }
   video.addEventListener("play", () => pushState(true));
