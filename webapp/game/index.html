@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta http-equiv="Permissions-Policy" content="camera=(self), microphone=(self)">
 <title>Student AI • 1v1</title>
 <link rel="stylesheet" href="/miniapp/game/style.css">
 </head>
@@ -31,25 +32,36 @@
   </section>
 
   <section id="game" class="hidden">
-    <div class="gamebar">
-      <div id="playerMe" class="playercard"></div><div class="vs">VS</div><div id="playerOpp" class="playercard"></div>
+    <div class="players-video">
+      <div id="playerMe" class="playercard">
+        <div class="player-meta"><span class="avatar">🙂</span><span class="player-name">Siz</span><span class="side-label"></span></div>
+        <div class="video-slot"><video id="localVideo" autoplay muted playsinline></video><span class="video-placeholder">📷 Kamera o‘chiq</span></div>
+      </div>
+      <div class="vs">VS</div>
+      <div id="playerOpp" class="playercard right">
+        <div class="player-meta"><span class="avatar">👤</span><span class="player-name">Do‘stingiz</span><span class="side-label"></span></div>
+        <div class="video-slot"><video id="remoteVideo" autoplay playsinline></video><span class="video-placeholder">📷 Kamera o‘chiq</span></div>
+      </div>
     </div>
+
     <div class="boardWrap"><div id="board" class="board" aria-label="O‘yin doskasi"></div><div id="fx" class="fx"></div></div>
     <div class="actions">
       <button id="soundBtn" class="tool">🔊 Ovoz</button>
-      <button id="callBtn" class="tool">📹 Video</button>
-      <button id="micBtn" class="tool">🎙 Ovoz</button>
+      <button id="callBtn" class="tool">📹 Kamera</button>
+      <button id="micBtn" class="tool">🎙 Mikrofon</button>
       <button id="resignBtn" class="danger">🏳 Taslim</button>
     </div>
     <div id="result" class="result hidden"></div>
-  </section>
 
-  <section id="callPanel" class="callPanel hidden">
-    <div class="callHead"><b>🎥 Kino kabi suhbat</b><button id="closeCall">✕</button></div>
-    <div class="videos"><div class="videoTile"><video id="remoteVideo" autoplay playsinline></video><span>Do‘stingiz</span></div><div class="videoTile self"><video id="localVideo" autoplay muted playsinline></video><span>Siz</span></div></div>
-    <div class="callHint" id="callHint">Kamera yoki mikrofonni yoqing.</div>
+    <section class="chat game-chat">
+      <div class="chat-title"><span>💬 Chat</span><span id="chatStatus" class="chat-status"></span></div>
+      <div id="emojiPicker" class="emoji-picker hidden"></div>
+      <div id="messages" class="messages"></div>
+      <form id="chatForm"><button id="emojiBtn" class="emoji-btn" type="button">😊</button><input id="chatInput" maxlength="500" autocomplete="off" placeholder="Xabar yozing..."><button class="send-btn" type="submit">➤</button></form>
+    </section>
   </section>
 </div>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script src="/miniapp/game/app.js"></script>
-</body></html>
+</body>
+</html>

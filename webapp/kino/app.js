@@ -30,6 +30,8 @@
   let connectionLost = false;
   let clockOffsetMs = 0;
   let stateReady = false;
+  const mediaPermissionKey = "student_ai_media_permission_v2";
+  const emojiList = ["😀","😂","😍","🥰","😎","😢","😡","😮","👏","🔥","❤️","💯","👍","👎","🎉","🏆","⚡","🤝","😄","🤣","😉","😘","🤗","🙏","💪","🙌","✨","🎯","🎮","😭"];
 
   const $ = (id) => document.getElementById(id);
   const video = $("video");
@@ -267,18 +269,21 @@
     }
   }
 
+  function emojiFromText(text){const m=String(text).match(/[\p{Extended_Pictographic}]/u);return m?.[0]||"";}
+  function emojiEffect(emoji,el){if(!emoji)return;for(let i=0;i<5;i++){const x=document.createElement("span");x.className="emoji-burst";x.textContent=emoji;const r=el?.getBoundingClientRect?.();x.style.left=((r?.left||innerWidth/2)+(r?.width||0)/2)+"px";x.style.top=(r?.top||innerHeight-60)+"px";x.style.setProperty("--x",((Math.random()-.5)*100)+"px");x.style.setProperty("--y",((Math.random()-.5)*50)+"px");x.style.setProperty("--r",((Math.random()-.5)*40)+"deg");document.body.appendChild(x);setTimeout(()=>x.remove(),900);}try{tg?.HapticFeedback?.impactOccurred?.("light");}catch(_){}}
   function addMsg(m) {
-    // Server id bo‘yicha client-side dedupe: tarmoq/retry yoki ikki poll
-    // bir xil xabarni qaytarsa ham DOMga ikkinchi marta kirmaydi.
     const box = $("messages");
     if (box.querySelector(`[data-message-id="${CSS.escape(String(m.id))}"]`)) return;
-    const d = document.createElement("div");
-    d.className = "msg" + (Number(m.user_id) === Number(me) ? " me" : "");
-    d.dataset.messageId = String(m.id);
-    d.innerHTML = `<b>${escapeHtml(m.name)}</b>${escapeHtml(m.text)}`;
-    box.appendChild(d);
-    box.scrollTop = box.scrollHeight;
+    const d = document.createElement("div"); d.className="msg"+(Number(m.user_id)===Number(me)?" me":""); d.dataset.messageId=String(m.id);
+    d.innerHTML=`<b>${escapeHtml(m.name)}</b><span>${escapeHtml(m.text)}</span>`; box.appendChild(d); box.scrollTop=box.scrollHeight;
+    const em=emojiFromText(m.text); if(em)emojiEffect(em,d);
   }
+
+  const picker=$("emojiPicker");
+  picker.innerHTML=emojiList.map(e=>`<button type="button" data-emoji="${e}">${e}</button>`).join("");
+  $("emojiBtn").onclick=()=>picker.classList.toggle("hidden");
+  picker.addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;const input=$("chatInput");input.value+=b.dataset.emoji;input.focus();emojiEffect(b.dataset.emoji,b);picker.classList.add("hidden");});
+  document.addEventListener("click",e=>{if(!picker.contains(e.target)&&e.target!==$("emojiBtn"))picker.classList.add("hidden");});
 
   $("chatForm").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -464,63 +469,41 @@
     }
   }
 
+  async function obtainMediaOnce() {
+    if (!navigator.mediaDevices?.getUserMedia) throw new Error("Bu Telegram/WebView muhitida kamera yoki mikrofon API mavjud emas.");
+    const a=localStream.getAudioTracks()[0], v=localStream.getVideoTracks()[0];
+    if(a&&v){localStorage.setItem(mediaPermissionKey,"granted");return true;}
+    const stream=await navigator.mediaDevices.getUserMedia({
+      audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},
+      video:{facingMode:"user",width:{ideal:720},height:{ideal:720}}
+    });
+    for(const track of stream.getTracks()){track.enabled=false;localStream.addTrack(track);}
+    localStorage.setItem(mediaPermissionKey,"granted");
+    ensurePeer();
+    return true;
+  }
+
   async function toggleMedia(kind) {
     try {
-      if (!navigator.mediaDevices?.getUserMedia) {
-        throw new Error("Bu Telegram/WebView muhitida kamera yoki mikrofon API mavjud emas.");
+      await obtainMediaOnce();
+      let track=localStream.getTracks().find(t=>t.kind===kind);
+      if(!track)throw new Error(kind==="audio"?"Mikrofon track olinmadi.":"Kamera track olinmadi.");
+      const enable=!track.enabled; track.enabled=enable; ensurePeer();
+      const pc=peer;
+      if(pc){
+        let sender=pc.getTransceivers().find(t=>t.receiver?.track?.kind===kind)?.sender;
+        if(sender)await sender.replaceTrack(enable?track:null);
+        else if(enable)pc.addTrack(track,localStream);
       }
-      const constraints = kind === "audio"
-        ? { audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false }
-        : { audio: false, video: { facingMode: "user", width: { ideal: 720 }, height: { ideal: 720 } } };
-
-      let track = localStream.getTracks().find(t => t.kind === kind);
-      if (!track) {
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
-        track = stream.getTracks().find(t => t.kind === kind);
-        if (!track) throw new Error(kind === "audio" ? "Mikrofon track olinmadi." : "Kamera track olinmadi.");
-        localStream.addTrack(track);
+      if(kind==="audio") $("mic").textContent=enable?"🔊 Mikrofon ON":"🔇 Mikrofon";
+      else{
+        $("cam").textContent=enable?"📹 Kamera ON":"📵 Kamera";
+        if(enable){localVideo.srcObject=localStream;localWrap.classList.remove("hidden");await localVideo.play().catch(()=>{});}
+        else{localVideo.srcObject=null;localWrap.classList.add("hidden");}
       }
-
-      const enable = !track.enabled;
-      track.enabled = enable;
-      ensurePeer();
-      const pc = peer;
-      if (!pc) {
-        if (kind === "audio") $("mic").textContent = enable ? "🔊 Mikrofon" : "🔇 Mikrofon";
-        else $("cam").textContent = enable ? "📹 Kamera ON" : "📵 Kamera";
-        if (kind === "video" && enable) { localVideo.srcObject = localStream; localWrap.classList.remove("hidden"); await localVideo.play().catch(() => {}); }
-        return;
-      }
-
-      let sender = pc.getSenders().find(s => s.track?.kind === kind);
-      if (!sender) {
-        const transceiver = pc.getTransceivers().find(t => t.receiver?.track?.kind === kind);
-        sender = transceiver?.sender;
-      }
-      if (sender) {
-        await sender.replaceTrack(enable ? track : null);
-      } else if (enable) {
-        pc.addTrack(track, localStream);
-      }
-
-      // addTrack/replaceTrack orqali negotiationneeded ishga tushadi.
-      if (kind === "audio") $("mic").textContent = enable ? "🔊 Mikrofon" : "🔇 Mikrofon";
-      else $("cam").textContent = enable ? "📹 Kamera ON" : "📵 Kamera";
-
-      if (kind === "video" && enable) {
-        localVideo.srcObject = localStream;
-        localWrap.classList.remove("hidden");
-        await localVideo.play().catch(() => {});
-      } else if (kind === "video" && !enable) {
-        localVideo.srcObject = null;
-        localWrap.classList.add("hidden");
-      }
-    } catch (e) {
-      console.error("KINO media", kind, e);
-      const msg = kind === "video"
-        ? "Kamera ishlamadi. Telegram uchun kamera ruxsatini tekshiring va Mini App'ni qayta oching."
-        : "Mikrofon ishlamadi. Telegram uchun mikrofon ruxsatini tekshiring va Mini App'ni qayta oching.";
-      alert(msg + "\n\nTexnik sabab: " + e.message);
+    } catch(e){
+      console.error("KINO media",kind,e);
+      alert("Kamera va mikrofon ruxsati berilmadi. Telegram sozlamalaridan ruxsatni yoqing.");
     }
   }
 

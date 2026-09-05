@@ -14,6 +14,9 @@ GAME_FILE = "game_rooms.json"
 GAME_KEY = "student_ai_game_rooms"
 ROOM_TTL = int(os.getenv("GAME_ROOM_TTL_SEC", str(12 * 60 * 60)))
 MAX_ROOMS = 500
+MAX_CHAT = 200
+MAX_CHAT_CLIENT_KEYS = 500
+MAX_SIGNAL_ITEMS = 60
 LOCK = threading.RLock()
 
 raw, _ = config.persist_read(GAME_FILE, GAME_KEY)
@@ -63,7 +66,7 @@ def create_room(game, creator_id):
         "selected":{}, "forced_piece":None, "last_move":None,"history":[],
         "rematch_votes":{}, "signals":{}, "chat":[], "chat_keys":{}
     }
-    room["players"][str(int(creator_id))]={"side":None,"style":"classic","joined_at":time.time()}
+    room["players"][str(int(creator_id))]={"side":None,"style":"classic","joined_at":time.time(),"name":str(creator_id)}
     with LOCK:
         ROOMS[rid]=room
         if len(ROOMS)>MAX_ROOMS:
@@ -86,7 +89,7 @@ def _room(rid):
 def _public(room, uid):
     players=[]
     for k,p in room["players"].items():
-        players.append({"id":int(k),"side":p.get("side"),"style":p.get("style","classic")})
+        players.append({"id":int(k),"side":p.get("side"),"style":p.get("style","classic"),"name":p.get("name") or str(k)})
     return {
         "id":room["id"],"game":room["game"],"status":room["status"],"winner":room["winner"],
         "reason":room["reason"],"turn":room["turn"],"board":room["board"],
@@ -104,7 +107,8 @@ def join(rid, init_data):
         if not room: return None,"O'yin xonasi topilmadi yoki muddati o'tgan."
         if uid not in room["players"] and len(room["players"])>=2:
             return None,"Bu o'yin xonasi to'la. Faqat 2 kishi o'ynaydi."
-        room["players"].setdefault(uid,{"side":None,"style":"classic","joined_at":time.time()})
+        room["players"].setdefault(uid,{"side":None,"style":"classic","joined_at":time.time(),"name":user.get("first_name") or user.get("username") or uid})
+        room["players"][uid]["name"] = user.get("first_name") or user.get("username") or room["players"][uid].get("name") or uid
         room["updated_at"]=time.time()
         _save()
         return _public(room,uid),None
@@ -423,19 +427,59 @@ def resign(rid,init_data):
         return _public(room,uid),None
 
 
+def add_chat(rid, init_data, text, client_id=""):
+    user=_verify(init_data)
+    if not user:return None,"Sessiya tasdiqlanmadi."
+    text=(text or "").strip()
+    if not text:return None,"Xabar bo'sh."
+    if len(text)>500:text=text[:500]
+    uid=str(int(user["id"]))
+    with LOCK:
+        room=_room(rid)
+        if not room or uid not in room["players"]:return None,"Siz bu xonada emassiz."
+        client_id=(client_id or "").strip()[:100]
+        if client_id:
+            old_id=room.get("chat_keys",{}).get(client_id)
+            if old_id:
+                for item in room.get("chat",[]):
+                    if item.get("id")==old_id:return item,None
+        item={"id":uuid.uuid4().hex[:12],"user_id":int(uid),"name":user.get("first_name") or user.get("username") or uid,"text":text,"ts":time.time()}
+        room.setdefault("chat",[]).append(item)
+        room["chat"]=room["chat"][-MAX_CHAT:]
+        if client_id:
+            keys=room.setdefault("chat_keys",{});keys[client_id]=item["id"]
+            if len(keys)>MAX_CHAT_CLIENT_KEYS:
+                for key in list(keys)[:len(keys)-MAX_CHAT_CLIENT_KEYS]:keys.pop(key,None)
+        room["version"]+=1;room["updated_at"]=time.time();_save()
+        return item,None
+
+def get_chat(rid, init_data, after_id=""):
+    user=_verify(init_data)
+    if not user:return None,"Sessiya tasdiqlanmadi."
+    uid=str(int(user["id"]))
+    with LOCK:
+        room=_room(rid)
+        if not room or uid not in room["players"]:return None,"Xona topilmadi."
+        items=list(room.get("chat",[]))
+    if after_id:
+        for i,x in enumerate(items):
+            if x.get("id")==after_id:
+                items=items[i+1:];break
+    return items[-100:],None
+
 def signal(rid, init_data, target, payload):
     user=_verify(init_data)
     if not user:return None,"Sessiya tasdiqlanmadi."
     uid=str(int(user["id"])); target=str(int(target or 0))
-    if not isinstance(payload,dict) or payload.get("type") not in ("offer","answer","ice"):
+    if not isinstance(payload,dict) or payload.get("type") not in ("offer","answer","ice","media"):
         return None,"Signal noto'g'ri."
     with LOCK:
         room=_room(rid)
         if not room or uid not in room["players"] or target not in room["players"] or target==uid:
             return None,"Signal qabul qiluvchisi noto'g'ri."
         box=room["signals"].setdefault(target,[])
-        box.append({"from":int(user["id"]),"payload":payload})
-        room["signals"][target]=box[-40:]
+        box.append({"from":int(user["id"]),"payload":payload,"ts":time.time()})
+        room["signals"][target]=box[-MAX_SIGNAL_ITEMS:]
         room["updated_at"]=time.time(); _save()
     return True,None
 
@@ -476,6 +520,8 @@ def handle_api(handler):
         d,e=choose(rid,init,qs.get("side",[""])[0],qs.get("style",["classic"])[0])
     elif path=="/api/game/signals":
         d,e=get_signals(rid,init)
+    elif path=="/api/game/chat":
+        d,e=get_chat(rid,init,qs.get("after",[""])[0])
     else:
         return _json(handler,404,{"ok":False,"error":"Not found"})
     return _json(handler,200 if not e else 400,{"ok":not bool(e),"data":d,"error":e})
@@ -493,6 +539,7 @@ def handle_post(handler):
     elif p=="/api/game/resign":d,e=resign(rid,init)
     elif p=="/api/game/rematch":d,e=rematch(rid,init)
     elif p=="/api/game/signal":d,e=signal(rid,init,body.get("target_user_id"),body.get("payload") or {})
+    elif p=="/api/game/chat":d,e=add_chat(rid,init,body.get("text",""),body.get("client_id",""))
     else:return _json(handler,404,{"ok":False,"error":"Not found"})
     return _json(handler,200 if not e else 400,{"ok":not bool(e),"data":d,"error":e})
 
