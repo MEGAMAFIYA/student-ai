@@ -64,6 +64,18 @@ GROQ_FALLBACK_MODEL = os.getenv("GROQ_FALLBACK_MODEL", "openai/gpt-oss-120b")
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 
 # ============================================================
+# 🎬 /kino — kino katalogi + Mini App
+# ============================================================
+# Telegram Cloud Bot API orqali qabul qilinadigan kino hajmi uchun xavfsiz
+# limit. Fayl Telegramdagi file_id bilan saqlanadi, shuning uchun kino
+# qayta yuklanmaydi.
+KINO_MAX_UPLOAD_MB = int(os.getenv("KINO_MAX_UPLOAD_MB", "20"))
+KINO_ROOM_TTL_SEC = int(os.getenv("KINO_ROOM_TTL_SEC", str(6 * 60 * 60)))
+# Ixtiyoriy: BotFather > Mini App uchun short name. Bo'sh bo'lsa Main Mini App ishlatiladi.
+KINO_APP_SHORT_NAME = os.getenv("KINO_APP_SHORT_NAME", "").strip()
+
+
+# ============================================================
 # 🤖 Bot mention orqali kelgan buyruqlarni aniqlash uchun username.
 # ============================================================
 # Ishga tushganda bot.py (_post_init) `application.bot.get_me()` orqali

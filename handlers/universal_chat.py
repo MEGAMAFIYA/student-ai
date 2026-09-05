@@ -35,6 +35,7 @@ from handlers.vid import vid_cmd
 from handlers.qoshiq import qoshiq_cmd
 from handlers.pro_tabrik import pro_cmd
 from handlers.my_cabinet import my_cabinet_cmd, on_personal_key_text
+from handlers.kino import kino_entry
 import pending_input
 import storage
 
@@ -75,6 +76,7 @@ SPECIAL_COMMAND_HANDLERS = {
     "qoshiq": qoshiq_cmd,
     "pro": pro_cmd,
     "my": my_cabinet_cmd,
+    "kino": kino_entry,
 }
 
 

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="uz">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+  <title>🎬 Kino Watch Party</title>
+  <link rel="stylesheet" href="/miniapp/kino/style.css">
+</head>
+<body>
+<div class="app">
+  <header><div><b id="title">🎬 Kino</b><small id="roomInfo">Xona tayyorlanmoqda...</small></div><button id="share">🔗</button></header>
+
+  <main>
+    <section class="player-wrap">
+      <video id="video" controls playsinline preload="metadata"></video>
+      <div id="remoteVideoWrap" class="remote hidden"><video id="remoteVideo" autoplay playsinline></video><span>Do‘st</span></div>
+      <div id="waiting" class="overlay">⏳ Xona ulanmoqda...</div>
+    </section>
+
+    <section class="people" id="people"></section>
+
+    <section class="controls">
+      <button id="mic">🎤 Mikrofon</button>
+      <button id="cam">📹 Kamera</button>
+    </section>
+
+    <section class="chat">
+      <div class="chat-title">💬 Chat</div>
+      <div id="messages" class="messages"></div>
+      <form id="chatForm"><input id="chatInput" maxlength="500" placeholder="Xabar yozing..."><button>➤</button></form>
+    </section>
+  </main>
+</div>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="/miniapp/kino/app.js"></script>
+</body>
+</html>

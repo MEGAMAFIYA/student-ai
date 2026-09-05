@@ -130,6 +130,7 @@ import tabrik_business
 import video_tools
 import inline_media
 import webapp_security
+import movie_watch
 
 logger = logging.getLogger(__name__)
 
@@ -241,6 +242,9 @@ QOSHIQ_BARE_RE = re.compile(r"^/(?:qo[`'\u00b4\u2018\u2019\u02bb\u02bc]shiq|qosh
 QOSHIQ_WITH_QUERY_RE = re.compile(r"^/(?:qo[`'\u00b4\u2018\u2019\u02bb\u02bc]shiq|qoshiq)(?:@\w+)?\s+(.+)$", re.IGNORECASE)
 
 TABRIK_BARE_RE = re.compile(r"^/tabrik(?:@\w+)?\s*$", re.IGNORECASE)
+# 🎬 /kino — inline katalog: "kino" barcha kinolarni, "kino ajdar uyi"
+# nom bo'yicha katalogdan qidiradi.
+KINO_RE = re.compile(r"^kino(?:\s+(.+))?$", re.IGNORECASE)
 
 # 🎨 /rasim — ATAYLAB bo'sh query'ni ham qabul qiladi: do'st bilan chatda
 # shunchaki "@Student_ai_uz_bot" deb yozib to'xtash eng qulay/tabiiy
@@ -319,6 +323,54 @@ async def on_inline_query(
 
     cache = context.bot_data.setdefault("inline_queries", {})
     _trim_cache(cache)
+
+    # --------------------------------------------------------
+    # 🎬 KINO — oldindan yuklangan katalogdan inline qidiruv.
+    # Natija chatga tushgach, "▶️ Birga ko'rish" tugmasi orqali
+    # ikki kishilik Watch Party Mini App ochiladi.
+    # --------------------------------------------------------
+    kino_match = KINO_RE.match(query)
+    if kino_match:
+        search_text = (kino_match.group(1) or "").strip()
+        if not PUBLIC_BASE_URL:
+            await _answer_redirect(update, query, "PUBLIC_BASE_URL sozlanmagan — Kino Mini App ochilmaydi")
+            return
+
+        movies = storage.search_movies(search_text)
+        if not movies:
+            await _answer_instruction(
+                update,
+                "🎬 Kino topilmadi",
+                f"«{search_text}» bo'yicha katalogda kino yo'q." if search_text else "Katalog hali bo'sh. Admin /kino orqali kino yuklashi mumkin.",
+                query=query,
+            )
+            return
+
+        results = []
+        for movie in movies[:10]:
+            room_id = movie_watch.find_or_create_room(movie["id"], user.id)
+            if not room_id:
+                continue
+            url = movie_watch.room_url(movie["id"], room_id)
+            result_id = "kino_" + uuid.uuid4().hex
+            results.append(
+                InlineQueryResultArticle(
+                    id=result_id,
+                    title=f"🎬 {movie['title'][:80]}",
+                    description="👥 2 kishi • ▶️ Birga tomosha qilish",
+                    input_message_content=InputTextMessageContent(
+                        f"🎬 {movie['title']}\n\n"
+                        "👥 Birga tomosha qilish xonasi tayyor.\n"
+                        "👇 Ikkalangiz ham «Birga ko'rish»ni bosing.",
+                    ),
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("▶️ Birga ko'rish", url=url)
+                    ]]),
+                )
+            )
+        await update.inline_query.answer(results, cache_time=3, is_personal=True)
+        _log_inline(user, query, "queued", f"/kino katalog natijalari={len(results)}")
+        return
 
     # --------------------------------------------------------
     # 🎬 OG'IR: /vid

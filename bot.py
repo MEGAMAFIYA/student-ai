@@ -16,7 +16,7 @@ import re
 import tempfile
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from threading import Thread, Timer
 
 import telegram.error
@@ -42,11 +42,12 @@ import wallet
 import payment_providers
 import webapp_security
 import inline_media
+import movie_watch
 from handlers import (
     menu, universal_chat, course_work, translate as translate_handler, images_to_pdf,
     edit_pdf, guide, inline_query, developer, pptx_gen, essay, quiz, solve, summarize,
     grammar, citation, my_files, reminders, voice, wallet_ui, tabrik, rasim,
-    vid, qoshiq, mention_dispatch, pro_tabrik, my_cabinet,
+    vid, qoshiq, kino, mention_dispatch, pro_tabrik, my_cabinet,
 )
 from pdf_tools import make_pdf
 
@@ -73,6 +74,7 @@ BOT_COMMANDS = [
     # bermaydi, shuning uchun shu yerda ASCII "qoshiq" ko'rsatiladi — lekin
     # "/qo'shiq" (apostrof bilan) ham xuddi shunday ishlaydi (handlers/qoshiq.py).
     BotCommand("qoshiq", "🎵 Qo'shiq qidirish va yuborish"),
+    BotCommand("kino", "🎬 Kino katalogi"),
     BotCommand("pro", "💎 Shaxsiy rasmli tabriknoma (Pro)"),
     BotCommand("my", "👤 Mening kabinetim"),
     BotCommand("yoqish", "Guruhda Universal chatni yoqish"),
@@ -552,6 +554,27 @@ class HealthHandler(BaseHTTPRequestHandler):
             self._serve_generated_image()
             return
 
+        if self.path.startswith("/api/kino/stream/"):
+            stream_key = self.path.split("/api/kino/stream/", 1)[1].split("?", 1)[0]
+            parts = stream_key.split("/")
+            if len(parts) == 2:
+                movie_watch.serve_movie(self, parts[0], parts[1])
+            else:
+                self.send_response(404)
+                self.end_headers()
+            return
+
+        if self.path.startswith("/api/kino/"):
+            movie_watch.handle_api(self)
+            return
+
+        if self.path.startswith("/miniapp/kino"):
+            if movie_watch.serve_static(self):
+                return
+            self.send_response(404)
+            self.end_headers()
+            return
+
         if self.path.startswith("/miniapp/rasim"):
             from urllib.parse import urlsplit
             path = urlsplit(self.path).path
@@ -634,6 +657,10 @@ class HealthHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         """💳 Kapitalbank to'lov webhook'i VA 🎨 /rasim Mini App rasm
         yuklash so'rovi shu yerga keladi."""
+        if self.path.startswith("/api/kino/"):
+            movie_watch.handle_post(self)
+            return
+
         if self.path == "/miniapp/rasim/upload":
             _handle_rasim_upload(self)
             return
@@ -693,7 +720,7 @@ def start_health_server():
     _PRO_AUDIO_BYTES = _load_pro_audio_bytes()
     try:
         port = int(os.getenv("PORT", "10000"))
-        server = HTTPServer(("0.0.0.0", port), HealthHandler)
+        server = ThreadingHTTPServer(("0.0.0.0", port), HealthHandler)
         print(f"🌐 HTTP server ishga tushdi: 0.0.0.0:{port}")
         server.serve_forever()
     except Exception as e:
@@ -703,6 +730,27 @@ def start_health_server():
 # ============================================================
 # CONVERSATION HANDLERLAR
 # ============================================================
+
+def build_kino_conv():
+    return ConversationHandler(
+        entry_points=[CommandHandler("kino", kino.kino_entry)],
+        states={
+            kino.KINO_MENU: [
+                CallbackQueryHandler(kino.kino_menu_callback, pattern=r"^kino:(?:upload|list)$"),
+                CallbackQueryHandler(kino.kino_open_callback, pattern=r"^kino:open:"),
+            ],
+            kino.KINO_WAIT_VIDEO: [
+                MessageHandler(filters.VIDEO | filters.Document.ALL, kino.kino_receive_video),
+            ],
+            kino.KINO_WAIT_TITLE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, kino.kino_receive_title),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", kino.kino_cancel)],
+        name="kino_conv",
+        allow_reentry=True,
+    )
+
 
 def build_course_work_conv():
     return ConversationHandler(
@@ -1104,6 +1152,7 @@ def main():
     app.add_handler(build_reminders_conv())
     app.add_handler(build_wallet_topup_conv())
     app.add_handler(build_developer_conv())
+    app.add_handler(build_kino_conv())
 
     app.add_handler(CallbackQueryHandler(menu.universal_selected, pattern="^menu:universal$"))
     app.add_handler(CallbackQueryHandler(menu.back_to_menu, pattern="^menu:back$"))

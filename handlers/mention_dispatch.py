@@ -84,6 +84,7 @@ COMMAND_ALIASES = {
     "qoshiq": "qoshiq",
     "pro": "pro",
     "my": "my",
+    "kino": "kino",
 }
 
 # Har biri "/" dan keyin, so'z chegarasidan oldin tekshiriladi.

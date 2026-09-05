@@ -17,6 +17,7 @@ shuning uchun bot kutilmaganda to'xtab qolsa ham oxirgi holat saqlanib qoladi.
 
 import json
 import logging
+import re
 import threading
 import time
 import uuid
@@ -48,6 +49,7 @@ _DEFAULT_DATA = {
     "reminders": [],   # [{"id","user_id","chat_id","text","due_ts","created_ts"}]
     "groups": {},      # {"<chat_id>": {"active": bool}} — guruhda Universal chat holati
     "inline_logs": [],  # [{"ts","user_id","username","query","status","detail"}] — inline (@Bot ...) jurnali
+    "movies": {},      # {"<movie_id>": {"id","title","file_id","mime_type","file_name","size","uploaded_by","created_ts"}} — kino katalogi
 }
 
 
@@ -294,3 +296,66 @@ def set_group_active(chat_id: int, active: bool) -> None:
         entry["updated_ts"] = _now_iso()
         _save()
     logger.info(f"👥 Guruh holati o'zgartirildi: chat_id={chat_id}, active={active} (doimiy saqlandi).")
+
+
+# ============================================================
+# 🎬 Kino katalogi
+# ============================================================
+
+MAX_MOVIES = 1000
+
+
+def add_movie(title: str, file_id: str, mime_type: str = "video/mp4",
+              file_name: str = "", size: int = 0, uploaded_by: int = 0) -> dict:
+    """Telegram file_id asosida katalogga kino qo'shadi.
+    Faylning o'zi server diskiga ko'chirilmaydi: Telegramdagi media
+    saqlanib qoladi va keyinchalik Mini App stream endpointi shu file_id
+    orqali foydalanadi."""
+    with _lock:
+        movie_id = uuid.uuid4().hex[:16]
+        movie = {
+            "id": movie_id,
+            "title": title.strip()[:200],
+            "file_id": str(file_id),
+            "mime_type": mime_type or "video/mp4",
+            "file_name": file_name[:200],
+            "size": int(size or 0),
+            "uploaded_by": int(uploaded_by or 0),
+            "created_ts": time.time(),
+        }
+        _data.setdefault("movies", {})[movie_id] = movie
+        if len(_data["movies"]) > MAX_MOVIES:
+            oldest = sorted(_data["movies"].values(), key=lambda x: x.get("created_ts", 0))
+            for old in oldest[:len(_data["movies"]) - MAX_MOVIES]:
+                _data["movies"].pop(old["id"], None)
+        _save()
+    logger.info("🎬 Kino katalogga qo'shildi: id=%s title=%r size=%s", movie_id, movie["title"], movie["size"])
+    return dict(movie)
+
+
+def get_movie(movie_id: str) -> dict | None:
+    movie = _data.get("movies", {}).get(str(movie_id))
+    return dict(movie) if movie else None
+
+
+def search_movies(query: str = "") -> list[dict]:
+    query = (query or "").strip().casefold()
+    movies = list(_data.get("movies", {}).values())
+    if query:
+        words = [w for w in re.split(r"\s+", query) if w]
+        def score(m):
+            title = m.get("title", "").casefold()
+            if query == title:
+                return 1000
+            if query in title:
+                return 800
+            return sum(100 for w in words if w in title)
+        movies = [m for m in movies if score(m) > 0]
+        movies.sort(key=lambda m: (score(m), m.get("created_ts", 0)), reverse=True)
+    else:
+        movies.sort(key=lambda m: m.get("created_ts", 0), reverse=True)
+    return [dict(m) for m in movies]
+
+
+def count_movies() -> int:
+    return len(_data.get("movies", {}))
