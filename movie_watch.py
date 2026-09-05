@@ -13,13 +13,16 @@ mumkin. WATCH_TURN_* env o'zgaruvchilari orqali TURN berish mumkin.
 """
 
 import json
+import subprocess
 import logging
 import mimetypes
 import os
+import re
 import threading
 import time
 import urllib.error
 import urllib.request
+import shutil
 import uuid
 
 import config
@@ -33,6 +36,10 @@ ROOMS = {}
 ROOM_LOCK = threading.RLock()
 MAX_CHAT = 200
 MAX_SIGNAL_ITEMS = 30
+MAX_CHAT_CLIENT_KEYS = 500
+KINO_CACHE_DIR = os.path.join("/tmp", "student_ai_kino_cache")
+KINO_CACHE_LOCK = threading.RLock()
+os.makedirs(KINO_CACHE_DIR, exist_ok=True)
 
 
 def _purge_rooms():
@@ -55,6 +62,7 @@ def create_room(movie_id: str, creator_id: int) -> str | None:
             "participants": {str(int(creator_id)): {"joined_at": time.time()}},
             "state": {"playing": False, "position": 0.0, "version": 0, "updated_at": time.time()},
             "chat": [],
+            "chat_client_keys": {},
             "signals": {},
         }
     return rid
@@ -142,7 +150,7 @@ def room_state(rid: str, init_data: str, playing=None, position=None):
         }, None
 
 
-def add_chat(rid: str, init_data: str, text: str):
+def add_chat(rid: str, init_data: str, text: str, client_id: str = ""):
     user = _verify(init_data)
     if not user:
         return None, "Tasdiqlash xatosi."
@@ -156,6 +164,13 @@ def add_chat(rid: str, init_data: str, text: str):
     with ROOM_LOCK:
         if uid not in room["participants"]:
             return None, "Siz bu xonaga qo'shilmagansiz."
+        client_id = (client_id or "").strip()[:100]
+        if client_id:
+            old_id = room.get("chat_client_keys", {}).get(client_id)
+            if old_id:
+                for old_item in room["chat"]:
+                    if old_item.get("id") == old_id:
+                        return old_item, None
         item = {
             "id": uuid.uuid4().hex[:12],
             "user_id": int(user["id"]),
@@ -165,6 +180,12 @@ def add_chat(rid: str, init_data: str, text: str):
         }
         room["chat"].append(item)
         room["chat"] = room["chat"][-MAX_CHAT:]
+        if client_id:
+            keys = room.setdefault("chat_client_keys", {})
+            keys[client_id] = item["id"]
+            if len(keys) > MAX_CHAT_CLIENT_KEYS:
+                for old_key in list(keys)[:len(keys) - MAX_CHAT_CLIENT_KEYS]:
+                    keys.pop(old_key, None)
         return item, None
 
 
@@ -228,9 +249,147 @@ def _telegram_file_url(file_id: str):
     return f"https://api.telegram.org/file/bot{token}/{path}"
 
 
+def _movie_cache_path(movie_id: str) -> str:
+    safe = re.sub(r"[^a-zA-Z0-9_-]", "_", str(movie_id))
+    return os.path.join(KINO_CACHE_DIR, safe + ".media")
+
+
+def _download_movie_to_cache(movie: dict) -> str:
+    """Telegramdan kinoni bir marta olib, lokal runtime cache'ga yozadi.
+    Keyingi ijrolarda Telegramga qayta murojaat qilinmaydi.
+    Cloud Bot API getFile cheklovi sabab bu yo'l faqat KINO_MAX_UPLOAD_MB ichidagi
+    fayllar uchun ishlaydi."""
+    path = _movie_cache_path(movie["id"])
+    with KINO_CACHE_LOCK:
+        if os.path.isfile(path) and os.path.getsize(path) > 0:
+            return path
+        remote = _telegram_file_url(movie["file_id"])
+        tmp = path + ".part"
+        try:
+            with urllib.request.urlopen(
+                urllib.request.Request(remote, headers={"User-Agent": "StudentAI-Kino/2.0"}),
+                timeout=120,
+            ) as resp, open(tmp, "wb") as out:
+                total = 0
+                max_bytes = max(1, int(config.KINO_MAX_UPLOAD_MB)) * 1024 * 1024
+                while True:
+                    chunk = resp.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > max_bytes:
+                        raise RuntimeError(
+                            f"Kino cache uchun juda katta: {total / 1024 / 1024:.1f} MB > {config.KINO_MAX_UPLOAD_MB} MB"
+                        )
+                    out.write(chunk)
+            os.replace(tmp, path)
+            logger.info("🎬 Kino cache yaratildi: %s (%d bytes)", movie["id"], os.path.getsize(path))
+            return path
+        finally:
+            try:
+                if os.path.exists(tmp): os.remove(tmp)
+            except OSError:
+                pass
+
+
+def _mime_for_movie(movie: dict) -> str:
+    mime = (movie.get("mime_type") or "").lower().split(";", 1)[0].strip()
+    if mime == "video/quicktime":
+        return "video/mp4"
+    if mime.startswith("video/"):
+        return mime
+    guessed = mimetypes.guess_type(movie.get("file_name", ""))[0]
+    return guessed or "video/mp4"
+
+
+def _ensure_browser_mp4(movie: dict, source_path: str) -> str:
+    """MP4 bo'lmagan katalog faylini H.264/AAC MP4 ga aylantiradi.
+    Browser/Telegram WebView format mosligini oshirish uchun runtime cache'da saqlanadi."""
+    name = (movie.get("file_name") or "").lower()
+    mime = (movie.get("mime_type") or "").lower()
+    if (name.endswith(".mp4") or mime == "video/mp4") and not os.getenv("KINO_FORCE_TRANSCODE", "0") == "1":
+        return source_path
+    out = os.path.splitext(source_path)[0] + "_h264.mp4"
+    with KINO_CACHE_LOCK:
+        if os.path.isfile(out) and os.path.getsize(out) > 0:
+            return out
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            logger.warning("🎬 ffmpeg topilmadi; original video serve qilinadi: %s", movie.get("title"))
+            return source_path
+        tmp = out + ".part.mp4"
+        cmd = [ffmpeg, "-y", "-i", source_path, "-map", "0:v:0", "-map", "0:a:0?",
+               "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+               "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k",
+               "-ar", "48000", "-movflags", "+faststart", tmp]
+        try:
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=300, check=True)
+            if os.path.getsize(tmp) <= 0:
+                raise RuntimeError("ffmpeg bo'sh fayl yaratdi")
+            os.replace(tmp, out)
+            logger.info("🎬 Browser MP4 tayyor: %s", movie.get("title"))
+            return out
+        except Exception as e:
+            logger.error("🎬 MP4 transcode xatosi: %s", e, exc_info=True)
+            try:
+                if os.path.exists(tmp): os.remove(tmp)
+            except OSError:
+                pass
+            return source_path
+
+
+def _serve_local_range(handler, path: str, content_type: str):
+    size = os.path.getsize(path)
+    range_header = handler.headers.get("Range", "").strip()
+    start, end = 0, size - 1
+    status = 200
+    if range_header:
+        m = re.match(r"^bytes=(\d*)-(\d*)$", range_header)
+        if not m:
+            handler.send_response(416)
+            handler.send_header("Content-Range", f"bytes */{size}")
+            handler.end_headers()
+            return
+        a, b = m.groups()
+        if a:
+            start = int(a)
+            end = int(b) if b else size - 1
+        else:
+            suffix = int(b or 0)
+            start = max(0, size - suffix)
+            end = size - 1
+        if start >= size or start > end:
+            handler.send_response(416)
+            handler.send_header("Content-Range", f"bytes */{size}")
+            handler.end_headers()
+            return
+        end = min(end, size - 1)
+        status = 206
+
+    length = end - start + 1
+    handler.send_response(status)
+    handler.send_header("Content-Type", content_type)
+    handler.send_header("Accept-Ranges", "bytes")
+    handler.send_header("Content-Length", str(length))
+    if status == 206:
+        handler.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+    handler.send_header("Cache-Control", "private, max-age=3600")
+    handler.end_headers()
+    with open(path, "rb") as f:
+        f.seek(start)
+        remaining = length
+        while remaining:
+            chunk = f.read(min(1024 * 1024, remaining))
+            if not chunk:
+                break
+            handler.wfile.write(chunk)
+            remaining -= len(chunk)
+
+
 def serve_movie(handler, room_id: str, movie_id: str):
-    """Range-aware Telegram media proxy. Faqat mavjud watch-room ichidagi
-    mos kino stream qilinadi; Bot API token browserga chiqmaydi."""
+    """Browserga ishonchli Range video stream beradi.
+    Avval runtime cache'dan foydalanadi; cache yo'q bo'lsa Telegramdan bir marta oladi.
+    Shu bilan bitta tomoshabin ham kinoni mustaqil ko'ra oladi."""
     room = _get_room(room_id)
     if not room or str(room.get("movie_id")) != str(movie_id):
         _send_text(handler, 404, "Kino xonasi topilmadi.")
@@ -240,44 +399,15 @@ def serve_movie(handler, room_id: str, movie_id: str):
         _send_text(handler, 404, "Kino topilmadi.")
         return
     try:
-        remote = _telegram_file_url(movie["file_id"])
-        headers = {"User-Agent": "StudentAI-Kino/1.0"}
-        incoming_range = handler.headers.get("Range")
-        if incoming_range:
-            headers["Range"] = incoming_range
-        req = urllib.request.Request(remote, headers=headers)
-        resp = urllib.request.urlopen(req, timeout=60)
-        status = getattr(resp, "status", 200) or 200
-        content_type = movie.get("mime_type") or mimetypes.guess_type(movie.get("file_name", ""))[0] or "video/mp4"
-        length = resp.headers.get("Content-Length")
-        content_range = resp.headers.get("Content-Range")
-        handler.send_response(status)
-        handler.send_header("Content-Type", content_type)
-        if length:
-            handler.send_header("Content-Length", length)
-        if content_range:
-            handler.send_header("Content-Range", content_range)
-        handler.send_header("Accept-Ranges", "bytes")
-        handler.send_header("Cache-Control", "private, max-age=60")
-        handler.end_headers()
-        while True:
-            chunk = resp.read(1024 * 256)
-            if not chunk:
-                break
-            handler.wfile.write(chunk)
+        cache = _download_movie_to_cache(movie)
+        playable = _ensure_browser_mp4(movie, cache)
+        _serve_local_range(handler, playable, "video/mp4" if playable.endswith(".mp4") else _mime_for_movie(movie))
     except urllib.error.HTTPError as e:
-        logger.error("🎬 Kino stream Telegram HTTPError: %s", e)
-        try:
-            _send_text(handler, e.code if e.code in (404, 416) else 502, "Video oqimini olishda xatolik.")
-        except Exception:
-            pass
+        logger.error("🎬 Kino yuklash HTTPError: %s", e)
+        _send_text(handler, e.code if e.code in (404, 416) else 502, "Telegramdan kino faylini olishda xatolik.")
     except Exception as e:
         logger.error("🎬 Kino stream xatosi: %s: %s", type(e).__name__, e, exc_info=True)
-        try:
-            _send_text(handler, 502, "Video oqimini olishda xatolik.")
-        except Exception:
-            pass
-
+        _send_text(handler, 502, "Kino stream tayyorlanmadi: " + str(e)[:180])
 
 def _send_text(handler, status, text):
     body = text.encode("utf-8")
@@ -349,7 +479,7 @@ def handle_post(handler):
         data, err = room_state(body.get("room",""), init_data, body.get("playing"), body.get("position"))
         return _json(handler, 200 if not err else 400, {"ok": not bool(err), "data": data, "error": err})
     if path == "/api/kino/chat":
-        data, err = add_chat(body.get("room",""), init_data, body.get("text",""))
+        data, err = add_chat(body.get("room",""), init_data, body.get("text",""), body.get("client_id", ""))
         return _json(handler, 200 if not err else 400, {"ok": not bool(err), "data": data, "error": err})
     if path == "/api/kino/signal":
         data, err = put_signal(body.get("room",""), init_data, int(body.get("target_user_id", 0)), body.get("payload") or {})
@@ -376,9 +506,22 @@ def serve_static(handler):
     except OSError:
         return False
     ctype = mimetypes.guess_type(name)[0] or "text/plain"
+    # TURN credentials faqat HTML ichidagi runtime config sifatida beriladi;
+    # ular URL orqali oshkor qilinmaydi. TURN ishlatilsa credential browserga
+    # chiqishi tabiiy (WebRTC client credentiali), shuning uchun qisqa muddatli
+    # TURN credentiallardan foydalanish tavsiya etiladi.
+    if name == "index.html":
+        text = body.decode("utf-8")
+        turn_cfg = (f"<script>window.KINO_TURN_URL={json.dumps(config.KINO_TURN_URL)};"
+                    f"window.KINO_TURN_USERNAME={json.dumps(config.KINO_TURN_USERNAME)};"
+                    f"window.KINO_TURN_CREDENTIAL={json.dumps(config.KINO_TURN_CREDENTIAL)};</script>")
+        text = text.replace("</head>", turn_cfg + "</head>", 1)
+        body = text.encode("utf-8")
     handler.send_response(200)
     handler.send_header("Content-Type", ctype + ("; charset=utf-8" if ctype.startswith("text") or name.endswith(".js") else ""))
     handler.send_header("Cache-Control", "no-cache")
+    if name == "index.html":
+        handler.send_header("Permissions-Policy", "camera=(self), microphone=(self)")
     handler.send_header("Content-Length", str(len(body)))
     handler.end_headers()
     handler.wfile.write(body)

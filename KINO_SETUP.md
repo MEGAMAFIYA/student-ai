@@ -30,3 +30,21 @@ Root URL ham endi Mini App router sifatida xizmat qiladi. Agar Telegram
 Cloud Bot API'da katta kino fayllari uchun fayl yuklab olish/streaming
 cheklovlari mavjud. To'liq filmlar uchun keyingi bosqichda Local Bot API
 yoki R2/S3 kabi object storage tavsiya qilinadi.
+
+## WebRTC kamera/mikrofon (2-bosqich tuzatish)
+
+Kamera va mikrofon WebRTC orqali uzatiladi. `KINO_TURN_*` o'zgaruvchilari ixtiyoriy:
+
+- `KINO_TURN_URL`
+- `KINO_TURN_USERNAME`
+- `KINO_TURN_CREDENTIAL`
+
+STUN ko‘p tarmoqlarda yetadi. Mobil operator yoki qattiq NAT/firewall holatlarida TURN relay kerak bo‘lishi mumkin. TURN credentiallarni qisqa muddatli qilib berish tavsiya etiladi.
+
+### Diagnostika
+
+Mini App ichida kamera/mikrofon tugmasi bosilganda brauzer `getUserMedia` ruxsatini so‘raydi. Ruxsat berilmasa, foydalanuvchiga aniq xabar chiqadi. Ikki foydalanuvchi xonaga kirgandan keyin media ulanishi negotiation + ICE signaling orqali qayta o‘rnatiladi.
+
+## Chat duplicate himoyasi
+
+Chat POST so‘roviga `client_id` yuboriladi. Server bir xil `client_id`ni qayta yuborilgan bo‘lsa, yangi xabar yaratmaydi. Frontendda ham message ID bo‘yicha dedupe va polling lock mavjud.

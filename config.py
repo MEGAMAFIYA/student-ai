@@ -73,6 +73,11 @@ KINO_MAX_UPLOAD_MB = int(os.getenv("KINO_MAX_UPLOAD_MB", "20"))
 KINO_ROOM_TTL_SEC = int(os.getenv("KINO_ROOM_TTL_SEC", str(6 * 60 * 60)))
 # Ixtiyoriy: BotFather > Mini App uchun short name. Bo'sh bo'lsa Main Mini App ishlatiladi.
 KINO_APP_SHORT_NAME = os.getenv("KINO_APP_SHORT_NAME", "").strip()
+# Ixtiyoriy WebRTC TURN. STUN ko‘p tarmoqlarda yetarli, lekin mobil/operator NAT
+# holatlarida TURN relay kerak bo‘lishi mumkin.
+KINO_TURN_URL = os.getenv("KINO_TURN_URL", "").strip()
+KINO_TURN_USERNAME = os.getenv("KINO_TURN_USERNAME", "").strip()
+KINO_TURN_CREDENTIAL = os.getenv("KINO_TURN_CREDENTIAL", "").strip()
 
 
 # ============================================================

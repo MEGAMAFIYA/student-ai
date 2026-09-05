@@ -96,6 +96,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_group = chat.type in ("group", "supergroup")
     user_text = update.message.text.strip()
 
+    # 🎬 Inline Kino Watch Party xabarlari Universal AIga yuborilmaydi.
+    # Bu himoya Telegram klienti inline natijani oddiy Message update sifatida
+    # qaytargan holatda ham AI javobining oldini oladi.
+    if user_text.startswith("🎬 ") and "Birga tomosha qilish xonasi tayyor" in user_text:
+        logger.info("🎬 Kino Watch Party xabari AI oqimidan o'tkazilmadi: chat_id=%s", chat.id)
+        return
+
     # 🔑 AVVAL HAMMASIDAN OLDIN: foydalanuvchi "/my > 🔑 Shaxsiy
     # kalitlarim"da kalit/model matnini kiritishini kutayotganmi? Bo'lsa,
     # shu yerda "iste'mol qilinadi" — pastdagi mention/AI mantiqiga

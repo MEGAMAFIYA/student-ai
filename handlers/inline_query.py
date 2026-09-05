@@ -818,7 +818,7 @@ async def on_chosen_inline_result(
     # Kesh server restartidan keyin yo'qolgan bo'lsa ham `chosen.query`
     # orqali bu maxsus oqimni aniqlab, shu yerning o'zida to'xtatamiz.
     special_query = (chosen.query or "").strip()
-    if re.match(r"^kino(?:\\s+|$)", special_query, re.IGNORECASE):
+    if chosen.result_id.startswith("kino_") or re.match(r"^kino(?:\s+|$)", special_query, re.IGNORECASE):
         logger.info(
             "🎬 [CHOSEN_INLINE] /kino natijasi tanlandi — AI'ga YUBORILMAYDI "
             "(user_id=%s, query=%r, result_id=%s)",
