@@ -30,6 +30,7 @@ import asyncio
 import html
 import io
 import logging
+import sys
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -167,37 +168,219 @@ def _main_menu_text() -> str:
     return (
         "🔧 <b>Developer — AI sozlamalari</b>\n\n"
         f"{_persistence_status_line()}\n\n"
-        "Har bir funksiya uchun AI provider, model, API kalit va bazaviy "
-        "URL manzilini shu yerdan boshqarishingiz mumkin.\n\n"
+        "AI sozlamalari, moliya va diagnostika ixcham bo'limlarga ajratilgan.\n\n"
         "Bo'limni tanlang:"
     )
 
 
 def _main_menu_keyboard() -> InlineKeyboardMarkup:
-    rows = []
-    prefixes = list(config.AI_FUNCTION_LABELS.items())
-    for i in range(0, len(prefixes), 2):
-        row = [
-            InlineKeyboardButton(label, callback_data=f"dev:func:{prefix}")
-            for prefix, label in prefixes[i:i + 2]
-        ]
-        rows.append(row)
-    rows.append([InlineKeyboardButton("🔑 AI kalitlari", callback_data="dev:keys")])
-    rows.append([InlineKeyboardButton("🎵 Qo'shiq qidirish", callback_data="dev:music")])
-    rows.append([InlineKeyboardButton("➕ Barcha modellar", callback_data="dev:bulk")])
-    rows.append([InlineKeyboardButton("📊 Statistika", callback_data="dev:stats")])
-    rows.append([InlineKeyboardButton("☁️ RENDER", callback_data="dev:render")])
-    rows.append([InlineKeyboardButton("🔍 Inline jurnali (@Bot ...)", callback_data="dev:inlinelog:all")])
-    rows.append([InlineKeyboardButton("💎 Pro / Tabrik sozlamalari", callback_data="dev:pt")])
-    rows.append([InlineKeyboardButton("💎 Pro obunalar", callback_data="dev:prosub")])
-    rows.append([InlineKeyboardButton("💳 To'lovlar", callback_data="dev:pay"),
-                 InlineKeyboardButton("💰 Balanslar", callback_data="dev:paybal")])
-    rows.append([InlineKeyboardButton("📈 Moliyaviy statistika", callback_data="dev:finstats")])
-    rows.append([InlineKeyboardButton("☁️ GitHub", callback_data="dev:github")])
-    rows.append([InlineKeyboardButton("⚙️ Funksiya narxlari", callback_data="dev:payprice"),
-                 InlineKeyboardButton("💳 To'lov sozlamalari", callback_data="dev:paysettings")])
-    rows.append([InlineKeyboardButton("❌ Yopish", callback_data="dev:close")])
+    """Ixcham /developer bosh menyusi: murakkab sozlamalar bo'limlarga ajratilgan."""
+    rows = [
+        [InlineKeyboardButton("🔑 Kalitlar", callback_data="dev:kalitlar"),
+         InlineKeyboardButton("💰 Moliya", callback_data="dev:moliya")],
+        [InlineKeyboardButton("🎵 Qo'shiq qidirish", callback_data="dev:music"),
+         InlineKeyboardButton("💎 Pro / Tabrik", callback_data="dev:pt")],
+        [InlineKeyboardButton("📊 Statistika", callback_data="dev:stats"),
+         InlineKeyboardButton("🧪 Testlarni sinash", callback_data="dev:tests")],
+        [InlineKeyboardButton("☁️ RENDER", callback_data="dev:render"),
+         InlineKeyboardButton("☁️ GitHub", callback_data="dev:github")],
+        [InlineKeyboardButton("🔍 Inline jurnali", callback_data="dev:inlinelog:all")],
+        [InlineKeyboardButton("❌ Yopish", callback_data="dev:close")],
+    ]
     return InlineKeyboardMarkup(rows)
+
+
+# ============================================================
+# 🔑 Kalitlar bo'limi — AI funksiyalari + API kalitlar + modellar
+# ============================================================
+
+def _kalitlar_menu_text() -> str:
+    return (
+        "🔑 <b>Kalitlar va AI sozlamalari</b>\n\n"
+        "AI funksiyalari, API kalitlari va barcha modellar shu bo'limda boshqariladi.\n\n"
+        "Kerakli funksiyani tanlang:"
+    )
+
+
+def _kalitlar_menu_keyboard() -> InlineKeyboardMarkup:
+    items = list(config.AI_FUNCTION_LABELS.items())
+    rows = []
+    for i in range(0, len(items), 2):
+        rows.append([
+            InlineKeyboardButton(label, callback_data=f"dev:func:{prefix}")
+            for prefix, label in items[i:i + 2]
+        ])
+    rows += [
+        [InlineKeyboardButton("🔑 AI kalitlari", callback_data="dev:keys"),
+         InlineKeyboardButton("➕ Barcha modellar", callback_data="dev:bulk")],
+        [InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:menu")],
+    ]
+    return InlineKeyboardMarkup(rows)
+
+
+def _moliya_menu_text() -> str:
+    return (
+        "💰 <b>Moliya</b>\n\n"
+        "Pro obunalar, to'lovlar, balanslar va narxlarni shu yerdan boshqaring."
+    )
+
+
+def _moliya_menu_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("💎 Pro obunalar", callback_data="dev:prosub")],
+        [InlineKeyboardButton("💳 To'lovlar", callback_data="dev:pay")],
+        [InlineKeyboardButton("💰 Balanslar", callback_data="dev:paybal")],
+        [InlineKeyboardButton("📈 Moliyaviy statistika", callback_data="dev:finstats")],
+        [InlineKeyboardButton("⚙️ Funksiya narxlari", callback_data="dev:payprice")],
+        [InlineKeyboardButton("💳 To'lov sozlamalari", callback_data="dev:paysettings")],
+        [InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:menu")],
+    ])
+
+
+# ============================================================
+# 🧪 Loyiha testlarini Telegram orqali ishga tushirish
+# ============================================================
+
+async def _run_project_tests() -> str:
+    """tests/ dagi har bir test modulini mustaqil subprocess'da ishga tushiradi.
+
+    Har bir modul alohida jarayon bo'lgani uchun bitta osilib qolgan test
+    qolgan testlarni bloklamaydi. Timeout va traceback Telegram'da ko'rsatiladi
+    va Render logiga ham yoziladi.
+    """
+    import concurrent.futures
+    import os
+    import signal
+    import subprocess
+    import tempfile
+    import time
+
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    tests_dir = os.path.join(project_root, "tests")
+    test_files = sorted(
+        f for f in os.listdir(tests_dir)
+        if f.startswith("test_") and f.endswith(".py")
+    )
+    timeout_sec = 30
+
+    def run_one(filename: str) -> dict:
+        module = f"tests.{filename[:-3]}"
+        started = time.monotonic()
+        tmp_path = None
+        proc = None
+        try:
+            fd, tmp_path = tempfile.mkstemp(prefix="student_ai_test_", suffix=".log")
+            os.close(fd)
+            with open(tmp_path, "w", encoding="utf-8") as out:
+                proc = subprocess.Popen(
+                    [sys.executable, "-m", "unittest", module, "-v"],
+                    cwd=project_root,
+                    stdout=out,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    start_new_session=True,
+                )
+                try:
+                    proc.wait(timeout=timeout_sec)
+                    timed_out = False
+                except subprocess.TimeoutExpired:
+                    timed_out = True
+                    # Test ichida daemon bo'lmagan child process qolsa ham
+                    # process group birgalikda tugatiladi.
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    proc.wait(timeout=5)
+
+            with open(tmp_path, "r", encoding="utf-8", errors="replace") as f:
+                output = f.read()
+            elapsed = time.monotonic() - started
+
+            if timed_out:
+                status = "TIMEOUT"
+                detail = (
+                    f"Test {timeout_sec} soniyada tugamadi. "
+                    "Ehtimol osilib qolgan test, uzoq kutish yoki tashqi resursga bog'liqlik bor."
+                )
+            elif proc.returncode == 0:
+                status = "OK"
+                detail = "Barcha testlar muvaffaqiyatli o'tdi."
+            else:
+                status = "FAIL"
+                detail = "Kamida bitta test ishlamadi. Quyida unittest traceback/sababi bor."
+
+            logger.info(
+                "🧪 TEST_RESULT file=%s status=%s returncode=%s elapsed=%.2fs\\n%s",
+                filename, status, proc.returncode, elapsed, output[-12000:],
+            )
+            return {
+                "file": filename, "status": status, "returncode": proc.returncode,
+                "elapsed": elapsed, "detail": detail, "output": output,
+            }
+        except Exception as exc:
+            logger.error("🧪 TEST_RESULT file=%s status=RUNNER_ERROR: %s", filename, exc, exc_info=True)
+            return {
+                "file": filename, "status": "RUNNER_ERROR", "returncode": None,
+                "elapsed": time.monotonic() - started,
+                "detail": f"{type(exc).__name__}: {exc}", "output": "",
+            }
+        finally:
+            if tmp_path:
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+
+    logger.info(
+        "🧪 TEST_RUN_START root=%s files=%d timeout_per_file=%ss",
+        project_root, len(test_files), timeout_sec,
+    )
+
+    # Testlar mustaqil jarayonlarda parallel ishlaydi: bitta modul timeout
+    # bo'lsa ham qolganlari natijasini tezda olish mumkin.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(5, max(1, len(test_files)))) as pool:
+        results = await asyncio.gather(
+            *(asyncio.to_thread(run_one, filename) for filename in test_files)
+        )
+
+    ok = [r for r in results if r["status"] == "OK"]
+    bad = [r for r in results if r["status"] != "OK"]
+    lines = [
+        "🧪 <b>LOYIHA TESTLARI</b>",
+        "",
+        f"📁 tests/: <b>{len(test_files)}</b> ta modul",
+        f"✅ Muvaffaqiyatli: <b>{len(ok)}</b>",
+        f"❌ Muammo: <b>{len(bad)}</b>",
+        "",
+    ]
+    for r in results:
+        icon = "✅" if r["status"] == "OK" else ("⏱" if r["status"] == "TIMEOUT" else "❌")
+        lines.append(
+            f"{icon} <code>{_esc(r['file'])}</code> — <b>{r['status']}</b> "
+            f"({r['elapsed']:.1f}s)"
+        )
+
+    if bad:
+        lines.append("\n<b>Muammo tafsilotlari:</b>")
+        for r in bad:
+            lines.append(
+                f"\n❌ <b>{_esc(r['file'])}</b>\n"
+                f"{_esc(r['detail'])}\n"
+                f"<pre>{_esc((r['output'] or 'Chiqish mavjud emas')[-1200:])}</pre>"
+            )
+    else:
+        lines.append("\n🎉 <b>tests/ papkasidagi barcha modullar muvaffaqiyatli ishladi.</b>")
+
+    report = "\n".join(lines)
+    if len(report) > 3900:
+        report = report[:3900] + "\n\n<i>… Tafsilotlar Render logida to'liq saqlangan.</i>"
+
+    logger.info(
+        "🧪 TEST_RUN_FINISH total=%d ok=%d bad=%d",
+        len(results), len(ok), len(bad),
+    )
+    return report
 
 
 # ============================================================
@@ -239,7 +422,7 @@ def _func_menu_keyboard(prefix: str) -> InlineKeyboardMarkup:
             InlineKeyboardButton("✏️ API_KEY", callback_data=f"dev:edit:{prefix}:api_key"),
             InlineKeyboardButton("✏️ BASE_URL", callback_data=f"dev:edit:{prefix}:base_url"),
         ],
-        [InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:menu")],
+        [InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:kalitlar")],
     ])
 
 
@@ -287,7 +470,7 @@ def _keys_menu_keyboard() -> InlineKeyboardMarkup:
     rows.append([InlineKeyboardButton("➕ Yangi kalit qo'shish", callback_data="dev:keyadd")])
     rows.append([InlineKeyboardButton("🔀 Modellarni o'zgartirish", callback_data="dev:keybulk")])
     rows.append([InlineKeyboardButton("🩺 Kalitlarni tekshirish", callback_data="dev:keycheck")])
-    rows.append([InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:menu")])
+    rows.append([InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:kalitlar")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -505,7 +688,7 @@ def _prosub_menu_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(f"❌ {req['user_id']}", callback_data=f"prosub:reject:{req['req_id']}"),
         ])
     rows.append([InlineKeyboardButton("🔄 Yangilash", callback_data="dev:prosub")])
-    rows.append([InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:menu")])
+    rows.append([InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:moliya")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -1132,6 +1315,27 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if action == "menu":
         await _safe_edit_query(query, _main_menu_text(), reply_markup=_main_menu_keyboard(), parse_mode="HTML")
+        return DEV_MENU
+
+    # ---------- 🔑 Kalitlar bo'limi ----------
+    if action == "kalitlar":
+        await _safe_edit_query(query, _kalitlar_menu_text(), reply_markup=_kalitlar_menu_keyboard(), parse_mode="HTML")
+        return DEV_MENU
+
+    # ---------- 💰 Moliya bo'limi ----------
+    if action == "moliya":
+        await _safe_edit_query(query, _moliya_menu_text(), reply_markup=_moliya_menu_keyboard(), parse_mode="HTML")
+        return DEV_MENU
+
+    # ---------- 🧪 Loyiha testlari ----------
+    if action == "tests":
+        await _safe_edit_query(query, "🧪 <b>tests/ papkasi tekshirilmoqda...</b>\nBarcha testlar ishga tushirilmoqda, biroz kuting.", parse_mode="HTML")
+        report = await _run_project_tests()
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 Qayta sinash", callback_data="dev:tests")],
+            [InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:menu")],
+        ])
+        await _safe_edit_query(query, report, reply_markup=kb, parse_mode="HTML")
         return DEV_MENU
 
     # ---------- Funksiya sozlamalari ----------

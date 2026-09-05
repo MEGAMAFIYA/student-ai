@@ -55,7 +55,7 @@ def payments_menu_text() -> str:
 
 def payments_menu_keyboard() -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(label, callback_data=f"dev:paylist:{key}")] for key, label, _ in _STATUS_TABS]
-    rows.append([InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:menu")])
+    rows.append([InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:moliya")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -167,7 +167,7 @@ def financial_stats_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔄 Yangilash", callback_data="dev:finstats")],
         [InlineKeyboardButton("🔒 Faol reservationlar", callback_data="dev:resactive")],
-        [InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:menu")],
+        [InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:moliya")],
     ])
 
 
@@ -211,7 +211,7 @@ def balances_text() -> str:
 def balances_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔍 ID bo'yicha qidirish", callback_data="dev:balsearch")],
-        [InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:menu")],
+        [InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:moliya")],
     ])
 
 
@@ -243,7 +243,7 @@ def price_menu_keyboard() -> InlineKeyboardMarkup:
             f"{status_icon} {f['name']} — {_fmt_sum(f['price']) if f['price'] else 'bepul'}",
             callback_data=f"dev:pricefeat:{fid}",
         )])
-    rows.append([InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:menu")])
+    rows.append([InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:moliya")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -297,4 +297,4 @@ def payment_settings_text() -> str:
 
 
 def payment_settings_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:menu")]])
+    return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:moliya")]])
