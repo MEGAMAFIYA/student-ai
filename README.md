@@ -257,3 +257,30 @@ bo'limi yuqorida, xuddi shu Upstash/Neon/GitHub mexanizmi ishlatiladi).
   bunday holatda animatsiya `TABRIK_BUSINESS_CHAT_NOT_ELIGIBLE` logi
   bilan to'xtaydi, foydalanuvchiga aniq sabab ko'rsatiladi, hech qachon
   botning shaxsiy chatiga yashirincha redirect qilinmaydi.
+
+
+## 🎮🎥 1v1 O'yinlar — Shaxmat va Rus shashkasi
+
+Istalgan 1:1 Telegram chatida `@Student_ai_uz_bot game` yozilsa, ikkita
+o'yin chiqadi: **♟ Shaxmat** va **⚪ Rus shashkasi**. Tanlangan o'yin chatga
+1v1 xona tugmasi bilan joylanadi. Ikkala foydalanuvchi tugmani bosib bir xil
+Mini App xonasiga kiradi, **Oq/Qora** tomonini va dona ko'rinishini
+(**Klassik/Kristall/Neon**) tanlaydi.
+
+- Shaxmat yurishlari serverda tekshiriladi: shohga shax, rokada, en passant,
+  piyodani avtomatik farzin qilish, mat/pat va 50-yurish durangi hisobga olinadi.
+- Rus shashkasida urish majburiy, oddiy toshlar orqaga ham uradi, damka
+  diagonal bo'ylab uzoqqa yuradi.
+- O'yin holati qayta ishlashlar orasida persistent saqlashga yuboriladi
+  (Upstash/Neon/GitHub sozlangan bo'lsa restartdan keyin ham qayta tiklanadi).
+- Harakat, urish va yakun animatsiyalari bor; lokal ovoz effektlari mavjud.
+- Mini App ichida WebRTC **kamera + mikrofon** mavjud. Qattiq NAT/operator
+  tarmoqlarida barqarorlik uchun `GAME_TURN_URL`, `GAME_TURN_USERNAME`,
+  `GAME_TURN_CREDENTIAL` sozlamalarini berish mumkin.
+
+### O'yin Mini App'ini yoqish
+
+BotFather'da bot uchun **Main Mini App** URL sifatida:
+`https://YOUR-RENDER-DOMAIN.onrender.com/miniapp/`
+qo'yiladi. Mavjud root router `startapp=game_<ROOM_ID>` ni avtomatik ravishda
+`/miniapp/game/` ga olib o'tadi.

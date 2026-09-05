@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Student AI • 1v1</title>
+<link rel="stylesheet" href="/miniapp/game/style.css">
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div><div class="eyebrow">STUDENT AI • 1V1</div><h1 id="gameTitle">🎮 O‘yin</h1></div>
+    <div id="turnBadge" class="badge">⏳ Ulanmoqda…</div>
+  </header>
+
+  <section id="lobby" class="panel">
+    <div class="hero"><div class="hero-orb">♟</div><div><h2>Do‘stingiz bilan o‘ynang</h2><p id="lobbyText">Xona ochilmoqda…</p></div></div>
+    <div class="choices">
+      <div><h3>1. Rangni tanlang</h3><div class="row">
+        <button class="choice side" data-side="w">⚪ <b>Oq</b><span>birinchi yurish</span></button>
+        <button class="choice side" data-side="b">⚫ <b>Qora</b><span>ikkinchi yurish</span></button>
+      </div></div>
+      <div><h3>2. Donalar ko‘rinishi</h3><div class="row">
+        <button class="choice style" data-style="classic">♟ <b>Klassik</b><span>an’anaviy</span></button>
+        <button class="choice style" data-style="crystal">✦ <b>Kristall</b><span>yaltiroq</span></button>
+        <button class="choice style" data-style="neon">◈ <b>Neon</b><span>zamonaviy</span></button>
+      </div></div>
+      <button id="readyBtn" class="primary" disabled>✓ Tanlovni tasdiqlash</button>
+    </div>
+    <div id="players" class="players"></div>
+  </section>
+
+  <section id="game" class="hidden">
+    <div class="gamebar">
+      <div id="playerMe" class="playercard"></div><div class="vs">VS</div><div id="playerOpp" class="playercard"></div>
+    </div>
+    <div class="boardWrap"><div id="board" class="board" aria-label="O‘yin doskasi"></div><div id="fx" class="fx"></div></div>
+    <div class="actions">
+      <button id="soundBtn" class="tool">🔊 Ovoz</button>
+      <button id="callBtn" class="tool">📹 Video</button>
+      <button id="micBtn" class="tool">🎙 Ovoz</button>
+      <button id="resignBtn" class="danger">🏳 Taslim</button>
+    </div>
+    <div id="result" class="result hidden"></div>
+  </section>
+
+  <section id="callPanel" class="callPanel hidden">
+    <div class="callHead"><b>🎥 Kino kabi suhbat</b><button id="closeCall">✕</button></div>
+    <div class="videos"><div class="videoTile"><video id="remoteVideo" autoplay playsinline></video><span>Do‘stingiz</span></div><div class="videoTile self"><video id="localVideo" autoplay muted playsinline></video><span>Siz</span></div></div>
+    <div class="callHint" id="callHint">Kamera yoki mikrofonni yoqing.</div>
+  </section>
+</div>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="/miniapp/game/app.js"></script>
+</body></html>

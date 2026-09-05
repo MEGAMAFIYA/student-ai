@@ -25,9 +25,13 @@
       location.replace("/miniapp/kino/?room=" + encodeURIComponent(start.slice(5)));
       return;
     }
+    if (start && start.startsWith("game_")) {
+      location.replace("/miniapp/game/?room=" + encodeURIComponent(start.slice(5)));
+      return;
+    }
     // Agar boshqa Mini App oqimi bo'lsa, uni bu router buzmaydi.
     document.querySelector(".muted").textContent =
-      "Mini App ishga tayyor. Kino xonasini ochish uchun Kino natijasidagi tugmani bosing.";
+      "Mini App ishga tayyor. O‘yin yoki Kino xonasini tegishli tugma orqali oching.";
   })();
   </script>
 </body>

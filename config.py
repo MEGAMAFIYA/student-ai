@@ -78,6 +78,9 @@ KINO_APP_SHORT_NAME = os.getenv("KINO_APP_SHORT_NAME", "").strip()
 KINO_TURN_URL = os.getenv("KINO_TURN_URL", "").strip()
 KINO_TURN_USERNAME = os.getenv("KINO_TURN_USERNAME", "").strip()
 KINO_TURN_CREDENTIAL = os.getenv("KINO_TURN_CREDENTIAL", "").strip()
+GAME_TURN_URL = os.getenv("GAME_TURN_URL", "").strip()
+GAME_TURN_USERNAME = os.getenv("GAME_TURN_USERNAME", "").strip()
+GAME_TURN_CREDENTIAL = os.getenv("GAME_TURN_CREDENTIAL", "").strip()
 
 
 # ============================================================

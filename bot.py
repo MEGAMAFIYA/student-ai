@@ -44,6 +44,7 @@ import payment_providers
 import webapp_security
 import inline_media
 import movie_watch
+import game
 from handlers import (
     menu, universal_chat, course_work, translate as translate_handler, images_to_pdf,
     edit_pdf, guide, inline_query, developer, pptx_gen, essay, quiz, solve, summarize,
@@ -582,6 +583,17 @@ class HealthHandler(BaseHTTPRequestHandler):
             self._serve_generated_image()
             return
 
+        if self.path.startswith("/api/game/"):
+            game.handle_api(self)
+            return
+
+        if self.path.startswith("/miniapp/game"):
+            if game.serve_static(self):
+                return
+            self.send_response(404)
+            self.end_headers()
+            return
+
         if self.path.startswith("/api/kino/stream/"):
             stream_key = self.path.split("/api/kino/stream/", 1)[1].split("?", 1)[0]
             parts = stream_key.split("/")
@@ -690,6 +702,10 @@ class HealthHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         """💳 Kapitalbank to'lov webhook'i VA 🎨 /rasim Mini App rasm
         yuklash so'rovi shu yerga keladi."""
+        if self.path.startswith("/api/game/"):
+            game.handle_post(self)
+            return
+
         if self.path.startswith("/api/kino/"):
             movie_watch.handle_post(self)
             return

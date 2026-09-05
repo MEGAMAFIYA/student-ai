@@ -131,6 +131,7 @@ import video_tools
 import inline_media
 import webapp_security
 import movie_watch
+import game
 
 logger = logging.getLogger(__name__)
 
@@ -245,6 +246,9 @@ TABRIK_BARE_RE = re.compile(r"^/tabrik(?:@\w+)?\s*$", re.IGNORECASE)
 # 🎬 /kino — inline katalog: "kino" barcha kinolarni, "kino ajdar uyi"
 # nom bo'yicha katalogdan qidiradi.
 KINO_RE = re.compile(r"^kino(?:\s+(.+))?$", re.IGNORECASE)
+# 🎮 GAME — 1v1 shaxmat / rus shashkasi. "@Student_ai_uz_bot game"
+# yozilganda aynan shu ikki o'yin ro'yxati chiqadi.
+GAME_RE = re.compile(r"^game$", re.IGNORECASE)
 
 # 🎨 /rasim — ATAYLAB bo'sh query'ni ham qabul qiladi: do'st bilan chatda
 # shunchaki "@Student_ai_uz_bot" deb yozib to'xtash eng qulay/tabiiy
@@ -323,6 +327,45 @@ async def on_inline_query(
 
     cache = context.bot_data.setdefault("inline_queries", {})
     _trim_cache(cache)
+
+    # --------------------------------------------------------
+    # 🎮 1v1 O'YIN — "@Student_ai_uz_bot game"
+    # Ikki natija chiqadi. Natijani chatga joylashtirganda xona allaqachon
+    # yaratilgan bo'ladi; tugma shu xonani Direct Mini App sifatida ochadi.
+    # Server barcha yurishlarni qayta tekshiradi.
+    # --------------------------------------------------------
+    if GAME_RE.match(query):
+        if not PUBLIC_BASE_URL:
+            await _answer_redirect(update, query, "PUBLIC_BASE_URL sozlanmagan — O'yin Mini App ochilmaydi")
+            return
+        results=[]
+        for gkey,title,desc,emoji in [
+            ("chess","♟ Shaxmat","2 kishi • oq/qora • klassik yurish qoidalari","♟"),
+            ("checkers","⚪ Rus shashkasi","2 kishi • majburiy urish • damka","⚪"),
+        ]:
+            rid=game.create_room(gkey,user.id)
+            if not rid:
+                continue
+            url=game.room_url(gkey,rid)
+            results.append(InlineQueryResultArticle(
+                id=f"game_{gkey}_{uuid.uuid4().hex}",
+                title=title,
+                description=desc,
+                input_message_content=InputTextMessageContent(
+                    f"{emoji} {title}\n\n"
+                    "👥 1v1 o'yin xonasi tayyor.\n"
+                    "👇 Ikkalangiz ham tugmani bosib Mini App'ga kiring va rang tanlang."
+                ),
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🎮 O‘yinni boshlash", url=url)
+                ]]),
+            ))
+        if not results:
+            await _answer_instruction(update,"🎮 O'yin hozircha mavjud emas","Server sozlamasini tekshiring.",query=query)
+            return
+        await update.inline_query.answer(results,cache_time=0,is_personal=True)
+        _log_inline(user,query,"queued","1v1 game ro'yxati ko'rsatildi")
+        return
 
     # --------------------------------------------------------
     # 🎬 KINO — oldindan yuklangan katalogdan inline qidiruv.
