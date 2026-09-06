@@ -1385,7 +1385,6 @@ def main():
     app.add_handler(build_reminders_conv())
     app.add_handler(build_wallet_topup_conv())
     app.add_handler(build_developer_conv())
-    app.add_handler(build_kino_migration_handler())
     app.add_handler(build_kino_conv())
 
     app.add_handler(CallbackQueryHandler(menu.universal_selected, pattern="^menu:universal$"))
