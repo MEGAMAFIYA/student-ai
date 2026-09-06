@@ -132,6 +132,7 @@ import inline_media
 import webapp_security
 import movie_watch
 import game
+import drawing_game
 
 logger = logging.getLogger(__name__)
 
@@ -812,28 +813,39 @@ async def _answer_instruction(update: Update, title: str, description: str, quer
 
 
 async def _answer_rasim(update: Update) -> None:
-    """/rasim (yoki bo'sh mention) — natijalar ro'yxati o'RNIGA, alohida
-    "🎨 Rasm chizish" TUGMASINI ko'rsatadi (qarang: fayl boshidagi E oqim
-    izohi). Bu tugma Mini App'ni ochadi; Mini App'dan qaytish
-    bot.py > _handle_rasim_upload_inline orqali `answer_web_app_query`
-    bilan yakunlanadi — shu funksiya faqat tugmani ko'rsatishga javobgar."""
+    """🎨 Rasm chizish 1v1 o'yini uchun inline natija.
+
+    Natija chatga joylashtiriladi va ikkala tomon aynan shu xabardagi
+    bitta tugma orqali bir xil Direct Mini App xonasiga kiradi.
+    """
     if not PUBLIC_BASE_URL:
         await _answer_redirect(update, "/rasim")
         return
 
     user_id = update.inline_query.from_user.id
-    rid = webapp_security.create_inline_request(user_id)
-    webapp_url = f"{PUBLIC_BASE_URL}/miniapp/rasim/?rid={rid}"
+    rid = drawing_game.create_room(user_id)
+    url = drawing_game.room_url(rid)
 
-    await update.inline_query.answer(
-        [],
-        button=InlineQueryResultsButton(
-            text="🎨 Rasm chizish",
-            web_app=WebAppInfo(url=webapp_url),
+    result = InlineQueryResultArticle(
+        id=f"draw_{rid}",
+        title="🎨 Rasm chizish — 1v1",
+        description="👥 Do'stingiz bilan bir xil topshiriqni chizing • AI hakam baholaydi",
+        input_message_content=InputTextMessageContent(
+            "🎨 Rasm chizish — 1v1\n\n"
+            "👥 Ikkingizga ham bir xil topshiriq beriladi.\n"
+            "✏️ Har kim o'z rasmini alohida chizadi.\n"
+            "🏆 Ikkala rasm yuborilgach AI hakam natijani chiqaradi."
         ),
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("🎨 Rasm chizishni boshlash", url=url)
+        ]]),
+    )
+    await update.inline_query.answer(
+        [result],
         cache_time=0,
         is_personal=True,
     )
+    _log_inline(user, "/rasim", "queued", f"1v1 drawing room={rid}")
 
 
 def _trim_cache(cache: dict):

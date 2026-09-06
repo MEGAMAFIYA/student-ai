@@ -18,7 +18,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from threading import Thread, Timer
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
 import telegram.error
 from telegram import BotCommand, BotCommandScopeDefault, BotCommandScopeAllGroupChats, BotCommandScopeChat, InlineQueryResultPhoto
@@ -45,6 +45,7 @@ import webapp_security
 import inline_media
 import movie_watch
 import game
+import drawing_game
 from handlers import (
     menu, universal_chat, course_work, translate as translate_handler, images_to_pdf,
     edit_pdf, guide, inline_query, developer, pptx_gen, essay, quiz, solve, summarize,
@@ -345,6 +346,140 @@ def _decode_data_url_image(data_url: str) -> bytes | None:
     return raw
 
 
+
+def _serve_drawing_generated(handler: "HealthHandler") -> bool:
+    """Drawing duel rasmlarini Telegram fetch qilishi uchun vaqtincha beradi."""
+    prefix = "/miniapp/rasim/generated/"
+    path = urlparse(handler.path).path
+    if not path.startswith(prefix):
+        return False
+    filename = path[len(prefix):]
+    if not re.fullmatch(r"[0-9a-f]{32}\.(?:jpg|jpeg|png)", filename):
+        handler.send_response(404); handler.end_headers(); return True
+    file_path = os.path.join(_WEBAPP_GENERATED_DIR, filename)
+    try:
+        with open(file_path, "rb") as f:
+            body = f.read()
+    except OSError:
+        handler.send_response(404); handler.end_headers(); return True
+    ctype = "image/jpeg" if filename.lower().endswith((".jpg", ".jpeg")) else "image/png"
+    handler.send_response(200)
+    handler.send_header("Content-Type", ctype)
+    handler.send_header("Content-Length", str(len(body)))
+    handler.send_header("Cache-Control", "public, max-age=300")
+    handler.end_headers()
+    handler.wfile.write(body)
+    return True
+
+
+def _handle_draw_api(handler: "HealthHandler") -> None:
+    """1v1 rasm o'yini API: join/status/submit/restart."""
+    def reply(status: int, data=None, error: str = ""):
+        body = json.dumps({"ok": status < 400, "data": data, "error": error}, ensure_ascii=False).encode()
+        handler.send_response(status)
+        handler.send_header("Content-Type", "application/json; charset=utf-8")
+        handler.send_header("Cache-Control", "no-store")
+        handler.send_header("Content-Length", str(len(body)))
+        handler.end_headers()
+        handler.wfile.write(body)
+
+    path = urlparse(handler.path).path
+    query = parse_qs(urlparse(handler.path).query)
+    rid = (query.get("room") or [""])[0]
+    init_data = handler.headers.get("X-Telegram-Init-Data", "")
+
+    if handler.command == "GET":
+        if path == "/api/draw/join":
+            data, err = drawing_game.join(rid, init_data)
+        elif path == "/api/draw/status":
+            data, err = drawing_game.status(rid, init_data)
+        else:
+            reply(404, error="Draw API topilmadi."); return
+        if data is None:
+            reply(400, error=err or "Xatolik."); return
+        reply(200, data=data); return
+
+    try:
+        length = int(handler.headers.get("Content-Length", 0))
+        if length <= 0 or length > 8 * 1024 * 1024:
+            reply(413, error="So'rov juda katta."); return
+        payload = json.loads(handler.rfile.read(length).decode("utf-8"))
+    except Exception:
+        reply(400, error="Noto'g'ri JSON."); return
+
+    rid = str(payload.get("room") or rid)
+    init_data = str(payload.get("init_data") or init_data)
+    if path == "/api/draw/submit":
+        image = str(payload.get("image") or "")
+        m = re.fullmatch(r"data:image/(?:png|jpeg|jpg);base64,([A-Za-z0-9+/=]+)", image)
+        if not m:
+            reply(400, error="Rasm formati noto'g'ri."); return
+        try:
+            image_bytes = base64.b64decode(m.group(1), validate=True)
+        except Exception:
+            reply(400, error="Rasmni o'qib bo'lmadi."); return
+        result, err = drawing_game.submit(rid, init_data, image_bytes)
+        if result is None:
+            reply(400, error=err or "Rasm yuborilmadi."); return
+
+        # Telegram answerWebAppQuery uchun public JPEG URL tayyorlaymiz.
+        jpeg = result["image"]
+        os.makedirs(_WEBAPP_GENERATED_DIR, exist_ok=True)
+        filename = f"{uuid.uuid4().hex}.jpg"
+        file_path = os.path.join(_WEBAPP_GENERATED_DIR, filename)
+        with open(file_path, "wb") as f:
+            f.write(jpeg)
+        photo_url = f"{PUBLIC_BASE_URL}{_WEBAPP_GENERATED_URL_PREFIX}{filename}"
+        caption = result.get("caption", "")
+
+        if result.get("evaluate"):
+            prompt, img1, img2 = result["evaluate"]
+            try:
+                future = asyncio.run_coroutine_threadsafe(
+                    drawing_game._evaluate(prompt, img1, img2), _MAIN_LOOP
+                )
+                evaluation = future.result(timeout=100)
+            except Exception as e:
+                logger.error("🎨 Drawing duel evaluation xato: %s", e, exc_info=True)
+                evaluation = {"player1": None, "player2": None, "winner": None, "comment": "AI vaqtida javob bermadi."}
+            room = drawing_game.finish_evaluation(rid, evaluation)
+            if room:
+                caption = drawing_game._telegram_caption(evaluation, room)
+
+        async def _answer():
+            from telegram import InlineQueryResultPhoto
+            result_obj = InlineQueryResultPhoto(
+                id=uuid.uuid4().hex,
+                photo_url=photo_url,
+                thumbnail_url=photo_url,
+                caption=caption[:1024],
+            )
+            return await _BOT_INSTANCE.answer_web_app_query(result["query_id"], result_obj)
+
+        try:
+            if not result.get("query_id"):
+                raise RuntimeError("WebApp query_id topilmadi.")
+            future = asyncio.run_coroutine_threadsafe(_answer(), _MAIN_LOOP)
+            future.result(timeout=30)
+        except Exception as e:
+            logger.error("🎨 Drawing duel Telegramga yuborish xato: %s", e, exc_info=True)
+            try: os.remove(file_path)
+            except OSError: pass
+            reply(502, error="Rasmni Telegram chatiga yuborib bo'lmadi."); return
+
+        Timer(_WEBAPP_GENERATED_TTL_SEC, lambda: os.path.exists(file_path) and os.remove(file_path)).start()
+        reply(200, data={"state": result["state"], "status": "submitted", "both_submitted": bool(result.get("evaluate"))})
+        return
+
+    if path == "/api/draw/restart":
+        data, err = drawing_game.restart(rid, init_data)
+        if data is None:
+            reply(400, error=err or "Qayta boshlash amalga oshmadi."); return
+        reply(200, data=data); return
+
+    reply(404, error="Draw API topilmadi.")
+
+
 def _handle_rasim_upload(handler: "HealthHandler") -> None:
     """POST /miniapp/rasim/upload — Mini App'dan chizilgan rasmni qabul
     qiladi, Telegram initData'ni tasdiqlaydi va rasmni TO'G'RI joyga
@@ -580,7 +715,13 @@ class HealthHandler(BaseHTTPRequestHandler):
             return
 
         if self.path.startswith(_WEBAPP_GENERATED_URL_PREFIX):
+            if _serve_drawing_generated(self):
+                return
             self._serve_generated_image()
+            return
+
+        if self.path.startswith("/api/draw/"):
+            _handle_draw_api(self)
             return
 
         if self.path.startswith("/api/game/"):
@@ -702,6 +843,10 @@ class HealthHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         """💳 Kapitalbank to'lov webhook'i VA 🎨 /rasim Mini App rasm
         yuklash so'rovi shu yerga keladi."""
+        if self.path.startswith("/api/draw/"):
+            _handle_draw_api(self)
+            return
+
         if self.path.startswith("/api/game/"):
             game.handle_post(self)
             return

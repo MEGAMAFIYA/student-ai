@@ -49,30 +49,115 @@
   const templateGrid = document.getElementById("templateGrid");
 
   const promptText = document.getElementById("promptText");
-  const promptShuffleBtn = document.getElementById("promptShuffleBtn");
+  const playerStatus = document.getElementById("playerStatus");
+  const restartBtn = document.getElementById("restartBtn");
 
   // ============================================================
-  // 🎯 CHIZISH TAKLIFI — bot tasodifiy buyum/hayvon aytadi, foydalanuvchi
-  // shuni chizadi ("Pictionary" uslubida). Sof ijodiy/o'yin xususiyati —
-  // tanlangan so'z serverga umuman yuborilmaydi, faqat ekranda ko'rsatiladi.
+  // 🎨 1v1 DRAW DUEL — topshiriq serverda tanlanadi va ikkala
+  // foydalanuvchiga aynan bir xil keladi. Frontend o'zi topshiriq
+  // tanlamaydi va uni o'zgartira olmaydi.
   // ============================================================
-  const DRAW_PROMPTS = [
-    "🐱 Mushuk", "🐶 It", "🐰 Quyon", "🦁 Sher", "🐘 Fil", "🐢 Toshbaqa",
-    "🐟 Baliq", "🦋 Kapalak", "🐝 Ari", "🐔 Xo'roz", "🐄 Sigir", "🐴 Ot",
-    "🦒 Jirafa", "🐧 Pingvin", "🦉 Boyqush", "🐍 Ilon", "🐸 Qurbaqa",
-    "🏠 Uy", "🚗 Mashina", "✈️ Samolyot", "🌳 Daraxt", "🌸 Gul", "☀️ Quyosh",
-    "🌙 Oy", "⭐ Yulduz", "☂️ Soyabon", "📚 Kitob", "⌚ Soat", "🎈 Shar",
-    "🎂 Tort", "🍎 Olma", "🍉 Tarvuz", "⚽ Futbol to'pi", "🚲 Velosiped",
-    "⛰️ Tog'", "🌈 Kamalak", "❄️ Qorqop", "🎁 Sovg'a", "🎸 Gitara", "🚀 Raketa",
-  ];
+  const params = new URLSearchParams(location.search);
+  const initData = tg?.initData || "";
+  let room = params.get("room") || "";
+  const startParam = tg?.initDataUnsafe?.start_param || params.get("startapp") || "";
+  if (!room && startParam.startsWith("draw_")) room = startParam.slice(5);
 
-  function showRandomPrompt() {
-    const word = DRAW_PROMPTS[Math.floor(Math.random() * DRAW_PROMPTS.length)];
-    promptText.textContent = `🎯 Chizing: ${word}`;
+  let duelState = null;
+  let duelBusy = false;
+
+  async function duelApi(path, method = "GET", body = null) {
+    const url = new URL(path, location.origin);
+    if (method === "GET") url.searchParams.set("room", room);
+    const headers = {"X-Telegram-Init-Data": initData};
+    const opts = {method, headers, cache: "no-store"};
+    if (body !== null) {
+      headers["Content-Type"] = "application/json";
+      opts.body = JSON.stringify({...body, room, init_data: initData});
+    }
+    const response = await fetch(url, opts);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) throw new Error(data.error || "Server xatosi.");
+    return data.data;
   }
 
-  promptShuffleBtn.addEventListener("click", showRandomPrompt);
-  showRandomPrompt();
+  function renderDuelState(s) {
+    if (!s) return;
+    duelState = s;
+    promptText.textContent = `🎯 Topshiriq: ${s.prompt || "..."}`;
+
+    const players = s.players || [];
+    if (players.length < 2) {
+      playerStatus.textContent = "👥 Do'stingiz ham «Rasm chizishni boshlash»ni bosishini kutyapmiz.";
+    } else {
+      const me = players.find(p => Number(p.id) === Number(s.me));
+      const other = players.find(p => Number(p.id) !== Number(s.me));
+      const myText = me?.submitted ? "✅ yubordingiz" : "✏️ chizmoqda";
+      const otherText = other?.submitted ? "✅ yubordi" : "✏️ chizmoqda";
+      playerStatus.textContent = `Siz: ${myText}  •  ${other?.name || "Do'stingiz"}: ${otherText}`;
+    }
+
+    if (s.status === "finished" && s.result) {
+      const r = s.result;
+      const names = players.map(p => p.name || "O'yinchi");
+      const n1 = names[0] || "1-o'yinchi", n2 = names[1] || "2-o'yinchi";
+      const winner = r.winner === "draw" ? "🤝 Durang" :
+        `🏆 G'olib: ${r.winner === "player1" ? n1 : n2}`;
+      statusMsg.textContent = `📊 ${n1}: ${r.player1}%  •  ${n2}: ${r.player2}%\n${winner}\n${r.comment || ""}`;
+      restartBtn.classList.remove("hidden");
+      sendBtn.disabled = true;
+    } else if (s.submitted) {
+      statusMsg.textContent = "⏳ Rasm yuborildi. Do'stingizni kutyapmiz...";
+      sendBtn.disabled = true;
+    } else if (players.length < 2) {
+      statusMsg.textContent = "👥 Avval do'stingiz ham xonaga kirsin.";
+      sendBtn.disabled = true;
+    } else {
+      statusMsg.textContent = "";
+      sendBtn.disabled = false;
+      restartBtn.classList.add("hidden");
+    }
+  }
+
+  async function bootDuel() {
+    if (!initData || !room) {
+      statusMsg.textContent = "❌ Rasm chizish xonasi topilmadi. Chatdagi tugmani qayta bosing.";
+      sendBtn.disabled = true;
+      return;
+    }
+    try {
+      const state = await duelApi("/api/draw/join");
+      renderDuelState(state);
+      setInterval(async () => {
+        if (duelBusy) return;
+        try { renderDuelState(await duelApi("/api/draw/status")); } catch (_) {}
+      }, 1000);
+    } catch (e) {
+      statusMsg.textContent = "❌ " + e.message;
+      sendBtn.disabled = true;
+    }
+  }
+
+  restartBtn.addEventListener("click", async () => {
+    if (duelBusy || !duelState || duelState.status !== "finished") return;
+    duelBusy = true;
+    restartBtn.disabled = true;
+    try {
+      const s = await duelApi("/api/draw/restart", "POST", {});
+      renderDuelState(s);
+      strokes = [];
+      redoStack = [];
+      redraw();
+      updateUndoRedoButtons();
+      updateEmptyHint();
+      statusMsg.textContent = "🔄 Yangi topshiriq tayyor. Ikkalangiz ham chizing.";
+    } catch (e) {
+      statusMsg.textContent = "❌ " + e.message;
+    } finally {
+      duelBusy = false;
+      restartBtn.disabled = false;
+    }
+  });
 
   const PALETTE = [
     "#211F1C", "#D64545", "#E88C3D", "#E8C93D",
@@ -623,61 +708,58 @@
   }
 
   sendBtn.addEventListener("click", async () => {
-    if (strokes.length === 0) {
-      statusMsg.textContent = "⚠️ Avval biror narsa chizing.";
+    if (duelBusy) return;
+    if (!duelState || duelState.players?.length < 2) {
+      statusMsg.textContent = "👥 Do'stingiz ham xonaga kirishi kerak.";
       return;
     }
-    const rid = getRequestId();
-    if (!rid) {
-      statusMsg.textContent = "❌ So'rov identifikatori topilmadi. /rasim buyrug'ini qayta yuboring.";
+    if (strokes.length === 0) {
+      statusMsg.textContent = "⚠️ Avval topshiriq bo'yicha biror narsa chizing.";
+      return;
+    }
+    if (duelState.submitted) {
+      statusMsg.textContent = "⏳ Sizning rasmingiz allaqachon yuborilgan.";
       return;
     }
     if (!tg || !tg.initData) {
-      statusMsg.textContent = "❌ Telegram orqali ochilmagan. Iltimos Telegram ilovasidan foydalaning.";
+      statusMsg.textContent = "❌ Telegram orqali ochilmagan.";
       return;
     }
 
+    duelBusy = true;
     sendBtn.disabled = true;
-    statusMsg.textContent = "📤 Yuborilmoqda...";
+    statusMsg.textContent = "📤 Rasm tayyorlanmoqda...";
 
-    // Oq fon + tanlangan shablon + barcha chizmalarni bitta PNG'ga
-    // birlashtiramiz (chizish paytidagi ikki qatlamli canvas shu yerda
-    // bitta yakuniy rasmga "yopishtiriladi").
     const rect = wrap.getBoundingClientRect();
     const exportCanvas = document.createElement("canvas");
-    const dpr = window.devicePixelRatio || 1;
-    exportCanvas.width = rect.width * dpr;
-    exportCanvas.height = rect.height * dpr;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    exportCanvas.width = Math.max(1, Math.round(rect.width * dpr));
+    exportCanvas.height = Math.max(1, Math.round(rect.height * dpr));
     const exportCtx = exportCanvas.getContext("2d");
     exportCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
     renderTemplateBackground(exportCtx, rect.width, rect.height);
     for (const s of strokes) drawStroke(exportCtx, s);
 
-    const dataUrl = exportCanvas.toDataURL("image/png");
+    // PNG aniqligi saqlanadi; server Telegram uchun JPEGga aylantiradi.
+    const dataUrl = exportCanvas.toDataURL("image/png", 1.0);
 
     try {
-      const resp = await fetch("/miniapp/rasim/upload", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          rid: rid,
-          init_data: tg.initData,
-          image: dataUrl,
-        }),
-      });
-      const result = await resp.json().catch(() => ({}));
-      if (resp.ok && result.ok) {
-        statusMsg.textContent = "✅ Yuborildi!";
-        if (tg && tg.close) {
-          setTimeout(() => tg.close(), 600);
-        }
+      const state = await duelApi("/api/draw/submit", "POST", {image: dataUrl});
+      renderDuelState(state.state || duelState);
+      if (state.both_submitted) {
+        statusMsg.textContent = "🏆 Ikkala rasm ham yuborildi. AI hakam natijani chatga yubordi.";
       } else {
-        statusMsg.textContent = "❌ " + (result.error || "Yuborishda xatolik yuz berdi.");
-        sendBtn.disabled = false;
+        statusMsg.textContent = "✅ Rasmingiz chatga yuborildi. Do'stingizni kutyapmiz.";
       }
+      // Server answerWebAppQuery orqali rasmni chatga yuboradi va Telegram
+      // Mini App'ni yopadi. Bu xuddi foydalanuvchi o'z nomidan rasm yuborgandek ko'rinadi.
+      if (tg?.close) setTimeout(() => tg.close(), 500);
     } catch (e) {
-      statusMsg.textContent = "❌ Tarmoq xatosi. Qayta urinib ko'ring.";
+      statusMsg.textContent = "❌ " + e.message;
       sendBtn.disabled = false;
+    } finally {
+      duelBusy = false;
     }
   });
+  bootDuel();
 })();

@@ -96,6 +96,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_group = chat.type in ("group", "supergroup")
     user_text = update.message.text.strip()
 
+    # 🎮 Inline game trigger/result hech qachon Universal/Dase AI'ga yuborilmaydi.
+    # Ayrim Telegram klientlari inline natijani oddiy Message sifatida qayta
+    # ko'rsatishi mumkin; shu sababli aynan "@Student_ai_uz_bot game" ham
+    # xavfsiz ravishda AI oqimidan chiqariladi.
+    game_text = re.sub(r"@student_ai_uz_bot", "", user_text, flags=re.IGNORECASE).strip().lower()
+    if game_text in {"game", "game@student_ai_uz_bot"} or game_text.startswith("game "):
+        logger.info("🎮 game xabari Universal/Dase AI oqimidan o'tkazilmadi: chat_id=%s", chat.id)
+        return
+
     # 🎬 Inline Kino Watch Party xabarlari Universal AIga yuborilmaydi.
     # Bu himoya Telegram klienti inline natijani oddiy Message update sifatida
     # qaytargan holatda ham AI javobining oldini oladi.

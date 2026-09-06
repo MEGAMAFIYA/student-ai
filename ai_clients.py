@@ -399,6 +399,38 @@ async def test_key(provider: str, api_key: str, model: str, index: int | None = 
     return status, detail
 
 
+
+async def ask_gemini_images(
+    cfg: dict,
+    prompt: str,
+    image1: bytes,
+    image2: bytes,
+    mime_type: str = "image/jpeg",
+    label: str = "Gemini (2-image vision)",
+) -> str | None:
+    """Ikki rasmni bir vaqtda Gemini Vision'ga yuboradi.
+    Drawing Duel uchun ishlatiladi; bu funksiya matn fallbacklariga o'tmaydi.
+    """
+    api_key = cfg.get("api_key", "")
+    model_name = cfg.get("model", "")
+    if not api_key or not model_name:
+        return None
+    try:
+        model = await _get_gemini_model_safe(api_key, model_name)
+        parts = [
+            prompt,
+            {"mime_type": mime_type, "data": image1},
+            {"mime_type": mime_type, "data": image2},
+        ]
+        resp = await asyncio.wait_for(
+            asyncio.to_thread(model.generate_content, parts),
+            timeout=GEMINI_TIMEOUT_SEC,
+        )
+        return resp.text or ""
+    except Exception as e:
+        logger.error("%s xato: %s", label, e, exc_info=True)
+        return None
+
 async def ask_gemini_vision(cfg: dict, image, caption: str) -> str | None:
     if not cfg.get("api_key"):
         return None
