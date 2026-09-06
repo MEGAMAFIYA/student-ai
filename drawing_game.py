@@ -32,6 +32,17 @@ ROOMS: dict[str, dict[str, Any]] = {}
 ROOM_TTL = 60 * 60
 MAX_ROOMS = 500
 
+# Telegram tasdiqlagan haqiqiy bot username. /post_init() da get_me()
+# orqali o'rnatiladi; env fallback faqat bot API vaqtincha ishlamasa qoladi.
+_RUNTIME_BOT_USERNAME = ""
+
+def set_bot_username(username: str | None) -> None:
+    """Bot ishga tushganda Telegram bergan haqiqiy username'ni saqlaydi."""
+    global _RUNTIME_BOT_USERNAME
+    value = str(username or "").strip().lstrip("@")
+    if value:
+        _RUNTIME_BOT_USERNAME = value
+
 PROMPTS = [
     "🐄 Sigir", "🏠 Uy", "👤 Odam", "🐱 Mushuk", "🐶 It", "🐰 Quyon",
     "🦁 Sher", "🐘 Fil", "🐢 Toshbaqa", "🐟 Baliq", "🦋 Kapalak", "🐝 Ari",
@@ -81,17 +92,30 @@ def create_room(creator_id: int) -> str:
         return rid
 
 def room_url(rid: str) -> str:
-    """1v1 xona uchun alohida Direct Mini App deep-link.
+    """1v1 xona uchun Telegram Direct Mini App havolasini yaratadi.
 
-    Muhim: `?startapp=...` ni bot username'ining o'ziga qo'yish Main Mini App
-    routeriga tushiradi. Rasm o'yini esa alohida Direct Mini App bo'lgani uchun
-    `t.me/<bot>/<short_name>?startapp=...` formatidan foydalanamiz. Shunda
-    Telegram `draw_<room>` start_paramni aynan /miniapp/rasim/ ilovasiga beradi
-    va inline Web App query_id ham saqlanadi.
+    Inline xabardagi URL tugmasi aynan shu formatdan foydalanadi:
+    https://t.me/<bot_username>/<short_name>?startapp=draw_<room>
+
+    Muhim: username Telegram API'dan olingan haqiqiy qiymat bo'lsa, env'dagi
+    eski/stale BOT_USERNAME sababli tugma bot profiliga tushib qolmaydi.
     """
-    username = config.BOT_USERNAME_FALLBACK.lstrip("@")
-    short_name = config.DRAWING_APP_SHORT_NAME.strip("/") or "rasim"
-    return f"https://t.me/{username}/{short_name}?startapp=draw_{rid}&mode=fullscreen"
+    room_id = str(rid or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{8,128}", room_id):
+        raise ValueError("Noto'g'ri rasm xonasi ID.")
+
+    username = (_RUNTIME_BOT_USERNAME or config.BOT_USERNAME_FALLBACK).strip().lstrip("@")
+    short_name = config.DRAWING_APP_SHORT_NAME.strip().strip("/") or "rasim"
+
+    if not re.fullmatch(r"[A-Za-z0-9_]{1,64}", username):
+        raise ValueError("BOT_USERNAME noto'g'ri sozlangan.")
+    if not re.fullmatch(r"[A-Za-z0-9_]{1,64}", short_name):
+        raise ValueError("DRAWING_APP_SHORT_NAME noto'g'ri sozlangan.")
+
+    # Direct Mini App deep-link. startapp qiymatini URL-encode qilish shart
+    # emas (rid faqat xavfsiz belgilar), lekin formatni Telegram talabi bilan
+    # aniq saqlaymiz.
+    return f"https://t.me/{username}/{short_name}?startapp=draw_{room_id}&mode=fullscreen"
 
 def _verify(init_data: str) -> dict | None:
     return webapp_security.verify_telegram_init_data(init_data, config.TELEGRAM_TOKEN)

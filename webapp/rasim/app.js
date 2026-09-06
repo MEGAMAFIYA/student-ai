@@ -58,9 +58,21 @@
   // tanlamaydi va uni o'zgartira olmaydi.
   // ============================================================
   const params = new URLSearchParams(location.search);
+  const hashParams = new URLSearchParams((location.hash || "").replace(/^#/, ""));
   const initData = tg?.initData || "";
   let room = params.get("room") || "";
-  const startParam = tg?.initDataUnsafe?.start_param || params.get("startapp") || "";
+
+  // Telegram Direct Mini App turli klientlarda startapp'ni
+  // initDataUnsafe.start_param, URL query yoki hash orqali ko'rsatishi mumkin.
+  // Barchasini qabul qilamiz; shunda link botga qaytib ketmasdan xona ID'sini
+  // frontendga aniq olib kiradi.
+  const startParam =
+    tg?.initDataUnsafe?.start_param ||
+    params.get("startapp") ||
+    hashParams.get("tgWebAppStartParam") ||
+    hashParams.get("startapp") ||
+    "";
+
   if (!room && startParam.startsWith("draw_")) room = startParam.slice(5);
 
   let duelState = null;

@@ -824,7 +824,12 @@ async def _answer_rasim(update: Update) -> None:
 
     user_id = update.inline_query.from_user.id
     rid = drawing_game.create_room(user_id)
-    url = drawing_game.room_url(rid)
+    try:
+        url = drawing_game.room_url(rid)
+    except ValueError as e:
+        logger.error("🎨 /rasim: Direct Mini App URL yaratilmadi: %s", e, exc_info=True)
+        await _answer_redirect(update, "/rasim")
+        return
 
     result = InlineQueryResultArticle(
         id=f"draw_{rid}",
