@@ -42,10 +42,13 @@ class _FakeBot:
         self.fail_effect_ids: set = set()
         self.fail_delete_message_ids: set = set()
         self.raise_not_eligible = False
+        self.raise_business_peer_invalid = False
         self.retry_after_once_for = None  # emoji matni uchun bir marta RetryAfter
 
     async def send_message(self, business_connection_id, chat_id, text, message_effect_id=None):
         from telegram.error import BadRequest, RetryAfter
+        if self.raise_business_peer_invalid:
+            raise BadRequest("Business_peer_invalid")
         if self.raise_not_eligible:
             raise BadRequest("Bot can't initiate conversation with a user")
         if text == self.retry_after_once_for:
@@ -196,6 +199,17 @@ class BusinessRightsTests(TabrikBusinessTestBase):
         query = _FakeQuery(f"itabrik:claim:{short_id}", from_user_id=42)
         await self.tabrik_business.handle_claim(_FakeUpdate(query), self.context)
         self.assertEqual(self.bot.sent_messages, [])
+
+    async def test_business_peer_invalid_returns_actionable_inline_error(self):
+        from telegram.error import BadRequest
+        self.bot.raise_business_peer_invalid = True
+        short_id = self._make_greeting(sender_user_id=1, emojis=["😀"])
+        query = _FakeQuery(f"itabrik:claim:{short_id}", from_user_id=42)
+        await self.tabrik_business.handle_claim(_FakeUpdate(query), self.context)
+        self.assertEqual(self.bot.sent_messages, [])
+        self.assertEqual(len(self.bot.edit_calls), 1)
+        self.assertIn("Business", self.bot.edit_calls[0]["text"])
+        self.assertIn("Avval yuboruvchi", self.bot.edit_calls[0]["text"])
 
     async def test_can_delete_false_still_runs_animation(self):
         # 15-band: delete huquqi yo'qligi ANIMATSIYANI TO'XTATMAYDI, faqat

@@ -113,6 +113,17 @@ class BusinessStorageTests(unittest.TestCase):
         usable, reason = self.business_storage.is_connection_usable(entry)
         self.assertTrue(usable)
 
+    def test_recent_business_peer_recording(self):
+        conn = _FakeBusinessConnection("conn_peer", 999)
+        self.business_storage.save_connection(conn)
+        self.business_storage.record_business_message("conn_peer", 4242)
+        self.assertTrue(self.business_storage.is_recent_business_peer(999, 4242))
+
+    def test_unknown_business_peer_is_not_marked_recent(self):
+        conn = _FakeBusinessConnection("conn_peer_unknown", 1000)
+        self.business_storage.save_connection(conn)
+        self.assertFalse(self.business_storage.is_recent_business_peer(1000, 4243))
+
     def test_can_delete_sent_messages_false(self):
         conn = _FakeBusinessConnection("conn_del", 666, can_delete=False)
         self.business_storage.save_connection(conn)

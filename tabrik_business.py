@@ -11,14 +11,13 @@ MUHIM TARIXIY QAROR (batafsili suhbatda muhokama qilingan, quyida qisqacha):
     `@Bot /tabrik ...` natijasi) bo'ladi, `inline_message_id` orqali
     edit qilinadi. Business orqali yuboriladigan audio/emoji/final matn
     xabarlarida umuman tugma YO'Q.
-  - Inline xabar ustidagi callback query'da `chat_id` YO'Q (faqat
-    `inline_message_id`) — shuning uchun recipient (B)ning chat_id'i
-    `query.from_user.id` orqali olinadi va Telegram Bot API'ning shaxsiy
-    (1:1) chat modeliga ko'ra `chat_id == boshqa tomon user_id`
-    tengligidan foydalaniladi. Bu rasmiy hujjatda so'zma-so'z tasdiqlangan
-    IBORA emas — Bot API'ning barqaror xatti-harakati; shuning uchun har
-    bir chaqiruvda ANIQ loglanadi va har qanday xato ochiq ko'rsatiladi
-    (yashirilmaydi).
+  - Inline xabar ustidagi callback query'da `chat_id` kelmasligi mumkin, shuning
+    uchun recipient (B)ning user_id'i `query.from_user.id` orqali olinadi.
+    Lekin `chat_id == user_id` bo'lishining o'zi Business orqali yuborishga
+    ruxsat bermaydi: Telegram `can_reply` huquqini private chatda oxirgi
+    24 soatda incoming xabar bo'lgan peerlar bilan cheklaydi. Shu sababli
+    bot Business message update'laridan haqiqiy peerlarni qayd etadi va
+    `BusinessPeerInvalid` holatini aniq tushuntirib qaytaradi.
 
 Bu modul faqat "sof" logikani emas, balki to'g'ridan-to'g'ri
 `telegram.ext.ContextTypes.DEFAULT_TYPE`ning `context.bot`'i orqali haqiqiy
@@ -47,6 +46,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_EMOJIS = ["😍", "🥳", "🎉", "❤️", "✨"]
 EMOJI_DISPLAY_DELAY_SEC = 2.0
 REVERT_DELAY_SEC = 120
+_DEFAULT_EMOJI_DISPLAY_DELAY_SEC = 2.0
+_DEFAULT_REVERT_DELAY_SEC = 120
 
 _DEFAULT_AUDIO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "tabrik", "tabrik_music.mp3")
 TABRIK_AUDIO_PATH = os.getenv("TABRIK_AUDIO_PATH", _DEFAULT_AUDIO_PATH)
@@ -93,6 +94,20 @@ def _lock_for(recipient_user_id: int) -> asyncio.Lock:
     return lock
 
 
+def _emoji_delay_sec() -> float:
+    """Runtime /developer sozlamasini ishlatadi; test yoki lokal override
+    uchun modul konstantasi defaultdan o'zgartirilgan bo'lsa, o'shani oladi."""
+    if EMOJI_DISPLAY_DELAY_SEC != _DEFAULT_EMOJI_DISPLAY_DELAY_SEC:
+        return max(0.0, float(EMOJI_DISPLAY_DELAY_SEC))
+    return max(0.0, float(config.get_tabrik_settings().get("emoji_delay", _DEFAULT_EMOJI_DISPLAY_DELAY_SEC)))
+
+
+def _revert_delay_sec() -> float:
+    if REVERT_DELAY_SEC != _DEFAULT_REVERT_DELAY_SEC:
+        return max(0.0, float(REVERT_DELAY_SEC))
+    return max(0.0, float(config.get_tabrik_settings().get("revert_minutes", 2)) * 60.0)
+
+
 def _ready_markup(short_id: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[
         InlineKeyboardButton("🎁 Tabriknomani qabul qilish", callback_data=f"itabrik:claim:{short_id}")
@@ -118,7 +133,12 @@ def _make_logger(trace_id: str, short_id: str):
 _BUSINESS_ERROR_MESSAGES = {
     "NO_CONNECTION": "⚠️ Yuboruvchi hali Telegram Business botini ulamagan — tabrikni ko'rsatib bo'lmaydi.",
     "DISABLED": "⚠️ Yuboruvchining Business ulanishi hozir faol emas.",
-    "CAN_REPLY_FALSE": "⚠️ Botga bu chatda javob berish huquqi berilmagan (can_reply=false).",
+    "CAN_REPLY_FALSE": "⚠️ Botga bu Business akkauntda javob berish huquqi berilmagan.",
+    "BUSINESS_PEER_INVALID": (
+        "⚠️ Bu chat Business uchun hozircha faol emas. "
+        "Avval yuboruvchi bilan shaxsiy chatda istalgan xabar yuboring "
+        "(masalan, Salom), keyin shu tabrik tugmasini yana bosing."
+    ),
 }
 
 
@@ -142,7 +162,7 @@ async def handle_claim(update, context) -> None:
         log("GREETING_EXPIRED")
         await query.answer("⚠️ Bu tabrikning muddati o'tgan.", show_alert=True)
         return
-    emojis = config.get_tabrik_settings()["emojis"]
+    emojis = tabrik_logic.get_greeting_emojis(short_id) or config.get_tabrik_settings()["emojis"]
 
     celebration = _get_celebration(short_id)
     if not celebration:
@@ -209,17 +229,21 @@ async def handle_claim(update, context) -> None:
         try:
             await _run_cycle(context, business_connection_id, recipient_chat_id, greeting, emojis, log, log_error)
             log("CELEBRATION_COMPLETED")
+        except _BusinessPeerNotEligible as e:
+            log("BUSINESS_PEER_BLOCKED", reason=e.reason)
+            await _show_inline_error(context, inline_message_id, short_id, _BUSINESS_ERROR_MESSAGES.get(e.reason, _BUSINESS_ERROR_MESSAGES["BUSINESS_PEER_INVALID"]))
         except Exception as e:
             log_error("CYCLE", e)
-        finally:
+            await _show_inline_error(context, inline_message_id, short_id, "⚠️ Tabrikni yuborishda texnik xatolik yuz berdi. Keyinroq qayta urinib ko'ring.")
+        else:
             task = asyncio.create_task(
                 _schedule_revert(context, inline_message_id, short_id, recipient_user_id, trace_id)
             )
             _revert_tasks[recipient_user_id] = task
-            log("REVERT_SCHEDULED", seconds=REVERT_DELAY_SEC)
+            log("REVERT_SCHEDULED", seconds=_revert_delay_sec())
 
 
-_NOT_ELIGIBLE_MARKERS = ("initiate conversation", "bot_access_forbidden", "business_connection_invalid")
+_NOT_ELIGIBLE_MARKERS = ("initiate conversation", "bot_access_forbidden", "business_connection_invalid", "business_peer_invalid")
 
 
 def _looks_not_eligible(error: Exception) -> bool:
@@ -245,23 +269,31 @@ async def _send_with_retry(coro_factory, log, stage: str):
         return None, e
 
 
+class _BusinessPeerNotEligible(Exception):
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(reason)
+
+
 async def _run_cycle(context, business_connection_id, chat_id, greeting_text, emojis, log, log_error) -> None:
     bot = context.bot
 
     # --- AUDIO ---
     log("AUDIO_SEND_STARTED")
     audio_id = config.get_tabrik_settings().get("audio_file_id")
-    if audio_id:
+    audio_source = audio_id or (TABRIK_AUDIO_PATH if os.path.isfile(TABRIK_AUDIO_PATH) else None)
+    if audio_source:
         try:
             sent = await bot.send_audio(
-                business_connection_id=business_connection_id, chat_id=chat_id, audio=audio_id
+                business_connection_id=business_connection_id, chat_id=chat_id, audio=audio_source
             )
-            log("AUDIO_SEND_SUCCESS", message_id=sent.message_id, source="developer_file_id")
+            log("AUDIO_SEND_SUCCESS", message_id=sent.message_id, source=("developer_file_id" if audio_id else "local_file"))
             log("AUDIO_AUTOPLAY_NOT_CONTROLLED_BY_BOT")
         except (BadRequest, Forbidden) as e:
             if _looks_not_eligible(e):
-                log("TABRIK_BUSINESS_CHAT_NOT_ELIGIBLE", at_stage="AUDIO", error=str(e))
-                return
+                reason = "BUSINESS_PEER_INVALID" if "business_peer_invalid" in str(e).lower() else "NO_CONNECTION"
+                log("TABRIK_BUSINESS_CHAT_NOT_ELIGIBLE", at_stage="AUDIO", reason=reason, error=str(e))
+                raise _BusinessPeerNotEligible(reason) from e
             log_error("AUDIO_SEND", e)
         except Exception as e:
             log_error("AUDIO_SEND", e)
@@ -292,14 +324,16 @@ async def _run_cycle(context, business_connection_id, chat_id, greeting_text, em
 
         if err is not None:
             if _looks_not_eligible(err):
-                log("TABRIK_BUSINESS_CHAT_NOT_ELIGIBLE", at_stage=f"EMOJI_{idx}", error=str(err))
-                return
+                reason = "BUSINESS_PEER_INVALID" if "business_peer_invalid" in str(err).lower() else "NO_CONNECTION"
+                log("TABRIK_BUSINESS_CHAT_NOT_ELIGIBLE", at_stage=f"EMOJI_{idx}", reason=reason, error=str(err))
+                raise _BusinessPeerNotEligible(reason) from err
             log_error(f"EMOJI_{idx}_SEND", err)
             continue  # shu emoji o'tkazib yuboriladi, keyingisiga o'tamiz
 
         log(f"EMOJI_{idx}_SEND_SUCCESS", message_id=sent.message_id)
-        log(f"EMOJI_{idx}_WAIT", seconds=EMOJI_DISPLAY_DELAY_SEC)
-        await asyncio.sleep(config.get_tabrik_settings()["emoji_delay"])
+        delay = _emoji_delay_sec()
+        log(f"EMOJI_{idx}_WAIT", seconds=delay)
+        await asyncio.sleep(delay)
 
         log(f"EMOJI_{idx}_DELETE_STARTED", message_id=sent.message_id)
         try:
@@ -316,17 +350,31 @@ async def _run_cycle(context, business_connection_id, chat_id, greeting_text, em
     )
     if err is not None:
         if _looks_not_eligible(err):
-            log("TABRIK_BUSINESS_CHAT_NOT_ELIGIBLE", at_stage="FINAL_TEXT", error=str(err))
-            return
+            reason = "BUSINESS_PEER_INVALID" if "business_peer_invalid" in str(err).lower() else "NO_CONNECTION"
+            log("TABRIK_BUSINESS_CHAT_NOT_ELIGIBLE", at_stage="FINAL_TEXT", reason=reason, error=str(err))
+            raise _BusinessPeerNotEligible(reason) from err
         log_error("FINAL_TEXT_SEND", err)
         return
     log("FINAL_TEXT_SEND_SUCCESS", message_id=sent.message_id)
 
 
+async def _show_inline_error(context, inline_message_id: str, short_id: str, text: str) -> None:
+    """Callback query allaqachon answer qilingan bo'lsa, xatoni inline
+    xabarning o'zida ko'rsatadi va qayta urinib ko'rish tugmasini qoldiradi."""
+    try:
+        await context.bot.edit_message_text(
+            inline_message_id=inline_message_id,
+            text=text,
+            reply_markup=_ready_markup(short_id),
+        )
+    except Exception as e:
+        logger.warning("[TABRIK] INLINE_ERROR_EDIT_FAILED error_type=%s error=%s", type(e).__name__, e)
+
+
 async def _schedule_revert(context, inline_message_id: str, short_id: str, recipient_user_id: int, trace_id: str) -> None:
     log, log_error = _make_logger(trace_id, short_id)
     try:
-        await asyncio.sleep(config.get_tabrik_settings()["revert_minutes"] * 60)
+        await asyncio.sleep(_revert_delay_sec())
         await context.bot.edit_message_text(
             inline_message_id=inline_message_id,
             text=tabrik_logic.build_ready_card(),

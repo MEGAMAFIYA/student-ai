@@ -126,6 +126,24 @@ async def _post_init(application):
         logger.error(f"⏰ Eslatmalarni qayta rejalashtirishda xato: {type(e).__name__}: {e}", exc_info=True)
 
 
+async def _on_business_message(update, context):
+    """📨 Connected Business account chatidagi incoming xabarni qayd etadi.
+
+    Telegram Business `can_reply` huquqi aynan oxirgi 24 soatda incoming
+    xabar bo'lgan private chatlarga bog'langan. `/tabrik` inline tugmasi
+    bosilganda callback ichida `chat_id` kelmagani uchun shu update orqali
+    peerning haqiqiy chat_id'sini oldindan saqlab boramiz.
+    """
+    message = update.business_message
+    if message is None or not message.business_connection_id or not message.chat:
+        return
+    business_storage.record_business_message(
+        message.business_connection_id,
+        message.chat.id,
+        getattr(message, "date", None),
+    )
+
+
 async def _on_business_connection(update, context):
     """📇 `business_connection` update — bot Telegram Business orqali
     ulanganda, uzilganda yoki huquqlari o'zgarganda keladi (uch holatni
@@ -1294,6 +1312,7 @@ def main():
     # o'zgartirganda keladigan update. /tabrik'ning Business oqimi
     # (tabrik_business.py) shu saqlangan ma'lumotdan foydalanadi.
     app.add_handler(BusinessConnectionHandler(_on_business_connection))
+    app.add_handler(MessageHandler(filters.UpdateType.BUSINESS_MESSAGE, _on_business_message))
     # 🎨 /rasim — Telegram Mini App orqali rasm chizish.
     app.add_handler(CommandHandler("rasim", rasim.rasim_cmd))
     # 🎬 /vid — video yuklab olish (ASCII buyruq, Privacy Mode'dan qat'i
