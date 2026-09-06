@@ -29,6 +29,13 @@
       location.replace("/miniapp/game/?room=" + encodeURIComponent(start.slice(5)));
       return;
     }
+    if (start && start.startsWith("draw_")) {
+      // Fallback: eski Main Mini App deep-link bilan ochilgan bo'lsa ham
+      // rasm dueliga to'g'ri yo'naltiramiz. Yangi kod Direct Mini App
+      // linkidan foydalanadi va odatda bu branchga tushmaydi.
+      location.replace("/miniapp/rasim/?room=" + encodeURIComponent(start.slice(5)));
+      return;
+    }
     // Agar boshqa Mini App oqimi bo'lsa, uni bu router buzmaydi.
     document.querySelector(".muted").textContent =
       "Mini App ishga tayyor. O‘yin yoki Kino xonasini tegishli tugma orqali oching.";

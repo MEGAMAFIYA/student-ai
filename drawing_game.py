@@ -81,8 +81,17 @@ def create_room(creator_id: int) -> str:
         return rid
 
 def room_url(rid: str) -> str:
+    """1v1 xona uchun alohida Direct Mini App deep-link.
+
+    Muhim: `?startapp=...` ni bot username'ining o'ziga qo'yish Main Mini App
+    routeriga tushiradi. Rasm o'yini esa alohida Direct Mini App bo'lgani uchun
+    `t.me/<bot>/<short_name>?startapp=...` formatidan foydalanamiz. Shunda
+    Telegram `draw_<room>` start_paramni aynan /miniapp/rasim/ ilovasiga beradi
+    va inline Web App query_id ham saqlanadi.
+    """
     username = config.BOT_USERNAME_FALLBACK.lstrip("@")
-    return f"https://t.me/{username}?startapp=draw_{rid}&mode=fullscreen"
+    short_name = config.DRAWING_APP_SHORT_NAME.strip("/") or "rasim"
+    return f"https://t.me/{username}/{short_name}?startapp=draw_{rid}&mode=fullscreen"
 
 def _verify(init_data: str) -> dict | None:
     return webapp_security.verify_telegram_init_data(init_data, config.TELEGRAM_TOKEN)

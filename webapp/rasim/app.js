@@ -121,7 +121,7 @@
 
   async function bootDuel() {
     if (!initData || !room) {
-      statusMsg.textContent = "❌ Rasm chizish xonasi topilmadi. Chatdagi tugmani qayta bosing.";
+      statusMsg.textContent = "❌ Rasm chizish xonasi topilmadi. Telegramdagi «Rasm chizishni boshlash» tugmasini qayta bosing.";
       sendBtn.disabled = true;
       return;
     }

@@ -107,6 +107,7 @@ GAME_TURN_CREDENTIAL = os.getenv("GAME_TURN_CREDENTIAL", "").strip()
 # o'sha so'rov biror sababga ko'ra muvaffaqiyatsiz bo'lsa ishlatiladigan
 # zaxira (fallback) qiymat.
 BOT_USERNAME_FALLBACK = os.getenv("BOT_USERNAME", "Student_ai_uz_bot").lstrip("@")
+DRAWING_APP_SHORT_NAME = os.getenv("DRAWING_APP_SHORT_NAME", "rasim").strip().strip("/")
 
 # ============================================================
 # 🎬 /vid — video yuklab olish (yt-dlp)
