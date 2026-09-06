@@ -306,11 +306,20 @@ MAX_MOVIES = 1000
 
 
 def add_movie(title: str, file_id: str, mime_type: str = "video/mp4",
-              file_name: str = "", size: int = 0, uploaded_by: int = 0) -> dict:
-    """Telegram file_id asosida katalogga kino qo'shadi.
-    Faylning o'zi server diskiga ko'chirilmaydi: Telegramdagi media
-    saqlanib qoladi va keyinchalik Mini App stream endpointi shu file_id
-    orqali foydalanadi."""
+              file_name: str = "", size: int = 0, uploaded_by: int = 0,
+              telegram_chat_id: int | None = None,
+              telegram_message_id: int | None = None,
+              telegram_file_unique_id: str = "",
+              telegram_document_id: int | None = None,
+              telegram_access_hash: int | None = None,
+              telegram_file_reference: str = "") -> dict:
+    """Kino metadata'sini katalogga qo'shadi.
+
+    Muhim: bu funksiya media baytlarini diskka yozmaydi. `file_id` eski
+    kataloglar uchun backward-compatible fallback sifatida saqlanadi. Yangi
+    MTProto oqimi uchun Telegram message/document identifikatorlari alohida
+    metadata sifatida saqlanadi; ular keyingi bosqichlarda to'ldiriladi.
+    """
     with _lock:
         movie_id = uuid.uuid4().hex[:16]
         movie = {
@@ -321,6 +330,15 @@ def add_movie(title: str, file_id: str, mime_type: str = "video/mp4",
             "file_name": file_name[:200],
             "size": int(size or 0),
             "uploaded_by": int(uploaded_by or 0),
+            # Telegram source metadata. None/empty qiymatlar eski kataloglar
+            # uchun ataylab ruxsat etiladi; migration keyingi bosqichlarda
+            # mavjud kinolarni bosqichma-bosqich to'ldiradi.
+            "telegram_chat_id": int(telegram_chat_id) if telegram_chat_id is not None else None,
+            "telegram_message_id": int(telegram_message_id) if telegram_message_id is not None else None,
+            "telegram_file_unique_id": str(telegram_file_unique_id or ""),
+            "telegram_document_id": int(telegram_document_id) if telegram_document_id is not None else None,
+            "telegram_access_hash": int(telegram_access_hash) if telegram_access_hash is not None else None,
+            "telegram_file_reference": str(telegram_file_reference or ""),
             "created_ts": time.time(),
         }
         _data.setdefault("movies", {})[movie_id] = movie
@@ -339,7 +357,12 @@ def update_movie(movie_id: str, **fields) -> dict | None:
         movie = _data.get("movies", {}).get(str(movie_id))
         if not movie:
             return None
-        allowed = {"r2_key", "r2_uploaded_ts", "mime_type", "file_name", "size"}
+        allowed = {
+            "r2_key", "r2_uploaded_ts", "mime_type", "file_name", "size",
+            "telegram_chat_id", "telegram_message_id",
+            "telegram_file_unique_id", "telegram_document_id",
+            "telegram_access_hash", "telegram_file_reference",
+        }
         for key, value in fields.items():
             if key in allowed:
                 movie[key] = value

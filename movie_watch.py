@@ -6,14 +6,13 @@ Room:
 - play/pause/seek holati HTTP polling orqali sinxron
 - ichki chat HTTP polling orqali
 - WebRTC kamera/mikrofon signaling HTTP polling orqali
-- video Telegram file_id'dan server-side proxy qilinadi; token browserga chiqmaydi.
+- video Telegram MTProto'dan server-side Range stream qilinadi; qisqa stream token browserga beriladi, Telegram credentiallari esa serverda qoladi.
 
 Eslatma: WebRTC media P2P. NAT sabab ayrim tarmoqlarda TURN server talab qilinishi
 mumkin. WATCH_TURN_* env o'zgaruvchilari orqali TURN berish mumkin.
 """
 
 import json
-import subprocess
 import logging
 import mimetypes
 import os
@@ -22,14 +21,16 @@ import threading
 import time
 import urllib.error
 import urllib.request
-import shutil
-import tempfile
 import uuid
+import hmac
+import hashlib
+import base64
+import urllib.parse
 
 import config
 import storage
 import webapp_security
-import r2_storage
+import telegram_mtproto
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +40,7 @@ ROOM_LOCK = threading.RLock()
 MAX_CHAT = 200
 MAX_SIGNAL_ITEMS = 30
 MAX_CHAT_CLIENT_KEYS = 500
-KINO_CACHE_DIR = os.path.join("/tmp", "student_ai_kino_cache")
-KINO_CACHE_LOCK = threading.RLock()
-os.makedirs(KINO_CACHE_DIR, exist_ok=True)
+STREAM_SLOT = threading.BoundedSemaphore(getattr(config, "KINO_STREAM_MAX_CONCURRENT", 4))
 
 
 def _purge_rooms():
@@ -123,18 +122,18 @@ def join_room(rid: str, init_data: str):
             "movie": movie,
             "participants": [int(x) for x in room["participants"]],
             "state": dict(room["state"]),
-            "stream_path": f"/api/kino/stream/{rid}/{movie['id']}",
+            "stream_path": f"/api/kino/stream/{rid}/{movie['id']}?token={urllib.parse.quote(_make_stream_token(rid, movie['id'], int(user["id"]))) }",
             "share_url": room_url(movie["id"], rid),
         }, None
 
 
-def _room_movie_payload(room: dict, rid: str):
+def _room_movie_payload(room: dict, rid: str, user_id: int | None = None):
     movie = storage.get_movie(room.get("movie_id"))
+    token = _make_stream_token(rid, movie["id"], int(user_id or 0)) if movie and user_id else ""
+    stream = f"/api/kino/stream/{rid}/{movie['id']}?token={urllib.parse.quote(token)}" if movie and token else ""
     return {
         "movie": movie,
-        "stream_path": f"/api/kino/stream/{rid}/{movie['id']}" if movie else "",
-        "media_r2": bool(movie and movie.get("r2_key") and r2_storage.enabled()),
-        "media_url_path": f"/api/kino/media-url/{rid}/{movie['id']}" if movie else "",
+        "stream_path": stream,
     }
 
 
@@ -168,7 +167,7 @@ def change_movie(rid: str, init_data: str, movie_id: str):
             **room["state"],
             "participants": [int(x) for x in room["participants"]],
             "server_now": time.time(),
-            **_room_movie_payload(room, rid),
+            **_room_movie_payload(room, rid, int(user["id"])),
         }
         return payload, None
 
@@ -211,7 +210,7 @@ def room_state(rid: str, init_data: str, playing=None, position=None):
             **room["state"],
             "participants": [int(x) for x in room["participants"]],
             "server_now": time.time(),
-            **_room_movie_payload(room, rid),
+            **_room_movie_payload(room, rid, int(user["id"])),
         }, None
 
 
@@ -301,70 +300,6 @@ def get_signals(rid: str, init_data: str):
     return items, None
 
 
-def archive_movie_to_r2(movie: dict) -> tuple[bool, str, str]:
-    """Telegram media -> R2 one-time import. Returns (ok, key, error).
-
-    This runs only when R2 is configured. The temporary file is deleted after
-    upload, so Render is not used as a permanent movie CDN.
-    """
-    if not r2_storage.enabled():
-        return False, "", "R2 sozlanmagan"
-    movie_id = str(movie.get("id", ""))
-    key = movie.get("r2_key") or r2_storage.make_key(movie_id, movie.get("file_name", ""))
-    if movie.get("r2_key") and r2_storage.exists(key):
-        return True, key, ""
-    fd, tmp = tempfile.mkstemp(prefix="student_ai_r2_", suffix=".media")
-    os.close(fd)
-    try:
-        remote = _telegram_file_url(movie["file_id"])
-        max_bytes = max(1, int(config.KINO_MAX_UPLOAD_MB)) * 1024 * 1024
-        total = 0
-        with urllib.request.urlopen(
-            urllib.request.Request(remote, headers={"User-Agent": "StudentAI-Kino/3.0"}),
-            timeout=180,
-        ) as resp, open(tmp, "wb") as out:
-            while True:
-                chunk = resp.read(1024 * 1024)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > max_bytes:
-                    raise ValueError(f"Kino {total / 1024 / 1024:.1f} MB — KINO_MAX_UPLOAD_MB oshib ketdi")
-                out.write(chunk)
-        r2_storage.upload_file(tmp, key, movie.get("mime_type") or "video/mp4")
-        return True, key, ""
-    except Exception as e:
-        logger.exception("☁️ R2 kino upload xatosi: %s", e)
-        return False, "", str(e)[:240]
-    finally:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-
-
-def movie_media_url(rid: str, movie_id: str, init_data: str) -> tuple[str | None, str | None]:
-    """Returns a direct R2/CDN URL when available, otherwise legacy stream path."""
-    user = _verify(init_data)
-    if not user:
-        return None, "Tasdiqlash xatosi."
-    room = _get_room(rid)
-    if not room or str(movie_id) != str(room.get("movie_id")):
-        return None, "Kino xonasi topilmadi."
-    if str(user["id"]) not in room.get("participants", {}):
-        return None, "Siz bu xonaga qo'shilmagansiz."
-    movie = storage.get_movie(movie_id)
-    if not movie:
-        return None, "Kino topilmadi."
-    key = movie.get("r2_key")
-    if key and r2_storage.enabled():
-        try:
-            return r2_storage.media_url(key), None
-        except Exception as e:
-            logger.warning("☁️ R2 URL yaratilmadi, fallback ishlaydi: %s", e)
-    return f"/api/kino/stream/{rid}/{movie['id']}", None
-
-
 def _telegram_file_url(file_id: str):
     """Bot API getFile orqali file_path oladi. Token faqat server ichida qoladi."""
     token = config.TELEGRAM_TOKEN
@@ -378,153 +313,60 @@ def _telegram_file_url(file_id: str):
     return f"https://api.telegram.org/file/bot{token}/{path}"
 
 
-def _movie_cache_path(movie_id: str) -> str:
-    safe = re.sub(r"[^a-zA-Z0-9_-]", "_", str(movie_id))
-    return os.path.join(KINO_CACHE_DIR, safe + ".media")
+def _stream_secret() -> bytes:
+    value = getattr(config, "KINO_STREAM_TOKEN_SECRET", "") or config.TELEGRAM_TOKEN
+    return value.encode("utf-8")
 
 
-def _download_movie_to_cache(movie: dict) -> str:
-    """Telegramdan kinoni bir marta olib, lokal runtime cache'ga yozadi.
-    Keyingi ijrolarda Telegramga qayta murojaat qilinmaydi.
-    Cloud Bot API getFile cheklovi sabab bu yo'l faqat KINO_MAX_UPLOAD_MB ichidagi
-    fayllar uchun ishlaydi."""
-    path = _movie_cache_path(movie["id"])
-    with KINO_CACHE_LOCK:
-        if os.path.isfile(path) and os.path.getsize(path) > 0:
-            return path
-        remote = _telegram_file_url(movie["file_id"])
-        tmp = path + ".part"
-        try:
-            with urllib.request.urlopen(
-                urllib.request.Request(remote, headers={"User-Agent": "StudentAI-Kino/2.0"}),
-                timeout=120,
-            ) as resp, open(tmp, "wb") as out:
-                total = 0
-                max_bytes = max(1, int(config.KINO_MAX_UPLOAD_MB)) * 1024 * 1024
-                while True:
-                    chunk = resp.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    total += len(chunk)
-                    if total > max_bytes:
-                        raise RuntimeError(
-                            f"Kino cache uchun juda katta: {total / 1024 / 1024:.1f} MB > {config.KINO_MAX_UPLOAD_MB} MB"
-                        )
-                    out.write(chunk)
-            os.replace(tmp, path)
-            logger.info("🎬 Kino cache yaratildi: %s (%d bytes)", movie["id"], os.path.getsize(path))
-            return path
-        finally:
-            try:
-                if os.path.exists(tmp): os.remove(tmp)
-            except OSError:
-                pass
+def _make_stream_token(room_id: str, movie_id: str, user_id: int, ttl: int = 3600) -> str:
+    payload = f"{room_id}|{movie_id}|{int(user_id)}|{int(time.time()) + max(60, int(ttl))}"
+    raw = payload.encode("utf-8")
+    sig = hmac.new(_stream_secret(), raw, hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(raw + b"." + sig).decode("ascii").rstrip("=")
 
 
-def _mime_for_movie(movie: dict) -> str:
-    mime = (movie.get("mime_type") or "").lower().split(";", 1)[0].strip()
-    if mime == "video/quicktime":
-        return "video/mp4"
-    if mime.startswith("video/"):
-        return mime
-    guessed = mimetypes.guess_type(movie.get("file_name", ""))[0]
-    return guessed or "video/mp4"
+def _verify_stream_token(token: str, room_id: str, movie_id: str) -> int | None:
+    try:
+        pad = "=" * (-len(token) % 4)
+        blob = base64.urlsafe_b64decode((token + pad).encode("ascii"))
+        raw, sig = blob.rsplit(b".", 1)
+        if not hmac.compare_digest(hmac.new(_stream_secret(), raw, hashlib.sha256).digest(), sig):
+            return None
+        r, m, uid, exp = raw.decode("utf-8").split("|", 3)
+        if r != str(room_id) or m != str(movie_id) or int(exp) < int(time.time()):
+            return None
+        return int(uid)
+    except Exception:
+        return None
 
 
-def _ensure_browser_mp4(movie: dict, source_path: str) -> str:
-    """Browser uchun mos MP4 qaytaradi.
-
-    MP4 konteynerining o'zi yetarli emas: ayrim kinolar HEVC/H.265, AC-3 va
-    boshqa kodeklarda bo'lishi mumkin. Avval ffprobe bilan tekshiramiz va faqat
-    mos kelmaydigan faylni H.264/AAC ga transcode qilamiz. Shu bilan odatiy
-    H.264 MP4 lar ortiqcha CPU ishlatmaydi, Telegram/Android WebView mosligi esa
-    ancha yuqori bo'ladi.
-    """
-    name = (movie.get("file_name") or "").lower()
-    mime = (movie.get("mime_type") or "").lower()
-    force = os.getenv("KINO_FORCE_TRANSCODE", "0") == "1"
-    needs_transcode = force or not (name.endswith(".mp4") or mime == "video/mp4")
-
-    if not needs_transcode:
-        ffprobe = shutil.which("ffprobe")
-        if ffprobe:
-            try:
-                probe = subprocess.run(
-                    [ffprobe, "-v", "error", "-show_entries", "stream=codec_type,codec_name",
-                     "-of", "json", source_path],
-                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                    text=True, timeout=15, check=True,
-                )
-                streams = json.loads(probe.stdout or "{}").get("streams", [])
-                vcodecs = {x.get("codec_name") for x in streams if x.get("codec_type") == "video"}
-                acodecs = {x.get("codec_name") for x in streams if x.get("codec_type") == "audio"}
-                needs_transcode = not bool(vcodecs & {"h264", "avc1"}) or bool(acodecs - {"aac"})
-            except Exception as e:
-                # Probe ishlamasa mavjud MP4 ni buzmasdan serve qilamiz.
-                logger.debug("🎬 ffprobe tekshiruvi o'tmadi: %s", e)
-                needs_transcode = False
-
-    if not needs_transcode:
-        return source_path
-
-    out = os.path.splitext(source_path)[0] + "_h264.mp4"
-    with KINO_CACHE_LOCK:
-        if os.path.isfile(out) and os.path.getsize(out) > 0:
-            return out
-        ffmpeg = shutil.which("ffmpeg")
-        if not ffmpeg:
-            logger.warning("🎬 ffmpeg topilmadi; original video serve qilinadi: %s", movie.get("title"))
-            return source_path
-        tmp = out + ".part.mp4"
-        cmd = [ffmpeg, "-y", "-i", source_path, "-map", "0:v:0", "-map", "0:a:0?",
-               "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-               "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
-               "-ar", "48000", "-movflags", "+faststart", tmp]
-        try:
-            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=300, check=True)
-            if os.path.getsize(tmp) <= 0:
-                raise RuntimeError("ffmpeg bo'sh fayl yaratdi")
-            os.replace(tmp, out)
-            logger.info("🎬 Browser MP4 tayyor: %s", movie.get("title"))
-            return out
-        except Exception as e:
-            logger.error("🎬 MP4 transcode xatosi: %s", e, exc_info=True)
-            try:
-                if os.path.exists(tmp): os.remove(tmp)
-            except OSError:
-                pass
-            return source_path
+def _parse_range(range_header: str, size: int):
+    if not range_header:
+        return 0, size - 1, 200
+    m = re.match(r"^bytes=(\d*)-(\d*)$", range_header.strip())
+    if not m:
+        return None
+    a, b = m.groups()
+    if not a and not b:
+        return None
+    if a:
+        start = int(a)
+        end = int(b) if b else size - 1
+    else:
+        suffix = int(b)
+        if suffix <= 0:
+            return None
+        start = max(0, size - suffix)
+        end = size - 1
+    if start >= size or start > end:
+        return None
+    return start, min(end, size - 1), 206
 
 
-def _serve_local_range(handler, path: str, content_type: str):
-    size = os.path.getsize(path)
-    range_header = handler.headers.get("Range", "").strip()
-    start, end = 0, size - 1
-    status = 200
-    if range_header:
-        m = re.match(r"^bytes=(\d*)-(\d*)$", range_header)
-        if not m:
-            handler.send_response(416)
-            handler.send_header("Content-Range", f"bytes */{size}")
-            handler.end_headers()
-            return
-        a, b = m.groups()
-        if a:
-            start = int(a)
-            end = int(b) if b else size - 1
-        else:
-            suffix = int(b or 0)
-            start = max(0, size - suffix)
-            end = size - 1
-        if start >= size or start > end:
-            handler.send_response(416)
-            handler.send_header("Content-Range", f"bytes */{size}")
-            handler.end_headers()
-            return
-        end = min(end, size - 1)
-        status = 206
-
-    length = end - start + 1
+def _send_stream_headers(handler, status: int, content_type: str, size: int, start: int, end: int):
+    length = max(0, end - start + 1)
+    # HTTP handler flag lets the fallback layer know whether headers are already on the wire.
+    handler._kino_stream_headers_sent = True
     handler.send_response(status)
     handler.send_header("Content-Type", content_type)
     handler.send_header("Accept-Ranges", "bytes")
@@ -532,41 +374,171 @@ def _serve_local_range(handler, path: str, content_type: str):
     handler.send_header("Content-Length", str(length))
     if status == 206:
         handler.send_header("Content-Range", f"bytes {start}-{end}/{size}")
-    handler.send_header("Cache-Control", "private, max-age=3600")
+    handler.send_header("Cache-Control", "private, no-store")
     handler.end_headers()
-    with open(path, "rb") as f:
-        f.seek(start)
-        remaining = length
+
+
+def _serve_mtproto_range(handler, movie: dict, start: int, end: int, content_type: str):
+    chat_id = movie.get("telegram_chat_id")
+    message_id = movie.get("telegram_message_id")
+    size = int(movie.get("size") or 0)
+    if not chat_id or not message_id or size <= 0:
+        raise RuntimeError("MTProto metadata to'liq emas.")
+    # First chunk is fetched before headers so a primary failure can cleanly
+    # switch to the fallback before the HTTP response has started.
+    chunk_size = int(getattr(config, "KINO_STREAM_CHUNK_SIZE", 1024 * 1024))
+    timeout = float(getattr(config, "KINO_STREAM_TIMEOUT_SEC", 35))
+    first_limit = min(chunk_size, end - start + 1)
+    first = telegram_mtproto.download_range(chat_id, message_id, start, first_limit, timeout=timeout)
+    if not first:
+        raise RuntimeError("Telegram MTProto bo'sh chunk qaytardi.")
+    _send_stream_headers(handler, 206 if (start > 0 or end < size - 1) else 200, content_type, size, start, end)
+    handler.wfile.write(first)
+    sent = len(first)
+    pos = start + sent
+    while pos <= end:
+        want = min(chunk_size, end - pos + 1)
+        chunk = telegram_mtproto.download_range(chat_id, message_id, pos, want, timeout=timeout)
+        if not chunk:
+            raise RuntimeError("Telegram MTProto oqimi erta tugadi.")
+        handler.wfile.write(chunk)
+        pos += len(chunk)
+        if len(chunk) < want:
+            raise RuntimeError("Telegram MTProto oqimi kutilmaganda qisqardi.")
+
+
+def _bot_api_stream(handler, movie: dict, start: int, end: int, content_type: str):
+    """Legacy/secondary fallback: Telegram Bot API CDN through this Render process."""
+    if not movie.get("file_id"):
+        raise RuntimeError("Fallback uchun file_id mavjud emas.")
+    remote = _telegram_file_url(movie["file_id"])
+    size = int(movie.get("size") or 0)
+    req = urllib.request.Request(remote, headers={
+        "User-Agent": "StudentAI-Kino/3.0",
+        "Range": f"bytes={start}-{end}",
+    })
+    with urllib.request.urlopen(req, timeout=35) as resp:
+        status = getattr(resp, "status", 200)
+        if status == 200 and start:
+            # Some Telegram/CDN responses ignore Range. Avoid pretending the
+            # response is the requested range; discard only the requested prefix.
+            remaining = start
+            while remaining:
+                data = resp.read(min(1024 * 1024, remaining))
+                if not data:
+                    raise RuntimeError("Fallback stream Range'ni bajara olmadi.")
+                remaining -= len(data)
+        actual_size = int(resp.headers.get("Content-Length", size or 0))
+        if not size:
+            size = actual_size + (start if status == 200 else 0)
+        if status == 200 and start == 0 and end == size - 1:
+            _send_stream_headers(handler, 200, content_type, size, 0, end)
+        else:
+            _send_stream_headers(handler, 206, content_type, size, start, end)
+        remaining = end - start + 1
         while remaining:
-            chunk = f.read(min(1024 * 1024, remaining))
+            chunk = resp.read(min(1024 * 1024, remaining))
             if not chunk:
                 break
             handler.wfile.write(chunk)
             remaining -= len(chunk)
+        if remaining:
+            raise RuntimeError("Fallback Telegram oqimi erta tugadi.")
 
 
-def serve_movie(handler, room_id: str, movie_id: str):
-    """Browserga ishonchli Range video stream beradi.
-    Avval runtime cache'dan foydalanadi; cache yo'q bo'lsa Telegramdan bir marta oladi.
-    Shu bilan bitta tomoshabin ham kinoni mustaqil ko'ra oladi."""
+def _authorize_stream(handler, room_id: str, movie_id: str):
+    from urllib.parse import parse_qs, urlsplit
+    parsed = urlsplit(handler.path)
+    token = parse_qs(parsed.query).get("token", [""])[0]
+    uid = _verify_stream_token(token, room_id, movie_id)
+    if uid is None:
+        _send_text(handler, 403, "Stream ruxsati yaroqsiz yoki muddati o'tgan.")
+        return None, None
     room = _get_room(room_id)
-    if not room or str(room.get("movie_id")) != str(movie_id):
-        _send_text(handler, 404, "Kino xonasi topilmadi.")
-        return
+    if not room or str(room.get("movie_id")) != str(movie_id) or str(uid) not in room.get("participants", {}):
+        _send_text(handler, 403, "Bu kino xonasiga kirish huquqi yo'q.")
+        return None, None
     movie = storage.get_movie(movie_id)
     if not movie:
         _send_text(handler, 404, "Kino topilmadi.")
+        return None, None
+    return uid, movie
+
+
+def serve_movie_head(handler, room_id: str, movie_id: str):
+    """Browser/Telegram HEAD so'roviga faqat metadata bilan javob beradi."""
+    uid, movie = _authorize_stream(handler, room_id, movie_id)
+    if not movie:
+        return
+    size = int(movie.get("size") or 0)
+    if size <= 0:
+        _send_text(handler, 502, "Kino hajmi aniqlanmadi.")
+        return
+    parsed_range = _parse_range(handler.headers.get("Range", ""), size)
+    if not parsed_range:
+        handler.send_response(416)
+        handler.send_header("Content-Range", f"bytes */{size}")
+        handler.end_headers()
+        return
+    start, end, _ = parsed_range
+    status = 206 if (start > 0 or end < size - 1) else 200
+    _send_stream_headers(handler, status, _mime_for_movie(movie), size, start, end)
+
+
+def serve_movie(handler, room_id: str, movie_id: str):
+    """Primary MTProto stream with automatic Bot API/Render fallback.
+
+    No movie bytes are persisted to disk/R2. The browser receives one stable
+    stream URL and never needs to know which Telegram transport was selected.
+    """
+    uid, movie = _authorize_stream(handler, room_id, movie_id)
+    if not movie:
+        return
+    size = int(movie.get("size") or 0)
+    if size <= 0:
+        _send_text(handler, 502, "Kino hajmi aniqlanmadi.")
+        return
+    parsed_range = _parse_range(handler.headers.get("Range", ""), size)
+    if not parsed_range:
+        handler.send_response(416)
+        handler.send_header("Content-Range", f"bytes */{size}")
+        handler.end_headers()
+        return
+    start, end, _ = parsed_range
+    content_type = _mime_for_movie(movie)
+    handler._kino_stream_headers_sent = False
+    acquired = STREAM_SLOT.acquire(timeout=float(getattr(config, "KINO_STREAM_TIMEOUT_SEC", 35)))
+    if not acquired:
+        _send_text(handler, 503, "Kino oqimi band. Bir necha soniyadan keyin qayta urinib ko'ring.")
         return
     try:
-        cache = _download_movie_to_cache(movie)
-        playable = _ensure_browser_mp4(movie, cache)
-        _serve_local_range(handler, playable, "video/mp4" if playable.endswith(".mp4") else _mime_for_movie(movie))
-    except urllib.error.HTTPError as e:
-        logger.error("🎬 Kino yuklash HTTPError: %s", e)
-        _send_text(handler, e.code if e.code in (404, 416) else 502, "Telegramdan kino faylini olishda xatolik.")
-    except Exception as e:
-        logger.error("🎬 Kino stream xatosi: %s: %s", type(e).__name__, e, exc_info=True)
-        _send_text(handler, 502, "Kino stream tayyorlanmadi: " + str(e)[:180])
+        try:
+            _serve_mtproto_range(handler, movie, start, end, content_type)
+            return
+        except Exception as primary_exc:
+            logger.warning("🎬 MTProto PRIMARY xato, fallback sinanadi: %s: %s", type(primary_exc).__name__, primary_exc)
+            # Fallback can only replace the primary transport before HTTP headers
+            # have been sent. Once bytes are on the wire, sending a second set of
+            # headers would corrupt the response. The browser will retry the next
+            # Range request and get a fresh primary/fallback attempt.
+            if getattr(handler, "_kino_stream_headers_sent", False):
+                try:
+                    handler.close_connection = True
+                except Exception:
+                    pass
+                return
+        try:
+            _bot_api_stream(handler, movie, start, end, content_type)
+        except Exception as fallback_exc:
+            logger.error("🎬 Kino fallback stream xatosi: %s: %s", type(fallback_exc).__name__, fallback_exc, exc_info=True)
+            # If headers were already sent by the fallback, the socket may be
+            # partially written; otherwise provide a clean HTTP error.
+            try:
+                _send_text(handler, 502, "Telegram kino oqimi vaqtincha mavjud emas.")
+            except Exception:
+                pass
+    finally:
+        STREAM_SLOT.release()
 
 def _send_text(handler, status, text):
     body = text.encode("utf-8")
@@ -596,12 +568,6 @@ def handle_api(handler):
         qs = parse_qs(parsed.query)
         data, err = join_room(qs.get("room", [""])[0], init_data)
         return _json(handler, 200 if not err else 400, {"ok": not bool(err), "data": data, "error": err})
-    if path.startswith("/api/kino/media-url/"):
-        parts = path.split("/api/kino/media-url/", 1)[1].split("/")
-        if len(parts) == 2:
-            url, err = movie_media_url(parts[0], parts[1], init_data)
-            return _json(handler, 200 if not err else 400, {"ok": not bool(err), "data": {"url": url} if url else None, "error": err})
-        return _json(handler, 404, {"ok": False, "error": "Not found."})
     if path == "/api/kino/state":
         qs = parse_qs(parsed.query)
         data, err = room_state(qs.get("room", [""])[0], init_data)

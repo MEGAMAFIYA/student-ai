@@ -127,15 +127,8 @@
     try {
       video.pause();
       setStatus("⏳ Kino tayyorlanmoqda...");
-      let source = d.stream_path;
-      if (d.media_url_path) {
-        try {
-          const media = await api(d.media_url_path);
-          if (media?.url) source = media.url;
-        } catch (e) {
-          console.warn("R2 media URL olinmadi, Render fallback ishlaydi", e);
-        }
-      }
+      // Bitta URL ishlatiladi. Primary/fallback tanlovi serverda yashirin.
+      const source = d.stream_path;
       if (token !== mediaLoadToken) return;
       video.setAttribute("data-movie-id", nextId);
       video.src = source;

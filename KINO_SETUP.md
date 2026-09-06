@@ -1,83 +1,52 @@
-# Kino Watch Party — deployment/setup
+# 🎬 Kino Mini App — Stage 8 production architecture
 
-## Muhim: Main Mini App
+## Media oqimi
 
-Kino inline natijasidagi `▶️ Birga ko'rish` tugmasi Telegram Direct Mini App linkidan foydalanadi:
+`Telegram → MTProto → Render → Mini App` — asosiy yo‘l.
 
-`https://t.me/<BOT_USERNAME>?startapp=room_<ROOM_ID>&mode=fullscreen`
+MTProto vaqtincha ishlamasa yoki xato bersa:
 
-Shuning uchun @BotFather ichida bot uchun **Main Mini App** URL sifatida
-Render'dagi shu loyihaning root URL'i yoki `/miniapp/` URL'i berilishi kerak.
+`Telegram → Bot API/CDN → Render → Mini App` — fallback.
 
-Misol:
-`https://YOUR-RENDER-DOMAIN.onrender.com/miniapp/`
+Brauzer faqat bitta `/api/kino/stream/...` URL bilan ishlaydi va qaysi transport ishlayotganini bilmaydi.
 
-Root URL ham endi Mini App router sifatida xizmat qiladi. Agar Telegram
-`startapp=room_...` bilan ochsa, router foydalanuvchini avtomatik
-`/miniapp/kino/?room=...` ga o'tkazadi.
+## Muhim qoida
 
-## Kino oqimi
+- R2/S3/Cloudinary ishlatilmaydi.
+- Render kino fayllarini doimiy saqlamaydi.
+- `/tmp` kino cache ishlatilmaydi.
+- DB faqat metadata saqlaydi: Telegram chat/message ID, document ID, access hash, file reference, MIME, size, filename va legacy `file_id`.
+- Video HTTP Range orqali bo‘lib-bo‘lib uzatiladi.
+- Telegram credentiallari faqat server env’da bo‘ladi.
+- Mini App `initData` serverda tekshiriladi.
 
-- `/kino` — admin katalogi.
-- Kino bir marta Telegram `file_id` bilan katalogga yoziladi.
-- Inline: `@Bot kino` yoki `@Bot kino ajdar uyi`.
-- Natijani yuborganda `▶️ Birga ko'rish` tugmasi room'ni ochadi.
-- Watch Party ichida play/pause/seek sinxronlanadi.
-- Ichki chat va WebRTC kamera/mikrofon signaling mavjud.
+## Render env
 
-## Eslatma
+Majburiy:
 
-Cloud Bot API'da katta kino fayllari uchun fayl yuklab olish/streaming
-cheklovlari mavjud. To'liq filmlar uchun keyingi bosqichda Local Bot API
-yoki R2/S3 kabi object storage tavsiya qilinadi.
+- `TELEGRAM_API_ID`
+- `TELEGRAM_API_HASH`
+- `TELEGRAM_SESSION`
+- `TELEGRAM_TOKEN`
 
-## WebRTC kamera/mikrofon (2-bosqich tuzatish)
+Tavsiya:
 
-Kamera va mikrofon WebRTC orqali uzatiladi. `KINO_TURN_*` o'zgaruvchilari ixtiyoriy:
+- `KINO_STREAM_TOKEN_SECRET` — alohida uzun random secret.
+- `KINO_STREAM_CHUNK_SIZE` — default 1 MiB.
+- `KINO_STREAM_MAX_CONCURRENT` — default 4.
+- `KINO_STREAM_TIMEOUT_SEC` — default 35 soniya.
 
-- `KINO_TURN_URL` (bitta TURN URL uchun)
-- `KINO_TURN_URLS` (ixtiyoriy: bir nechta URL, vergul/yangi qator bilan)
-- `KINO_TURN_USERNAME`
-- `KINO_TURN_CREDENTIAL`
+`TG_API_ID`, `TG_API_HASH`, `TG_SESSION` eski env nomlari sifatida ham qabul qilinadi.
 
-STUN ko‘p tarmoqlarda yetadi. Mobil operator yoki qattiq NAT/firewall holatlarida TURN relay kerak bo‘lishi mumkin. TURN credentiallarni qisqa muddatli qilib berish tavsiya etiladi.
+## Eski kinolar
 
-### Diagnostika
+Eski katalogdagi filmda Telegram source metadata bo‘lmasa, `/kino_migration MOVIE_ID CHAT_ID MESSAGE_ID` orqali aynan video yuborilgan Telegram xabarini ko‘rsatib, metadata'ni to‘ldirish mumkin. Media qayta saqlanmaydi.
 
-Mini App ichida kamera/mikrofon tugmasi bosilganda brauzer `getUserMedia` ruxsatini so‘raydi. Ruxsat berilmasa, foydalanuvchiga aniq xabar chiqadi. Ikki foydalanuvchi xonaga kirgandan keyin media ulanishi negotiation + ICE signaling orqali qayta o‘rnatiladi.
+## Tekshirish
 
-## Chat duplicate himoyasi
-
-Chat POST so‘roviga `client_id` yuboriladi. Server bir xil `client_id`ni qayta yuborilgan bo‘lsa, yangi xabar yaratmaydi. Frontendda ham message ID bo‘yicha dedupe va polling lock mavjud.
-
-
-## WebRTC sifat va barqarorlik
-
-- Video 720p/30fps gacha olinadi va WebRTC bitrate limiti tarmoq holatiga qarab moslanadi.
-- `getStats()` orqali paket yo'qotilishi, RTT va mavjud outgoing bitrate kuzatiladi.
-- ICE `failed/disconnected` holatlarida cooldown bilan avtomatik restart qilinadi.
-- Bir nechta TURN URL berilsa, brauzer mos relay transportini tanlaydi.
-- Android/Telegram klaviaturasi ochilganda kino player sticky holatda ko'rinib turadi.
-
-## ☁️ Cloudflare R2 / CDN (ixtiyoriy, tavsiya etiladi)
-
-R2 yoqilganda admin yuklagan kino Telegramdan bir marta R2 bucket'ga ko'chiriladi.
-Mini App keyingi tomoshalarda R2 public/CDN URL yoki 15 daqiqalik presigned URL orqali videoni oladi;
-Render video baytlarini proxy qilmaydi. R2 sozlanmagan bo'lsa eski Telegram→Render fallback ishlaydi.
-
-Render Environment Variables:
-
-```text
-R2_ACCOUNT_ID=Cloudflare Account ID
-R2_ACCESS_KEY_ID=R2 API token access key
-R2_SECRET_ACCESS_KEY=R2 API token secret key
-R2_BUCKET=student-ai-kino
-R2_PUBLIC_BASE_URL=https://cdn.example.com
-R2_PRESIGNED_TTL_SEC=900
-```
-
-`R2_PUBLIC_BASE_URL` faqat bucket Cloudflare custom domain orqali public/read bo'lsa qo'yiladi.
-Aks holda bo'sh qoldiring — backend presigned GET URL yaratadi.
-
-Tavsiya: production uchun R2 bucket'ni public qilish o'rniga Cloudflare custom domain + Cache Rules yoki
-private bucket + presigned URL ishlating. R2 credentials faqat Render Environment Variables'da bo'lsin.
+1. Admin Telegram’da video yuboradi va nomini beradi.
+2. DB’da `telegram_chat_id` va `telegram_message_id` paydo bo‘ladi.
+3. Mini App video uchun faqat `/api/kino/stream/...` endpointidan foydalanadi.
+4. Player Range request yuboradi.
+5. Server MTProto’dan chunk oladi. Xato bo‘lsa fallback ishlaydi.
+6. Watch Party/chat/WebRTC oqimi alohida qoladi.

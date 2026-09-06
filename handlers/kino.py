@@ -15,6 +15,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 import config
 import storage
 import movie_watch
+import telegram_mtproto
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ async def kino_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             "🎬 Kino yuklash\n\n"
             "1️⃣ Video yoki video faylni shu yerga yuboring.\n"
             "2️⃣ Keyin kino nomini so'rayman.\n\n"
-            "⚠️ Cloud Bot API bilan hozircha 45 MB gacha bo'lgan fayllar qabul qilinadi."
+            "📡 Media Telegramdan MTProto orqali oqimlanadi; fayl Render/R2 ga saqlanmaydi."
         )
         return KINO_WAIT_VIDEO
 
@@ -94,16 +95,14 @@ async def kino_receive_video(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return KINO_WAIT_VIDEO
 
     size = (msg.video.file_size if msg.video else msg.document.file_size) or 0
-    max_bytes = config.KINO_MAX_UPLOAD_MB * 1024 * 1024
-    if size and size > max_bytes:
-        await msg.reply_text(
-            f"❌ Fayl juda katta: {size / 1024 / 1024:.1f} MB.\n"
-            f"Cloud Bot API uchun limit {config.KINO_MAX_UPLOAD_MB} MB qilib qo'yilgan."
-        )
-        return KINO_WAIT_VIDEO
-
+    # Muhim: MTProto source message — video YUBORILGAN xabarning o'zi.
+    # Keyin title yuborilganda update.message.message_id boshqa xabar bo'ladi;
+    # shuning uchun source identifikatorlarni shu yerda saqlab qo'yamiz.
     context.user_data["kino_pending"] = {
         "file_id": file_id,
+        "file_unique_id": (msg.video.file_unique_id if msg.video else msg.document.file_unique_id) or "",
+        "source_chat_id": int(msg.chat_id),
+        "source_message_id": int(msg.message_id),
         "mime_type": mime_type,
         "file_name": file_name,
         "size": size,
@@ -129,28 +128,44 @@ async def kino_receive_title(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("⚠️ Yuklash sessiyasi topilmadi. /kino buyrug'ini qayta bering.")
         return ConversationHandler.END
 
+    # Stage 2: aynan shu Telegram message'ni MTProto orqali resolve qilamiz.
+    # Media baytlari olinmaydi — faqat identifierlar DB'ga yoziladi.
+    mtproto_meta = {}
+    try:
+        mtproto_meta = await telegram_mtproto.resolve_message(
+            chat_id=int(pending["source_chat_id"]),
+            message_id=int(pending["source_message_id"]),
+        )
+        logger.info(
+            "🎬 Kino MTProto metadata olindi: chat=%s message=%s document=%s",
+            mtproto_meta.get("telegram_chat_id"),
+            mtproto_meta.get("telegram_message_id"),
+            mtproto_meta.get("telegram_document_id"),
+        )
+    except Exception as exc:
+        # Hozircha katalogni to'xtatmaymiz: eski file_id saqlanadi.
+        # Keyingi migration bosqichida eski yozuvlarni ham MTProto bilan
+        # to'ldirish uchun alohida resolver qo'shiladi.
+        logger.warning("🎬 MTProto metadata olinmadi: %s: %s", type(exc).__name__, exc)
+
     movie = storage.add_movie(
         title=title,
         file_id=pending["file_id"],
-        mime_type=pending.get("mime_type") or "video/mp4",
-        file_name=pending.get("file_name") or "",
-        size=pending.get("size") or 0,
+        mime_type=mtproto_meta.get("mime_type") or pending.get("mime_type") or "video/mp4",
+        file_name=mtproto_meta.get("file_name") or pending.get("file_name") or "",
+        size=mtproto_meta.get("size") or pending.get("size") or 0,
         uploaded_by=update.effective_user.id,
+        telegram_chat_id=mtproto_meta.get("telegram_chat_id"),
+        telegram_message_id=mtproto_meta.get("telegram_message_id"),
+        telegram_document_id=mtproto_meta.get("telegram_document_id"),
+        telegram_access_hash=mtproto_meta.get("telegram_access_hash"),
+        telegram_file_reference=mtproto_meta.get("telegram_file_reference", ""),
+        telegram_file_unique_id=mtproto_meta.get("telegram_file_unique_id") or pending.get("file_unique_id", ""),
     )
 
-    # ☁️ R2 yoqilgan bo'lsa, Telegramdagi originalni faqat BIR MARTA
-    # R2/CDN storage'ga ko'chiramiz. Xato bo'lsa Telegram file_id saqlanadi
-    # va eski fallback stream ishlashda davom etadi.
-    r2_note = ""
-    if getattr(movie_watch.r2_storage, "enabled", lambda: False)():
-        await update.message.reply_text("☁️ Kino R2'ga saqlanmoqda...", disable_notification=True)
-        ok, key, err = await asyncio.to_thread(movie_watch.archive_movie_to_r2, movie)
-        if ok and key:
-            movie = storage.update_movie(movie["id"], r2_key=key, r2_uploaded_ts=time.time()) or movie
-            r2_note = "\n☁️ R2/CDN: tayyor — tomosha paytida Render orqali video o'tmaydi."
-        else:
-            r2_note = "\n⚠️ R2 saqlashda xato bo'ldi; Telegram fallback saqlanib qoldi."
-            logger.warning("Kino R2 archive xatosi: %s", err)
+    # Stage 3: kino baytlari R2/Render diskiga ko'chirilmaydi.
+    # Telegram MTProto stream asosiy manba; Bot API proxy faqat avtomatik fallback.
+    r2_note = "\n📡 Media: Telegram MTProto oqimi (Render disk/R2 ga saqlanmaydi)."
 
     context.user_data.pop("kino_pending", None)
 
@@ -171,6 +186,105 @@ async def kino_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
         await update.message.reply_text("❌ Kino amali bekor qilindi.")
     return ConversationHandler.END
+
+
+
+async def kino_migration(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Eski kino yozuvlarini MTProto source metadata bilan bog'lash.
+
+    Foydalanish:
+      /kino_migration                  -> holat hisoboti
+      /kino_migration MOVIE_ID CHAT_ID MESSAGE_ID
+
+    Bu buyruq media baytlarini yuklamaydi. Ko'rsatilgan Telegram xabardan
+    faqat MTProto metadata olinib, katalogdagi shu kino yozuviga yoziladi.
+    """
+    user = update.effective_user
+    if not user or not _is_admin(user.id):
+        if update.effective_message:
+            await update.effective_message.reply_text("⛔ Faqat admin uchun.")
+        return
+
+    args = list(context.args or [])
+    movies = storage.search_movies("")
+    total = len(movies)
+    ready = sum(1 for m in movies if m.get("telegram_chat_id") and m.get("telegram_message_id") and m.get("telegram_document_id"))
+    legacy = total - ready
+
+    if not args:
+        await update.effective_message.reply_text(
+            "🎬 Kino MTProto migratsiya holati\n\n"
+            f"Jami: {total}\n"
+            f"MTProto tayyor: {ready}\n"
+            f"Eski/fallback: {legacy}\n\n"
+            "Eski kinoni ulash: \n"
+            "/kino_migration MOVIE_ID CHAT_ID MESSAGE_ID\n\n"
+            "CHAT_ID — video turgan Telegram chat/channel ID.\n"
+            "MESSAGE_ID — aynan video xabarining ID'si."
+        )
+        return
+
+    if len(args) != 3:
+        await update.effective_message.reply_text(
+            "❌ Format noto'g'ri.\n\n"
+            "/kino_migration MOVIE_ID CHAT_ID MESSAGE_ID"
+        )
+        return
+
+    movie_id, chat_raw, message_raw = args
+    movie = storage.get_movie(movie_id)
+    if not movie:
+        await update.effective_message.reply_text("❌ Bunday kino ID topilmadi.")
+        return
+    try:
+        chat_id = int(chat_raw)
+        message_id = int(message_raw)
+        if message_id <= 0:
+            raise ValueError
+    except ValueError:
+        await update.effective_message.reply_text("❌ CHAT_ID va MESSAGE_ID raqam bo'lishi kerak.")
+        return
+
+    try:
+        meta = await telegram_mtproto.resolve_message(chat_id=chat_id, message_id=message_id)
+    except Exception as exc:
+        logger.warning("🎬 Kino migration resolve xato: %s: %s", type(exc).__name__, exc)
+        await update.effective_message.reply_text(
+            "❌ Telegram source xabarini MTProto orqali olishning iloji bo'lmadi.\n"
+            f"Sabab: {type(exc).__name__}: {exc}"
+        )
+        return
+
+    # Xavfsizlik: ko'rsatilgan source xabarda haqiqiy media bo'lishi shart.
+    if not meta.get("telegram_document_id") or not meta.get("telegram_file_reference"):
+        await update.effective_message.reply_text("❌ Bu Telegram xabarida oqimlanadigan document/media topilmadi.")
+        return
+
+    updated = storage.update_movie(
+        movie_id,
+        telegram_chat_id=meta.get("telegram_chat_id"),
+        telegram_message_id=meta.get("telegram_message_id"),
+        telegram_document_id=meta.get("telegram_document_id"),
+        telegram_access_hash=meta.get("telegram_access_hash"),
+        telegram_file_reference=meta.get("telegram_file_reference", ""),
+        telegram_file_unique_id=meta.get("telegram_file_unique_id", ""),
+        mime_type=meta.get("mime_type") or movie.get("mime_type") or "video/mp4",
+        file_name=meta.get("file_name") or movie.get("file_name") or "",
+        size=meta.get("size") or movie.get("size") or 0,
+    )
+    if not updated:
+        await update.effective_message.reply_text("❌ Kino yozuvini yangilab bo'lmadi.")
+        return
+
+    await update.effective_message.reply_text(
+        "✅ Kino MTProto source bilan bog'landi!\n\n"
+        f"🎬 {updated['title']}\n"
+        f"🆔 {updated['id']}\n"
+        f"💬 Chat: {updated.get('telegram_chat_id')}\n"
+        f"📨 Message: {updated.get('telegram_message_id')}\n"
+        f"📦 Size: {updated.get('size', 0)} bytes\n\n"
+        "Endi kino oqimida MTProto primary ishlatiladi."
+    )
 
 
 def build_catalog_message(query: str = ""):

@@ -67,10 +67,7 @@ PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 # ============================================================
 # 🎬 /kino — kino katalogi + Mini App
 # ============================================================
-# Telegram Cloud Bot API orqali qabul qilinadigan kino hajmi uchun xavfsiz
-# limit. Fayl Telegramdagi file_id bilan saqlanadi, shuning uchun kino
-# qayta yuklanmaydi.
-KINO_MAX_UPLOAD_MB = int(os.getenv("KINO_MAX_UPLOAD_MB", "20"))
+# Kino fayli uchun alohida upload-limit yo'q: media Telegram source message sifatida qoladi.
 KINO_ROOM_TTL_SEC = int(os.getenv("KINO_ROOM_TTL_SEC", str(6 * 60 * 60)))
 # Ixtiyoriy: BotFather > Mini App uchun short name. Bo'sh bo'lsa Main Mini App ishlatiladi.
 KINO_APP_SHORT_NAME = os.getenv("KINO_APP_SHORT_NAME", "").strip()
@@ -85,14 +82,6 @@ KINO_TURN_URLS = tuple(dict.fromkeys(
 KINO_TURN_USERNAME = os.getenv("KINO_TURN_USERNAME", "").strip()
 KINO_TURN_CREDENTIAL = os.getenv("KINO_TURN_CREDENTIAL", "").strip()
 
-# ☁️ Cloudflare R2 / S3-compatible Kino storage. Optional; when disabled,
-# Kino falls back to the existing Telegram -> Render runtime cache.
-R2_ACCOUNT_ID = os.getenv("R2_ACCOUNT_ID", "").strip()
-R2_ACCESS_KEY_ID = os.getenv("R2_ACCESS_KEY_ID", "").strip()
-R2_SECRET_ACCESS_KEY = os.getenv("R2_SECRET_ACCESS_KEY", "").strip()
-R2_BUCKET = os.getenv("R2_BUCKET", "").strip()
-R2_PUBLIC_BASE_URL = os.getenv("R2_PUBLIC_BASE_URL", "").strip().rstrip("/")
-R2_PRESIGNED_TTL_SEC = max(60, min(3600, int(os.getenv("R2_PRESIGNED_TTL_SEC", "900"))))
 GAME_TURN_URL = os.getenv("GAME_TURN_URL", "").strip()
 GAME_TURN_USERNAME = os.getenv("GAME_TURN_USERNAME", "").strip()
 GAME_TURN_CREDENTIAL = os.getenv("GAME_TURN_CREDENTIAL", "").strip()
@@ -198,13 +187,23 @@ PENDING_INPUT_TTL_SEC = int(os.getenv("PENDING_INPUT_TTL_SEC", "300"))
 #       Aniq shu ro'yxatdagilar (yoki foydalanuvchi hisobi allaqachon
 #       a'zo bo'lgan public kanallar) qidiriladi — Telegram'da GLOBAL
 #       qidiruv MTProto orqali ham imkonsiz, shu sababli ro'yxat SHART.
-TG_API_ID = os.getenv("TG_API_ID", "")
-TG_API_HASH = os.getenv("TG_API_HASH", "")
-TG_SESSION = os.getenv("TG_SESSION", "")
+# Kino MTProto ham shu mavjud Telethon credentiallarini ishlatadi.
+# Yangi nomlar TELEGRAM_* ham qabul qilinadi; eski TG_* nomlari
+# backward-compatible qoladi.
+TG_API_ID = os.getenv("TELEGRAM_API_ID", os.getenv("TG_API_ID", ""))
+TG_API_HASH = os.getenv("TELEGRAM_API_HASH", os.getenv("TG_API_HASH", ""))
+TG_SESSION = os.getenv("TELEGRAM_SESSION", os.getenv("TG_SESSION", ""))
 TG_SEARCH_CHANNELS = [
     c.strip().lstrip("@") for c in os.getenv("TG_SEARCH_CHANNELS", "").split(",") if c.strip()
 ]
 TG_SEARCH_TIMEOUT_SEC = int(os.getenv("TG_SEARCH_TIMEOUT_SEC", "15"))
+KINO_STREAM_TOKEN_SECRET = os.getenv("KINO_STREAM_TOKEN_SECRET", "")
+# Kino stream xavfsizligi/performance sozlamalari. Media fayli diskka
+# yozilmaydi; bu limitlar faqat bir vaqtdagi RAM/chunk yuklamasini boshqaradi.
+KINO_STREAM_CHUNK_SIZE = max(64 * 1024, int(os.getenv("KINO_STREAM_CHUNK_SIZE", str(1024 * 1024))))
+KINO_STREAM_MAX_CONCURRENT = max(1, int(os.getenv("KINO_STREAM_MAX_CONCURRENT", "4")))
+KINO_STREAM_TIMEOUT_SEC = max(5, int(os.getenv("KINO_STREAM_TIMEOUT_SEC", "35")))
+
 TG_SEARCH_ENABLED = bool(TG_API_ID and TG_API_HASH and TG_SESSION and TG_SEARCH_CHANNELS)
 
 # ============================================================
