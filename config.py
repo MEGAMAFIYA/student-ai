@@ -197,6 +197,12 @@ TG_SEARCH_CHANNELS = [
     c.strip().lstrip("@") for c in os.getenv("TG_SEARCH_CHANNELS", "").split(",") if c.strip()
 ]
 TG_SEARCH_TIMEOUT_SEC = int(os.getenv("TG_SEARCH_TIMEOUT_SEC", "15"))
+# 🎬 Kino saqlash kanali. /kino orqali yuborilgan video avval shu kanalga
+# copy qilinadi; katalog va MTProto streaming aynan kanal xabarini manba qiladi.
+# Bot API supergroup/channel ID odatda -100 bilan boshlanadi.
+KINO_STORAGE_CHANNEL_ID = int(os.getenv("KINO_STORAGE_CHANNEL_ID", "-1003928732681"))
+KINO_STORAGE_CHANNEL_USERNAME = os.getenv("KINO_STORAGE_CHANNEL_USERNAME", "Student_ai_uz_kanal").strip().lstrip("@")
+
 KINO_STREAM_TOKEN_SECRET = os.getenv("KINO_STREAM_TOKEN_SECRET", "")
 # Kino stream xavfsizligi/performance sozlamalari. Media fayli diskka
 # yozilmaydi; bu limitlar faqat bir vaqtdagi RAM/chunk yuklamasini boshqaradi.

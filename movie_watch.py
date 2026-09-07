@@ -43,6 +43,18 @@ MAX_CHAT_CLIENT_KEYS = 500
 STREAM_SLOT = threading.BoundedSemaphore(getattr(config, "KINO_STREAM_MAX_CONCURRENT", 4))
 
 
+def _mime_for_movie(movie: dict) -> str:
+    """Katalog yozuvidan video MIME type aniqlaydi."""
+    if not isinstance(movie, dict):
+        return "application/octet-stream"
+    mime = str(movie.get("mime_type") or movie.get("mime") or "").strip()
+    if mime:
+        return mime
+    name = str(movie.get("file_name") or movie.get("filename") or "").lower()
+    guessed, _ = mimetypes.guess_type(name)
+    return guessed or "video/mp4"
+
+
 def _purge_rooms():
     now = time.time()
     with ROOM_LOCK:

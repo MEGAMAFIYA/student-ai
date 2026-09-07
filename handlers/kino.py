@@ -77,43 +77,46 @@ async def kino_receive_video(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return ConversationHandler.END
 
     msg = update.message
-    file_id = None
-    mime_type = "video/mp4"
-    file_name = ""
-
-    if msg.video:
-        file_id = msg.video.file_id
-        mime_type = msg.video.mime_type or "video/mp4"
-        file_name = msg.video.file_name or ""
-    elif msg.document and (msg.document.mime_type or "").lower().startswith("video/"):
-        file_id = msg.document.file_id
-        mime_type = msg.document.mime_type or "video/mp4"
-        file_name = msg.document.file_name or ""
-
-    if not file_id:
+    source_media = msg.video or msg.document
+    if not source_media:
         await msg.reply_text("❌ Video yuboring. MP4/MKV kabi video faylni Telegramga fayl yoki video sifatida yuborishingiz mumkin.")
         return KINO_WAIT_VIDEO
+    if msg.document and not (msg.document.mime_type or "").lower().startswith("video/"):
+        await msg.reply_text("❌ Video fayl yuboring.")
+        return KINO_WAIT_VIDEO
 
-    size = (msg.video.file_size if msg.video else msg.document.file_size) or 0
-    # Muhim: MTProto source message — video YUBORILGAN xabarning o'zi.
-    # Keyin title yuborilganda update.message.message_id boshqa xabar bo'ladi;
-    # shuning uchun source identifikatorlarni shu yerda saqlab qo'yamiz.
+    # Kino avval maxsus kanalga ko'chiriladi. Keyingi katalog va MTProto
+    # streaming aynan shu kanal xabarini yagona manba sifatida ishlatadi.
+    try:
+        copied = await context.bot.copy_message(
+            chat_id=config.KINO_STORAGE_CHANNEL_ID,
+            from_chat_id=msg.chat_id,
+            message_id=msg.message_id,
+        )
+    except Exception as exc:
+        logger.exception("🎬 Kino kanalga ko'chirilmadi")
+        await msg.reply_text(
+            "❌ Kino saqlash kanaliga yuborilmadi. Bot kanalga admin qilinganini va "
+            "KINO_STORAGE_CHANNEL_ID to'g'ri ekanini tekshiring.\n\n"
+            f"Xato: {type(exc).__name__}: {exc}"
+        )
+        return KINO_WAIT_VIDEO
+
     context.user_data["kino_pending"] = {
-        "file_id": file_id,
-        "file_unique_id": (msg.video.file_unique_id if msg.video else msg.document.file_unique_id) or "",
-        "source_chat_id": int(msg.chat_id),
-        "source_message_id": int(msg.message_id),
-        "mime_type": mime_type,
-        "file_name": file_name,
-        "size": size,
+        "file_id": source_media.file_id,
+        "file_unique_id": source_media.file_unique_id or "",
+        "source_chat_id": int(config.KINO_STORAGE_CHANNEL_ID),
+        "source_message_id": int(copied.message_id),
+        "mime_type": source_media.mime_type or "video/mp4",
+        "file_name": source_media.file_name or "",
+        "size": source_media.file_size or 0,
     }
-    suggested = os.path.splitext(file_name)[0] if file_name else ""
+    suggested = os.path.splitext(source_media.file_name or "")[0] if source_media.file_name else ""
     await msg.reply_text(
-        ("📝 Kino nomini yuboring."
-         + (f"\n\nMasalan: `{suggested}`" if suggested else ""))
+        "✅ Video kino kanaliga saqlandi.\n\n"
+        + ("📝 Endi kino nomini yuboring." + (f"\n\nMasalan: `{suggested}`" if suggested else ""))
     )
     return KINO_WAIT_TITLE
-
 
 async def kino_receive_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.effective_user or not _is_admin(update.effective_user.id):
