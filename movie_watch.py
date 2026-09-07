@@ -481,7 +481,9 @@ def serve_movie_head(handler, room_id: str, movie_id: str):
     """Browser/Telegram HEAD so'roviga faqat metadata bilan javob beradi."""
     uid, movie = _authorize_stream(handler, room_id, movie_id)
     if not movie:
+        logger.error("🎬 STREAM REJECTED room=%s movie=%s path=%s", room_id, movie_id, getattr(handler, "path", ""))
         return
+    logger.info("🎬 STREAM START room=%s movie=%s user=%s chat=%s message=%s size=%s range=%s", room_id, movie_id, uid, movie.get("telegram_chat_id"), movie.get("telegram_message_id"), movie.get("size"), handler.headers.get("Range", ""))
     size = int(movie.get("size") or 0)
     if size <= 0:
         _send_text(handler, 502, "Kino hajmi aniqlanmadi.")
@@ -525,10 +527,13 @@ def serve_movie(handler, room_id: str, movie_id: str):
         return
     try:
         try:
+            logger.info("🎬 STREAM MTProto TRY movie=%s bytes=%s-%s", movie_id, start, end)
             _serve_mtproto_range(handler, movie, start, end, content_type)
+            logger.info("🎬 STREAM MTProto OK movie=%s bytes=%s-%s", movie_id, start, end)
             return
         except Exception as primary_exc:
-            logger.warning("🎬 MTProto PRIMARY xato, fallback sinanadi: %s: %s", type(primary_exc).__name__, primary_exc)
+            logger.error("🎬 STREAM MTProto FAILED movie=%s room=%s chat=%s message=%s bytes=%s-%s error=%s: %s", movie_id, room_id, movie.get("telegram_chat_id"), movie.get("telegram_message_id"), start, end, type(primary_exc).__name__, primary_exc, exc_info=True)
+            logger.warning("🎬 STREAM FALLBACK TRY movie=%s", movie_id)
             # Fallback can only replace the primary transport before HTTP headers
             # have been sent. Once bytes are on the wire, sending a second set of
             # headers would corrupt the response. The browser will retry the next
@@ -541,8 +546,9 @@ def serve_movie(handler, room_id: str, movie_id: str):
                 return
         try:
             _bot_api_stream(handler, movie, start, end, content_type)
+            logger.info("🎬 STREAM FALLBACK OK movie=%s bytes=%s-%s", movie_id, start, end)
         except Exception as fallback_exc:
-            logger.error("🎬 Kino fallback stream xatosi: %s: %s", type(fallback_exc).__name__, fallback_exc, exc_info=True)
+            logger.error("🎬 STREAM FALLBACK FAILED movie=%s room=%s file_id=%s bytes=%s-%s error=%s: %s", movie_id, room_id, bool(movie.get("file_id")), start, end, type(fallback_exc).__name__, fallback_exc, exc_info=True)
             # If headers were already sent by the fallback, the socket may be
             # partially written; otherwise provide a clean HTTP error.
             try:
