@@ -23,6 +23,17 @@
                   p.get("startapp") ||
                   hashParams.get("tgWebAppStartParam") ||
                   hashParams.get("startapp") || "";
+
+    // Main Mini App'dan boshqa sahifaga o'tganda Telegram initData URL bilan
+    // birga ko'chmaydi. Shu sabab uni faqat shu origin'dagi sessionStorage'da
+    // bir marta saqlab, keyingi Mini App sahifasiga xavfsiz o'tkazamiz.
+    // Server baribir initData HMAC'sini tekshiradi.
+    try {
+      if (tg && tg.initData) {
+        sessionStorage.setItem("student_ai_tg_init_data", tg.initData);
+      }
+    } catch (_) {}
+
     if (start && start.startsWith("room_")) {
       location.replace("/miniapp/kino/?room=" + encodeURIComponent(start.slice(5)));
       return;
@@ -32,9 +43,8 @@
       return;
     }
     if (start && start.startsWith("draw_")) {
-      // Fallback: eski Main Mini App deep-link bilan ochilgan bo'lsa ham
-      // rasm dueliga to'g'ri yo'naltiramiz. Yangi kod Direct Mini App
-      // linkidan foydalanadi va odatda bu branchga tushmaydi.
+      // Main Mini App -> rasm dueliga o'tishda initData yo'qolmasligi uchun
+      // yuqoridagi sessionStorage nusxasi ishlatiladi.
       location.replace("/miniapp/rasim/?room=" + encodeURIComponent(start.slice(5)));
       return;
     }

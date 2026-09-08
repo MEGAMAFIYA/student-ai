@@ -315,7 +315,7 @@ _WEBAPP_UPLOAD_TMP_DIR = os.path.join(tempfile.gettempdir(), "rasim_uploads")
 # turadi, so'ng threading.Timer bilan avtomatik o'chiriladi.
 _WEBAPP_GENERATED_DIR = os.path.join(tempfile.gettempdir(), "rasim_generated")
 _WEBAPP_GENERATED_URL_PREFIX = "/miniapp/rasim/generated/"
-_WEBAPP_GENERATED_TTL_SEC = 10 * 60  # 10 daqiqa
+_WEBAPP_GENERATED_TTL_SEC = 2 * 60 * 60  # PreparedInlineMessage bilan ulashish uchun 2 soat
 
 
 def _serve_webapp_static(handler: "HealthHandler", path: str) -> bool:
@@ -441,7 +441,10 @@ def _handle_draw_api(handler: "HealthHandler") -> None:
         if result is None:
             reply(400, error=err or "Rasm yuborilmadi."); return
 
-        # Telegram answerWebAppQuery uchun public JPEG URL tayyorlaymiz.
+        # Direct/Main Mini App user-user chatga answerWebAppQuery bilan
+        # to'g'ridan-to'g'ri xabar yubora olmaydi. Shuning uchun rasmni Telegram
+        # serveriga PreparedInlineMessage sifatida tayyorlab, frontenddagi
+        # Telegram.WebApp.shareMessage() orqali native ulashish oynasiga beramiz.
         jpeg = result["image"]
         os.makedirs(_WEBAPP_GENERATED_DIR, exist_ok=True)
         filename = f"{uuid.uuid4().hex}.jpg"
@@ -460,34 +463,60 @@ def _handle_draw_api(handler: "HealthHandler") -> None:
                 evaluation = future.result(timeout=100)
             except Exception as e:
                 logger.error("🎨 Drawing duel evaluation xato: %s", e, exc_info=True)
-                evaluation = {"player1": None, "player2": None, "winner": None, "comment": "AI vaqtida javob bermadi."}
+                evaluation = {
+                    "player1": None,
+                    "player2": None,
+                    "winner": None,
+                    "comment": "AI vaqtida javob bermadi.",
+                }
             room = drawing_game.finish_evaluation(rid, evaluation)
             if room:
                 caption = drawing_game._telegram_caption(evaluation, room)
 
-        async def _answer():
-            from telegram import InlineQueryResultPhoto
-            result_obj = InlineQueryResultPhoto(
+        async def _prepare():
+            prepared = InlineQueryResultPhoto(
                 id=uuid.uuid4().hex,
                 photo_url=photo_url,
                 thumbnail_url=photo_url,
                 caption=caption[:1024],
             )
-            return await _BOT_INSTANCE.answer_web_app_query(result["query_id"], result_obj)
+            return await _BOT_INSTANCE.save_prepared_inline_message(
+                user_id=int(result["user_id"]),
+                result=prepared,
+                allow_user_chats=True,
+                allow_bot_chats=False,
+                allow_group_chats=False,
+                allow_channel_chats=False,
+            )
 
         try:
-            if not result.get("query_id"):
-                raise RuntimeError("WebApp query_id topilmadi.")
-            future = asyncio.run_coroutine_threadsafe(_answer(), _MAIN_LOOP)
-            future.result(timeout=30)
+            future = asyncio.run_coroutine_threadsafe(_prepare(), _MAIN_LOOP)
+            prepared = future.result(timeout=30)
+            prepared_id = getattr(prepared, "id", None)
+            if not prepared_id:
+                raise RuntimeError("Telegram PreparedInlineMessage ID qaytarmadi.")
         except Exception as e:
-            logger.error("🎨 Drawing duel Telegramga yuborish xato: %s", e, exc_info=True)
-            try: os.remove(file_path)
-            except OSError: pass
-            reply(502, error="Rasmni Telegram chatiga yuborib bo'lmadi."); return
+            logger.error("🎨 Drawing duel PreparedInlineMessage xato: %s", e, exc_info=True)
+            try:
+                os.remove(file_path)
+            except OSError:
+                pass
+            reply(502, error="Rasmni Telegram ulashish oynasiga tayyorlab bo'lmadi.")
+            return
 
-        Timer(_WEBAPP_GENERATED_TTL_SEC, lambda: os.path.exists(file_path) and os.remove(file_path)).start()
-        reply(200, data={"state": result["state"], "status": "submitted", "both_submitted": bool(result.get("evaluate"))})
+        Timer(
+            _WEBAPP_GENERATED_TTL_SEC,
+            lambda: os.path.exists(file_path) and os.remove(file_path)
+        ).start()
+        reply(
+            200,
+            data={
+                "state": result["state"],
+                "status": "submitted",
+                "both_submitted": bool(result.get("evaluate")),
+                "prepared_message_id": prepared_id,
+            },
+        )
         return
 
     if path == "/api/draw/restart":

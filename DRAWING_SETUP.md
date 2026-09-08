@@ -1,14 +1,12 @@
 # 🎨 Rasm chizish 1v1 — Telegram Direct Mini App sozlamasi
 
-## Nega eski versiyada "Mini App ishga tayyor" chiqardi?
+## Nega "Telegram orqali ochilmagan" xatosi chiqardi?
 
-Eski `room_url()` quyidagi Main Mini App linkini ishlatgan:
+Eski oqim Main Mini App routeridan `/miniapp/rasim/` sahifasiga `location.replace()` qilganda Telegram `initData` yo‘qolib qolardi. Natijada rasm chizish sahifasi ochilsa ham serverga foydalanuvchining tasdiqlangan Telegram sessiyasi yetib bormasdi.
 
-`https://t.me/Student_ai_uz_bot?startapp=draw_<ROOM>`
+Hozir router `Telegram.WebApp.initData`ni faqat shu Telegram originidagi `sessionStorage`ga vaqtincha saqlaydi, rasm Mini App esa uni o‘qib serverga yuboradi. Server baribir HMAC bilan tekshiradi.
 
-Bu link botning **Main Mini App** routeriga boradi. Main app router `start_param`ni olmasa, `/webapp/index.html` dagi oddiy fallback matn ko‘rinadi.
-
-Rasm duelini esa alohida **Direct Mini App** sifatida ochish kerak.
+Bundan tashqari, default oqim alohida Direct Mini App short name'ga bog‘lanmaydi: `t.me/<bot>?startapp=draw_<ROOM>` Main Mini App orqali ochiladi. Shu sabab `t.me/<bot>/rasim` bot profiliga qaytib ketishi muammosi ham yo‘q.
 
 ## BotFather'da bir marta
 
@@ -20,19 +18,23 @@ Rasm duelini esa alohida **Direct Mini App** sifatida ochish kerak.
    `https://<SIZNING-RENDER-DOMENINGIZ>/miniapp/rasim/`
 6. Saqlang.
 
-Shundan keyin Direct Mini App manzili:
+Agar alohida Direct Mini App short name ishlatmoqchi bo‘lsangiz, `.env`ga:
 
-`https://t.me/Student_ai_uz_bot/rasim`
+`DRAWING_USE_DIRECT_APP_LINK=1`
 
-bo‘ladi.
-
-## Kod nima qiladi?
-
-Inline rejimda xona yaratilganda bot:
+qo‘ying. Shunda:
 
 `https://t.me/Student_ai_uz_bot/rasim?startapp=draw_<ROOM>&mode=fullscreen`
 
-linkini beradi.
+ishlatiladi. Bu rejimda BotFather'da `rasim` short name mavjud bo‘lishi shart.
+
+## Kod nima qiladi?
+
+Default inline oqimda xona yaratilganda bot:
+
+`https://t.me/Student_ai_uz_bot?startapp=draw_<ROOM>&mode=fullscreen`
+
+linkini beradi. Bu Main Mini App orqali ochiladi va xona ID `start_param`dan olinadi.
 
 Telegram shu `draw_<ROOM>` qiymatini Mini App `start_param`iga uzatadi. Frontend room ID'ni olib `/api/draw/join`ga yuboradi.
 
@@ -68,9 +70,12 @@ Agar 4-qadamdagi short name BotFather'dagi nom bilan bir xil bo'lmasa,
 Telegram havolani Mini App emas, bot profil/chat sifatida ochishi mumkin.
 
 ### Nima tuzatildi
-- haqiqiy bot username startup paytida olinadi va Direct Mini App URL'ga qo'yiladi;
-- Direct Mini App URL xato bo'lsa inline oqim jim ishlamay, logga aniq sabab yozadi;
+- haqiqiy bot username startup paytida olinadi;
+- default 1v1 havola Main Mini App deep-linkidan foydalanadi;
+- Main Mini App -> `/miniapp/rasim/` o'tishida Telegram `initData` yo‘qolmaydi;
 - `startapp` query/hash/initDataUnsafe variantlari frontendda qabul qilinadi;
 - `room_id` qat'iy tekshiriladi;
-- mavjud `/rasim` oddiy oqimi va 1v1 duel oqimi bir-biriga aralashtirilmaydi;
+- `_answer_rasim()` ichidagi noto‘g‘ri `user` o‘zgaruvchisi tuzatildi;
+- Direct/Main Mini App uchun `answerWebAppQuery`ga tayanish olib tashlandi;
+- chizilgan rasm Telegram 8.0+ `PreparedInlineMessage` + `WebApp.shareMessage()` orqali native ulashish oynasiga tayyorlanadi;
 - ikkala rasm yuborilgandan keyingina Vision AI hakam ishga tushadi.

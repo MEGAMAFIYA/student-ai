@@ -97,6 +97,13 @@ GAME_TURN_CREDENTIAL = os.getenv("GAME_TURN_CREDENTIAL", "").strip()
 # zaxira (fallback) qiymat.
 BOT_USERNAME_FALLBACK = os.getenv("BOT_USERNAME", "Student_ai_uz_bot").lstrip("@")
 DRAWING_APP_SHORT_NAME = os.getenv("DRAWING_APP_SHORT_NAME", "rasim").strip().strip("/")
+# 1v1 rasm uchun avval Main Mini App deep-linkidan foydalanamiz. Bu alohida
+# BotFather Direct Mini App short_name sozlanmagan holatda ham ishlaydi.
+# Agar alohida /rasim Direct Mini App (`short_name=rasim`) sozlangan bo'lsa,
+# `DRAWING_USE_DIRECT_APP_LINK=1` qilib yoqish mumkin.
+DRAWING_USE_DIRECT_APP_LINK = os.getenv("DRAWING_USE_DIRECT_APP_LINK", "0").strip().lower() in (
+    "1", "true", "yes", "on"
+)
 
 # ============================================================
 # 🎬 /vid — video yuklab olish (yt-dlp)

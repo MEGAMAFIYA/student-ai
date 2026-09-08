@@ -850,7 +850,7 @@ async def _answer_rasim(update: Update) -> None:
         cache_time=0,
         is_personal=True,
     )
-    _log_inline(user, "/rasim", "queued", f"1v1 drawing room={rid}")
+    _log_inline(update.inline_query.from_user, "/rasim", "queued", f"1v1 drawing room={rid}")
 
 
 def _trim_cache(cache: dict):

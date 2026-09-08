@@ -59,7 +59,18 @@
   // ============================================================
   const params = new URLSearchParams(location.search);
   const hashParams = new URLSearchParams((location.hash || "").replace(/^#/, ""));
-  const initData = tg?.initData || "";
+
+  // Main Mini App router boshqa sahifaga o'tganda Telegram initData'ni
+  // yo'qotmaslik uchun sessionStorage'dagi bir martalik nusxani ham o'qiymiz.
+  let initData = tg?.initData || "";
+  if (!initData) {
+    try {
+      initData = sessionStorage.getItem("student_ai_tg_init_data") || "";
+      if (initData) sessionStorage.removeItem("student_ai_tg_init_data");
+    } catch (_) {}
+  } else {
+    try { sessionStorage.removeItem("student_ai_tg_init_data"); } catch (_) {}
+  }
   let room = params.get("room") || "";
 
   // Telegram Direct Mini App turli klientlarda startapp'ni
@@ -758,14 +769,30 @@
     try {
       const state = await duelApi("/api/draw/submit", "POST", {image: dataUrl});
       renderDuelState(state.state || duelState);
-      if (state.both_submitted) {
-        statusMsg.textContent = "🏆 Ikkala rasm ham yuborildi. AI hakam natijani chatga yubordi.";
+
+      // Direct/Main Mini App'lar answerWebAppQuery orqali joriy user-user
+      // chatga xabar yubora olmaydi. Bot API 8.0+ dagi PreparedInlineMessage
+      // + shareMessage esa Mini App ichidan rasmni Telegram'ning native
+      // ulashish oynasiga chiqaradi. Foydalanuvchi shu yerda o'z 1:1 chatini
+      // tanlaydi.
+      if (state.prepared_message_id && tg?.shareMessage) {
+        statusMsg.textContent = "📤 Telegramda chatni tanlang — rasm yuboriladi.";
+        tg.shareMessage(state.prepared_message_id, (sent) => {
+          if (sent) {
+            statusMsg.textContent = state.both_submitted
+              ? "🏆 Rasm yuborildi. Ikkala rasm ham topshirildi."
+              : "✅ Rasm chatga yuborildi. Do'stingizni kutyapmiz.";
+            if (tg?.close) setTimeout(() => tg.close(), 400);
+          } else {
+            statusMsg.textContent = "ℹ️ Rasm tayyor. Telegramdagi ulashish oynasidan chatni tanlang.";
+            sendBtn.disabled = false;
+          }
+        });
+      } else if (state.both_submitted) {
+        statusMsg.textContent = "🏆 Ikkala rasm ham yuborildi. Natija tayyor.";
       } else {
-        statusMsg.textContent = "✅ Rasmingiz chatga yuborildi. Do'stingizni kutyapmiz.";
+        statusMsg.textContent = "✅ Rasm qabul qilindi. Uni Telegram orqali ulashing.";
       }
-      // Server answerWebAppQuery orqali rasmni chatga yuboradi va Telegram
-      // Mini App'ni yopadi. Bu xuddi foydalanuvchi o'z nomidan rasm yuborgandek ko'rinadi.
-      if (tg?.close) setTimeout(() => tg.close(), 500);
     } catch (e) {
       statusMsg.textContent = "❌ " + e.message;
       sendBtn.disabled = false;

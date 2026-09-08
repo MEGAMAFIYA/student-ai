@@ -109,12 +109,17 @@ def room_url(rid: str) -> str:
 
     if not re.fullmatch(r"[A-Za-z0-9_]{1,64}", username):
         raise ValueError("BOT_USERNAME noto'g'ri sozlangan.")
+
+    # Asosiy Main Mini App allaqachon BotFather'da sozlangan bo'lsa, alohida
+    # Direct Mini App short_name kerak emas. Bu ayniqsa eski deploylarda
+    # `t.me/bot/rasim` oddiy bot/chatga qaytib qolishi muammosini bartaraf etadi.
+    if not config.DRAWING_USE_DIRECT_APP_LINK:
+        return f"https://t.me/{username}?startapp=draw_{room_id}&mode=fullscreen"
+
     if not re.fullmatch(r"[A-Za-z0-9_]{1,64}", short_name):
         raise ValueError("DRAWING_APP_SHORT_NAME noto'g'ri sozlangan.")
 
-    # Direct Mini App deep-link. startapp qiymatini URL-encode qilish shart
-    # emas (rid faqat xavfsiz belgilar), lekin formatni Telegram talabi bilan
-    # aniq saqlaymiz.
+    # Alohida Direct Mini App deep-link.
     return f"https://t.me/{username}/{short_name}?startapp=draw_{room_id}&mode=fullscreen"
 
 def _verify(init_data: str) -> dict | None:
@@ -291,6 +296,7 @@ def submit(rid: str, init_data: str, image_bytes: bytes):
                 "image": jpeg_bytes,
                 "caption": f"🎨 Sizning rasmingiz yuborildi.\n🎯 Topshiriq: {room['prompt']}\n⏳ Do'stingiz rasm yuborishini kutyapmiz.",
                 "query_id": user.get("_query_id"),
+                "user_id": int(uid),
                 "room_id": rid,
             }, None
 
@@ -304,6 +310,7 @@ def submit(rid: str, init_data: str, image_bytes: bytes):
         "image": jpeg_bytes,
         "caption": "",
         "query_id": user.get("_query_id"),
+        "user_id": int(uid),
         "room_id": rid,
         "evaluate": (prompt, img1, img2),
     }, None
