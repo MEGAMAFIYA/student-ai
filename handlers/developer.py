@@ -110,27 +110,113 @@ def _back_keyboard(callback_data: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Orqaga", callback_data=callback_data)]])
 
 
+# Telegram bitta xabar uchun 4096 belgilik limit qo'yadi. Developer menyusida
+# AI kalitlari ko'payganda aynan shu limitga urilmaslik uchun matnni bir nechta
+# xabarga bo'lamiz. 3900 — HTML entity/emoji va Telegram hisoblashidagi kichik
+# farqlar uchun xavfsiz zaxira.
+_TELEGRAM_MENU_CHUNK_SIZE = 3900
+_MENU_OVERFLOW_MESSAGES: dict[tuple[int, int], list[tuple[int, int]]] = {}
+
+
+def _split_telegram_text(text: str, limit: int = _TELEGRAM_MENU_CHUNK_SIZE) -> list[str]:
+    """Matnni imkon qadar satr chegaralarida, limitdan oshirmasdan bo'ladi."""
+    if len(text) <= limit:
+        return [text]
+
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+
+    for line in text.splitlines(keepends=True):
+        line_len = len(line)
+        if current and current_len + line_len > limit:
+            chunks.append("".join(current).rstrip("\n"))
+            current = []
+            current_len = 0
+
+        if line_len <= limit:
+            current.append(line)
+            current_len += line_len
+            continue
+
+        # Juda uzun bitta satr bo'lsa, uni ham majburan bo'lamiz.
+        start = 0
+        while start < len(line):
+            piece = line[start:start + limit]
+            if current:
+                chunks.append("".join(current).rstrip("\n"))
+                current = []
+                current_len = 0
+            chunks.append(piece.rstrip("\n"))
+            start += limit
+
+    if current:
+        chunks.append("".join(current).rstrip("\n"))
+
+    return [chunk for chunk in chunks if chunk]
+
+
+async def _delete_menu_overflow(bot, anchor: tuple[int, int]):
+    """Oldingi menyu uchun yuborilgan qo'shimcha xabarlarni tozalaydi."""
+    overflow = _MENU_OVERFLOW_MESSAGES.pop(anchor, [])
+    for chat_id, message_id in overflow:
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=message_id)
+        except BadRequest:
+            # Xabar allaqachon o'chirilgan yoki Telegramda mavjud emas.
+            pass
+
+
 async def _safe_edit_query(query, text: str, reply_markup=None, parse_mode=None):
-    """query.edit_message_text ni chaqiradi, lekin Telegram 'Message is not
-    modified' xatosini (xuddi shu matn/tugmalar allaqachon ko'rsatilgan
-    bo'lsa chiqadi — zararsiz holat) sekin e'tiborsiz qoldiradi."""
-    try:
+    """Menyu xabarini xavfsiz yangilaydi va 4096 limitidan oshsa bo'lib yuboradi."""
+    message = query.message
+    if not message:
         await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+        return
+
+    chunks = _split_telegram_text(text)
+    anchor = (message.chat_id, message.message_id)
+    await _delete_menu_overflow(query.get_bot(), anchor)
+
+    try:
+        # Asosiy xabar tugmalar bilan qoladi; davomiy qismlar uning reply'lari.
+        await query.edit_message_text(
+            chunks[0], reply_markup=reply_markup if len(chunks) == 1 else reply_markup,
+            parse_mode=parse_mode,
+        )
     except BadRequest as e:
         if "message is not modified" not in str(e).lower():
             raise
 
+    if len(chunks) > 1:
+        sent_overflow: list[tuple[int, int]] = []
+        for chunk in chunks[1:]:
+            sent = await message.reply_text(chunk, parse_mode=parse_mode)
+            sent_overflow.append((sent.chat_id, sent.message_id))
+        _MENU_OVERFLOW_MESSAGES[anchor] = sent_overflow
+
 
 async def _safe_edit_bot(bot, chat_id, message_id, text: str, reply_markup=None, parse_mode=None):
-    """_edit_menu() uchun xuddi shu maqsadda."""
+    """_edit_menu() uchun xuddi shu limitdan himoyalangan yangilash."""
+    chunks = _split_telegram_text(text)
+    anchor = (chat_id, message_id)
+    await _delete_menu_overflow(bot, anchor)
+
     try:
         await bot.edit_message_text(
-            chat_id=chat_id, message_id=message_id, text=text,
+            chat_id=chat_id, message_id=message_id, text=chunks[0],
             reply_markup=reply_markup, parse_mode=parse_mode,
         )
     except BadRequest as e:
         if "message is not modified" not in str(e).lower():
             raise
+
+    if len(chunks) > 1:
+        sent_overflow: list[tuple[int, int]] = []
+        for chunk in chunks[1:]:
+            sent = await bot.send_message(chat_id=chat_id, text=chunk, parse_mode=parse_mode)
+            sent_overflow.append((sent.chat_id, sent.message_id))
+        _MENU_OVERFLOW_MESSAGES[anchor] = sent_overflow
 
 
 async def _edit_menu(context: ContextTypes.DEFAULT_TYPE, text: str, keyboard: InlineKeyboardMarkup):
