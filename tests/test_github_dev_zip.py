@@ -32,6 +32,20 @@ class GitHubZipValidationTests(unittest.TestCase):
         with self.assertRaises(github_dev.GitHubDevError):
             github_dev._normalize_zip_path("../secret.txt")
 
+
+    def test_common_project_root_is_detected(self):
+        self.assertEqual(
+            github_dev._zip_project_root([
+                "student-ai-main/app.py",
+                "student-ai-main/handlers/menu.py",
+            ]),
+            "student-ai-main",
+        )
+        self.assertEqual(
+            github_dev._zip_project_root(["app.py", "handlers/menu.py"]),
+            "",
+        )
+
     def test_git_directory_is_rejected(self):
         with self.assertRaises(github_dev.GitHubDevError):
             github_dev._normalize_zip_path(".git/config")

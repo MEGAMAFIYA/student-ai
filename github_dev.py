@@ -187,7 +187,6 @@ def read_file(repo: str, path: str, branch: str | None = None) -> dict[str, Any]
         text = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise GitHubDevError("Bu binary fayl. Uni matn muharriri orqali tahrirlash xavfsiz emas.") from exc
-    logger.info("GitHub ZIP stage=completed repo=%s branch=%s files=%d commit=%s", repo, branch, len(final_files), new_commit_sha)
     return {
         "repo": repo,
         "path": data.get("path") or path,
