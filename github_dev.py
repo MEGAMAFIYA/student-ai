@@ -77,6 +77,7 @@ def _raise_response(response: httpx.Response) -> None:
     request_id = response.headers.get("x-github-request-id", "-")
     oauth_scopes = response.headers.get("x-oauth-scopes", "-")
     accepted_scopes = response.headers.get("x-accepted-oauth-scopes", "-")
+    accepted_github_permissions = response.headers.get("x-accepted-github-permissions", "-")
     endpoint = str(response.request.url)
     # Do not log query-string secrets if a future endpoint ever contains them.
     endpoint = endpoint.split("?", 1)[0]
@@ -84,7 +85,8 @@ def _raise_response(response: httpx.Response) -> None:
     logger.error(
         "GitHub API FAILED status=%s method=%s endpoint=%s "
         "request_id=%s message=%r documentation=%s "
-        "oauth_scopes=%r accepted_oauth_scopes=%r",
+        "oauth_scopes=%r accepted_oauth_scopes=%r "
+        "accepted_github_permissions=%r response_headers=%s",
         response.status_code,
         response.request.method,
         endpoint,
@@ -93,6 +95,18 @@ def _raise_response(response: httpx.Response) -> None:
         error_doc,
         oauth_scopes,
         accepted_scopes,
+        accepted_github_permissions,
+        {
+            k: v for k, v in response.headers.items()
+            if k.lower() in {
+                "x-github-request-id",
+                "x-oauth-scopes",
+                "x-accepted-oauth-scopes",
+                "x-accepted-github-permissions",
+                "x-github-media-type",
+                "retry-after",
+            }
+        },
     )
 
     if response.status_code in (401, 403):
@@ -332,6 +346,23 @@ def _is_protected_zip_path(path: str) -> bool:
     return False
 
 
+def _is_github_workflow_path(path: str) -> bool:
+    """Return True for GitHub Actions workflow files.
+
+    GitHub treats files below .github/workflows specially. A token can have
+    ordinary Contents write access and still be denied when a workflow file
+    is changed unless the token also has workflow-related permission.
+    """
+    normalized = (path or "").replace("\\", "/").strip("/")
+    parts = [part for part in normalized.split("/") if part]
+    return (
+        len(parts) >= 3
+        and parts[0].lower() == ".github"
+        and parts[1].lower() == "workflows"
+        and parts[-1].lower().endswith((".yml", ".yaml"))
+    )
+
+
 def _normalize_zip_path(name: str) -> str:
     """Normalize and validate a ZIP member path before sending it to GitHub."""
     name = (name or "").replace("\\", "/")
@@ -462,6 +493,23 @@ def upload_zip_project(
         repo, len(final_files), sum(len(v) for v in final_files.values()), common_root or "-", skipped_protected,
     )
 
+    workflow_paths = sorted(
+        path for path in final_files if _is_github_workflow_path(path)
+    )
+    if workflow_paths:
+        logger.warning(
+            "GitHub ZIP stage=workflow_files_detected repo=%s count=%d paths=%s "
+            "note=GitHub_Actions_workflow_files_require_workflow_write_permission",
+            repo,
+            len(workflow_paths),
+            workflow_paths,
+        )
+    else:
+        logger.info(
+            "GitHub ZIP stage=workflow_files_detected repo=%s count=0",
+            repo,
+        )
+
     repo_info = get_repository(repo)
     branch = branch or repo_info.get("default_branch") or "main"
     owner, name = _repo_parts(repo)
@@ -567,6 +615,24 @@ def upload_zip_project(
             "base_tree=%s entries=%d error=%s",
             repo, branch, base_tree, len(tree_entries), exc
         )
+        if workflow_paths:
+            logger.error(
+                "GitHub ZIP stage=workflow_permission_likely repo=%s "
+                "workflow_count=%d workflow_paths=%s error=%s",
+                repo,
+                len(workflow_paths),
+                workflow_paths,
+                exc,
+            )
+            raise GitHubDevError(
+                "GitHub ZIP ichida GitHub Actions workflow fayli bor va GitHub uni "
+                "token ruxsati sabab qabul qilmadi. "
+                f"Workflow fayllari: {', '.join(workflow_paths)}. "
+                "Fine-grained PAT uchun Repository access → shu repository → "
+                "Contents = Read and write VA Workflows = Read and write ni bering. "
+                "So'ng Render'dagi GITHUB_TOKEN ni yangilang va redeploy qiling. "
+                f"Asl GitHub xatosi: {exc}"
+            ) from exc
         raise GitHubDevError(
             "GitHub ZIP tree yaratish bosqichida xato. "
             "Render logida `GitHub API FAILED` va `tree_create_failed` qatorlarini tekshiring. "
