@@ -57,17 +57,55 @@ def _headers() -> dict[str, str]:
 
 
 def _raise_response(response: httpx.Response) -> None:
+    """Raise a useful GitHub error and log enough diagnostics to find the cause.
+
+    IMPORTANT: never log Authorization or the token itself.
+    """
     if response.is_success:
         return
+
     try:
         data = response.json()
         message = data.get("message") or response.text
+        error_doc = data.get("documentation_url") or "-"
     except Exception:
+        data = {}
         message = response.text
+        error_doc = "-"
+
+    # These headers are safe diagnostics: they do not contain the PAT.
+    request_id = response.headers.get("x-github-request-id", "-")
+    oauth_scopes = response.headers.get("x-oauth-scopes", "-")
+    accepted_scopes = response.headers.get("x-accepted-oauth-scopes", "-")
+    endpoint = str(response.request.url)
+    # Do not log query-string secrets if a future endpoint ever contains them.
+    endpoint = endpoint.split("?", 1)[0]
+
+    logger.error(
+        "GitHub API FAILED status=%s method=%s endpoint=%s "
+        "request_id=%s message=%r documentation=%s "
+        "oauth_scopes=%r accepted_oauth_scopes=%r",
+        response.status_code,
+        response.request.method,
+        endpoint,
+        request_id,
+        message,
+        error_doc,
+        oauth_scopes,
+        accepted_scopes,
+    )
+
     if response.status_code in (401, 403):
+        if response.status_code == 403:
+            raise GitHubDevError(
+                f"GitHub ruxsat xatosi (403): {message}. "
+                f"request_id={request_id}. "
+                "Logda endpoint, token scope va GitHub response tafsilotlari yozildi. "
+                "Fine-grained PAT uchun Repository access va Contents → Read and write ni tekshiring."
+            )
         raise GitHubDevError(
-            f"GitHub ruxsat xatosi ({response.status_code}): {message}. "
-            "Tokenning repository Access/Contents huquqlarini tekshiring."
+            f"GitHub autentifikatsiya xatosi (401): {message}. "
+            f"request_id={request_id}. GITHUB_TOKEN ni tekshiring."
         )
     if response.status_code == 404:
         raise GitHubDevError("Repository yoki fayl topilmadi, yoki token unga kira olmaydi.")
@@ -81,6 +119,10 @@ def _request(method: str, url: str, **kwargs) -> httpx.Response:
         with httpx.Client(timeout=_TIMEOUT, follow_redirects=True) as client:
             response = client.request(method, url, headers=_headers(), **kwargs)
     except httpx.HTTPError as exc:
+        logger.exception(
+            "GitHub API connection FAILED method=%s endpoint=%s error=%r",
+            method, url.split("?", 1)[0], exc
+        )
         raise GitHubDevError(f"GitHub bilan ulanishda xato: {exc}") from exc
     _raise_response(response)
     return response
@@ -424,6 +466,43 @@ def upload_zip_project(
     branch = branch or repo_info.get("default_branch") or "main"
     owner, name = _repo_parts(repo)
 
+    # Preflight repository permissions before creating 24+ orphan Git blobs.
+    # GitHub may allow blob creation while refusing tree creation when the
+    # token does not have write access to this repository. This check makes
+    # that situation explicit in Render logs.
+    permissions = repo_info.get("permissions") or {}
+    logger.info(
+        "GitHub ZIP stage=repo_permission_check repo=%s owner=%s name=%s "
+        "private=%s default_branch=%s repo_permissions=%s security_and_analysis=%s",
+        repo,
+        repo_info.get("owner", {}).get("login") or owner,
+        name,
+        repo_info.get("private"),
+        repo_info.get("default_branch"),
+        {
+            "admin": permissions.get("admin"),
+            "maintain": permissions.get("maintain"),
+            "push": permissions.get("push"),
+            "triage": permissions.get("triage"),
+            "pull": permissions.get("pull"),
+        },
+        repo_info.get("security_and_analysis"),
+    )
+
+    if permissions and permissions.get("push") is False:
+        logger.error(
+            "GitHub ZIP stage=permission_denied repo=%s reason=no_push_permission "
+            "permissions=%s. Token can read this repository but cannot write to it.",
+            repo,
+            permissions,
+        )
+        raise GitHubDevError(
+            f"GitHub repositoryga yozish huquqi yo'q: {repo}. "
+            "Token repositoryga kira oladi, lekin push/write huquqi yo'q. "
+            "Fine-grained PAT → Repository access → shu repo → "
+            "Repository permissions → Contents = Read and write qiling."
+        )
+
     # Read the current branch tip and base tree. `base_tree` makes this an
     # additive/overwrite merge: every repository path not mentioned by the ZIP
     # remains in the resulting tree exactly as it was.
@@ -472,12 +551,27 @@ def upload_zip_project(
             raise GitHubDevError(f"GitHub blob yaratilmadi: {path}")
         tree_entries.append({"path": path, "mode": "100644", "type": "blob", "sha": blob_sha})
 
-    logger.info("GitHub ZIP stage=tree_create repo=%s entries=%d", repo, len(tree_entries))
-    new_tree = _request(
-        "POST",
-        f"{_API}/repos/{owner}/{name}/git/trees",
-        json={"base_tree": base_tree, "tree": tree_entries},
-    ).json()
+    logger.info(
+        "GitHub ZIP stage=tree_create_start repo=%s branch=%s base_tree=%s entries=%d",
+        repo, branch, base_tree, len(tree_entries)
+    )
+    try:
+        new_tree = _request(
+            "POST",
+            f"{_API}/repos/{owner}/{name}/git/trees",
+            json={"base_tree": base_tree, "tree": tree_entries},
+        ).json()
+    except GitHubDevError as exc:
+        logger.exception(
+            "GitHub ZIP stage=tree_create_failed repo=%s branch=%s "
+            "base_tree=%s entries=%d error=%s",
+            repo, branch, base_tree, len(tree_entries), exc
+        )
+        raise GitHubDevError(
+            "GitHub ZIP tree yaratish bosqichida xato. "
+            "Render logida `GitHub API FAILED` va `tree_create_failed` qatorlarini tekshiring. "
+            f"Asl xato: {exc}"
+        ) from exc
     new_tree_sha = new_tree.get("sha")
     if not new_tree_sha:
         raise GitHubDevError("GitHub yangi tree yaratmadi.")
