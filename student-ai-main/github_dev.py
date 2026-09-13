@@ -1,0 +1,703 @@
+"""
+GitHub Developer manager for /developer.
+
+Provides admin-only GitHub repository browsing and file management:
+- list accessible repositories
+- browse repository directories
+- view text files
+- edit existing files
+- delete files
+- create new files (including nested paths)
+
+Uses the existing GITHUB_TOKEN/GITHUB_REPO/GITHUB_BRANCH settings but does
+NOT restrict browsing to GITHUB_REPO: repository listing comes directly from
+GitHub and respects the token's actual permissions.
+"""
+from __future__ import annotations
+
+import base64
+import io
+import logging
+import mimetypes
+import posixpath
+import zipfile
+from typing import Any
+
+import httpx
+
+import config
+
+logger = logging.getLogger(__name__)
+
+_API = "https://api.github.com"
+_TIMEOUT = 30.0
+_MAX_REPOS = 500
+_MAX_DIR_ITEMS = 200
+_MAX_TEXT_BYTES = 900_000
+_MAX_VIEW_CHARS = 15_000
+
+
+class GitHubDevError(RuntimeError):
+    pass
+
+
+def configured() -> bool:
+    return bool(config.GITHUB_TOKEN)
+
+
+def _headers() -> dict[str, str]:
+    if not configured():
+        raise GitHubDevError("GITHUB_TOKEN sozlanmagan.")
+    return {
+        "Authorization": f"Bearer {config.GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "Student-AI-Developer",
+    }
+
+
+def _raise_response(response: httpx.Response) -> None:
+    """Raise a useful GitHub error and log enough diagnostics to find the cause.
+
+    IMPORTANT: never log Authorization or the token itself.
+    """
+    if response.is_success:
+        return
+
+    try:
+        data = response.json()
+        message = data.get("message") or response.text
+        error_doc = data.get("documentation_url") or "-"
+    except Exception:
+        data = {}
+        message = response.text
+        error_doc = "-"
+
+    # These headers are safe diagnostics: they do not contain the PAT.
+    request_id = response.headers.get("x-github-request-id", "-")
+    oauth_scopes = response.headers.get("x-oauth-scopes", "-")
+    accepted_scopes = response.headers.get("x-accepted-oauth-scopes", "-")
+    accepted_github_permissions = response.headers.get("x-accepted-github-permissions", "-")
+    endpoint = str(response.request.url)
+    # Do not log query-string secrets if a future endpoint ever contains them.
+    endpoint = endpoint.split("?", 1)[0]
+
+    logger.error(
+        "GitHub API FAILED status=%s method=%s endpoint=%s "
+        "request_id=%s message=%r documentation=%s "
+        "oauth_scopes=%r accepted_oauth_scopes=%r "
+        "accepted_github_permissions=%r response_headers=%s",
+        response.status_code,
+        response.request.method,
+        endpoint,
+        request_id,
+        message,
+        error_doc,
+        oauth_scopes,
+        accepted_scopes,
+        accepted_github_permissions,
+        {
+            k: v for k, v in response.headers.items()
+            if k.lower() in {
+                "x-github-request-id",
+                "x-oauth-scopes",
+                "x-accepted-oauth-scopes",
+                "x-accepted-github-permissions",
+                "x-github-media-type",
+                "retry-after",
+            }
+        },
+    )
+
+    if response.status_code in (401, 403):
+        if response.status_code == 403:
+            raise GitHubDevError(
+                f"GitHub ruxsat xatosi (403): {message}. "
+                f"request_id={request_id}. "
+                "Logda endpoint, token scope va GitHub response tafsilotlari yozildi. "
+                "Fine-grained PAT uchun Repository access va Contents → Read and write ni tekshiring."
+            )
+        raise GitHubDevError(
+            f"GitHub autentifikatsiya xatosi (401): {message}. "
+            f"request_id={request_id}. GITHUB_TOKEN ni tekshiring."
+        )
+    if response.status_code == 404:
+        raise GitHubDevError("Repository yoki fayl topilmadi, yoki token unga kira olmaydi.")
+    if response.status_code == 409:
+        raise GitHubDevError("GitHub conflict berdi. Branch yoki fayl ayni paytda o'zgargan bo'lishi mumkin.")
+    raise GitHubDevError(f"GitHub API xatosi ({response.status_code}): {message}")
+
+
+def _request(method: str, url: str, **kwargs) -> httpx.Response:
+    try:
+        with httpx.Client(timeout=_TIMEOUT, follow_redirects=True) as client:
+            response = client.request(method, url, headers=_headers(), **kwargs)
+    except httpx.HTTPError as exc:
+        logger.exception(
+            "GitHub API connection FAILED method=%s endpoint=%s error=%r",
+            method, url.split("?", 1)[0], exc
+        )
+        raise GitHubDevError(f"GitHub bilan ulanishda xato: {exc}") from exc
+    _raise_response(response)
+    return response
+
+
+def _repo_parts(full_name: str) -> tuple[str, str]:
+    parts = full_name.strip("/").split("/", 1)
+    if len(parts) != 2 or not all(parts):
+        raise GitHubDevError("Repository nomi noto'g'ri.")
+    return parts[0], parts[1]
+
+
+def _contents_url(repo: str, path: str = "") -> str:
+    owner, name = _repo_parts(repo)
+    path = path.strip("/")
+    return f"{_API}/repos/{owner}/{name}/contents/{path}"
+
+
+def list_repositories() -> list[dict[str, Any]]:
+    """List repositories accessible by the token, across pagination."""
+    if not configured():
+        raise GitHubDevError("GITHUB_TOKEN sozlanmagan.")
+    result: list[dict[str, Any]] = []
+    for page in range(1, 6):
+        response = _request(
+            "GET",
+            f"{_API}/user/repos",
+            params={
+                "visibility": "all",
+                "affiliation": "owner,collaborator,organization_member",
+                "sort": "full_name",
+                "direction": "asc",
+                "per_page": 100,
+                "page": page,
+            },
+        )
+        batch = response.json()
+        if not isinstance(batch, list):
+            break
+        result.extend(batch)
+        if len(batch) < 100 or len(result) >= _MAX_REPOS:
+            break
+    return [
+        {
+            "full_name": r.get("full_name", ""),
+            "name": r.get("name", ""),
+            "private": bool(r.get("private")),
+            "default_branch": r.get("default_branch") or "main",
+            "description": r.get("description") or "",
+            "size": r.get("size") or 0,
+        }
+        for r in result[:_MAX_REPOS]
+        if r.get("full_name")
+    ]
+
+
+def list_directory(repo: str, path: str = "", branch: str | None = None) -> list[dict[str, Any]]:
+    """Return a sorted directory listing. Folders first, then files."""
+    params = {"ref": branch or "main"}
+    # Empty/invalid branch is fixed by the caller with repository default branch.
+    response = _request("GET", _contents_url(repo, path), params=params)
+    data = response.json()
+    if not isinstance(data, list):
+        raise GitHubDevError("Bu yo'l papka emas.")
+    items = []
+    for item in data[:_MAX_DIR_ITEMS]:
+        items.append({
+            "name": item.get("name", ""),
+            "path": item.get("path", ""),
+            "type": item.get("type", ""),  # file / dir / symlink / submodule
+            "size": int(item.get("size") or 0),
+            "sha": item.get("sha"),
+        })
+    return sorted(items, key=lambda x: (x["type"] != "dir", x["name"].lower()))
+
+
+def get_repository(repo: str) -> dict[str, Any]:
+    owner, name = _repo_parts(repo)
+    response = _request("GET", f"{_API}/repos/{owner}/{name}")
+    return response.json()
+
+
+def read_file(repo: str, path: str, branch: str | None = None) -> dict[str, Any]:
+    response = _request(
+        "GET",
+        _contents_url(repo, path),
+        params={"ref": branch or get_repository(repo).get("default_branch") or "main"},
+    )
+    data = response.json()
+    if not isinstance(data, dict) or data.get("type") != "file":
+        raise GitHubDevError("Tanlangan yo'l fayl emas.")
+    encoded = data.get("content", "").replace("\n", "")
+    try:
+        raw = base64.b64decode(encoded, validate=False)
+    except Exception as exc:
+        raise GitHubDevError("Fayl mazmunini o'qib bo'lmadi.") from exc
+    if len(raw) > _MAX_TEXT_BYTES:
+        raise GitHubDevError(
+            f"Fayl juda katta ({len(raw):,} bayt). Bu interfeysda {_MAX_TEXT_BYTES:,} baytgacha "
+            "matnli fayllar tahrirlanadi."
+        )
+    # UTF-8 first; if binary, refuse editing/viewing as text.
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise GitHubDevError("Bu binary fayl. Uni matn muharriri orqali tahrirlash xavfsiz emas.") from exc
+    return {
+        "repo": repo,
+        "path": data.get("path") or path,
+        "sha": data.get("sha"),
+        "size": len(raw),
+        "text": text,
+        "html_url": data.get("html_url"),
+        "download_url": data.get("download_url"),
+    }
+
+
+def write_file(
+    repo: str,
+    path: str,
+    content: str,
+    message: str,
+    branch: str | None = None,
+    sha: str | None = None,
+) -> dict[str, Any]:
+    if not path or path.endswith("/"):
+        raise GitHubDevError("Fayl yo'li noto'g'ri.")
+    raw = content.encode("utf-8")
+    if len(raw) > _MAX_TEXT_BYTES:
+        raise GitHubDevError(f"Fayl hajmi juda katta: {len(raw):,} bayt.")
+    default_branch = get_repository(repo).get("default_branch") or "main"
+    branch = branch or default_branch
+    if sha is None:
+        try:
+            sha = read_file(repo, path, branch)["sha"]
+        except GitHubDevError as exc:
+            if "topilmadi" not in str(exc).lower():
+                # For a new file, only a genuine 404 is acceptable. The public
+                # error text is intentionally broad, so use a direct existence
+                # GET to distinguish it.
+                response = _request(
+                    "GET", _contents_url(repo, path), params={"ref": branch}
+                )
+                _ = response  # _request would raise on 404.
+    body: dict[str, Any] = {
+        "message": message,
+        "content": base64.b64encode(raw).decode("ascii"),
+        "branch": branch,
+    }
+    if sha:
+        body["sha"] = sha
+    response = _request("PUT", _contents_url(repo, path), json=body)
+    return response.json()
+
+
+def create_file(repo: str, path: str, content: str, branch: str | None = None) -> dict[str, Any]:
+    # Avoid accidentally overwriting an existing file from the "new file" flow.
+    branch = branch or (get_repository(repo).get("default_branch") or "main")
+    try:
+        existing = read_file(repo, path, branch)
+    except GitHubDevError as exc:
+        if "topilmadi" not in str(exc).lower():
+            # GitHub's 404 is normalized to "topilmadi"; permission errors are
+            # never silently converted into a create operation.
+            pass
+        existing = None
+    if existing:
+        raise GitHubDevError("Bu nomdagi fayl allaqachon mavjud. Uni 'Tahrirlash' orqali o'zgartiring.")
+    return write_file(repo, path, content, f"Create {path}", branch=branch, sha=None)
+
+
+def delete_file(repo: str, path: str, branch: str | None = None, sha: str | None = None) -> dict[str, Any]:
+    branch = branch or (get_repository(repo).get("default_branch") or "main")
+    if not sha:
+        sha = read_file(repo, path, branch)["sha"]
+    body = {
+        "message": f"Delete {path}",
+        "sha": sha,
+        "branch": branch,
+    }
+    response = _request("DELETE", _contents_url(repo, path), json=body)
+    return response.json()
+
+
+
+_MAX_ZIP_BYTES = 20 * 1024 * 1024
+_MAX_ZIP_FILES = 1000
+_MAX_ZIP_UNCOMPRESSED_BYTES = 50 * 1024 * 1024
+_MAX_ZIP_FILE_BYTES = 20 * 1024 * 1024
+
+# Files that must never be copied from an uploaded project archive into GitHub.
+# This protects deployment secrets and local session credentials even when the
+# ZIP was created with an accidental .env/cookie file inside it.
+_PROTECTED_ZIP_BASENAMES = {
+    ".env",
+    "cookies.txt",
+}
+_PROTECTED_ZIP_SUFFIXES = (".cookies.txt",)
+
+
+def _is_protected_zip_path(path: str) -> bool:
+    name = posixpath.basename(path).lower()
+    if name in _PROTECTED_ZIP_BASENAMES:
+        return True
+    if name.startswith(".env.") or name.endswith(_PROTECTED_ZIP_SUFFIXES):
+        return True
+    return False
+
+
+def _is_github_workflow_path(path: str) -> bool:
+    """Return True for GitHub Actions workflow files.
+
+    GitHub treats files below .github/workflows specially. A token can have
+    ordinary Contents write access and still be denied when a workflow file
+    is changed unless the token also has workflow-related permission.
+    """
+    normalized = (path or "").replace("\\", "/").strip("/")
+    parts = [part for part in normalized.split("/") if part]
+    return (
+        len(parts) >= 3
+        and parts[0].lower() == ".github"
+        and parts[1].lower() == "workflows"
+        and parts[-1].lower().endswith((".yml", ".yaml"))
+    )
+
+
+def _normalize_zip_path(name: str) -> str:
+    """Normalize and validate a ZIP member path before sending it to GitHub."""
+    name = (name or "").replace("\\", "/")
+    name = name.lstrip("/")
+    if not name or name.endswith("/"):
+        return ""
+    parts = []
+    for part in name.split("/"):
+        if part in ("", "."):
+            continue
+        if part == "..":
+            raise GitHubDevError(f"ZIP ichida xavfli yo'l aniqlandi: {name}")
+        parts.append(part)
+    normalized = posixpath.join(*parts) if parts else ""
+    if not normalized:
+        return ""
+    first = normalized.split("/", 1)[0].lower()
+    if first == ".git" or normalized.lower().startswith(".git/"):
+        raise GitHubDevError("ZIP ichidagi .git katalogi yuklanmaydi.")
+    return normalized
+
+
+def _zip_project_root(paths: list[str]) -> str:
+    """Strip one artificial archive root (e.g. project-main/) when all files share it."""
+    if not paths:
+        return ""
+    first_parts = {p.split("/", 1)[0] for p in paths}
+    if len(first_parts) != 1:
+        return ""
+    root = next(iter(first_parts))
+    # Only strip a directory when every member is actually below it.
+    if all("/" in p for p in paths):
+        return root
+    return ""
+
+
+def upload_zip_project(
+    repo: str,
+    zip_bytes: bytes,
+    target_path: str = "",
+    branch: str | None = None,
+) -> dict[str, Any]:
+    """Merge a ZIP project into a repository without deleting omitted files.
+
+    Existing paths in the ZIP are replaced; new paths are added. Files that
+    are not present in the ZIP are left untouched. The whole merge is published
+    as one Git commit using the Git Trees API, which is safer and much faster
+    than creating one commit per file.
+    """
+    logger.info("GitHub ZIP stage=validate_start repo=%s branch=%s target=%s bytes=%d", repo, branch, target_path, len(zip_bytes))
+    if len(zip_bytes) > _MAX_ZIP_BYTES:
+        raise GitHubDevError(f"ZIP hajmi juda katta: {len(zip_bytes):,} bayt. Maksimum {_MAX_ZIP_BYTES:,} bayt.")
+
+    target_path = (target_path or "").replace("\\", "/").strip("/")
+    if target_path == ".":
+        target_path = ""
+    if ".." in target_path.split("/"):
+        raise GitHubDevError("Yuklash papkasi noto'g'ri.")
+
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
+    except (zipfile.BadZipFile, OSError) as exc:
+        raise GitHubDevError("Yuborilgan fayl haqiqiy ZIP arxiv emas.") from exc
+
+    members: dict[str, bytes] = {}
+    total_uncompressed = 0
+    try:
+        infos = zf.infolist()
+        if len(infos) > _MAX_ZIP_FILES:
+            raise GitHubDevError(f"ZIP ichida juda ko'p fayl bor: {len(infos)} ta. Maksimum {_MAX_ZIP_FILES} ta.")
+        skipped_protected = 0
+        normalized_names: list[str] = []
+        for info in infos:
+            name = _normalize_zip_path(info.filename)
+            if not name:
+                continue
+            # Do not follow links/special filesystem entries from archives.
+            mode = (info.external_attr >> 16) & 0o170000
+            if mode == 0o120000:
+                raise GitHubDevError(f"ZIP ichidagi symbolic link yuklanmaydi: {info.filename}")
+            if _is_protected_zip_path(name):
+                skipped_protected += 1
+                logger.warning("GitHub ZIP stage=skip_protected path=%s", name)
+                continue
+            if name in members:
+                raise GitHubDevError(f"ZIP ichida bir xil fayl ikki marta bor: {name}")
+            if info.file_size > _MAX_ZIP_FILE_BYTES:
+                raise GitHubDevError(f"Fayl juda katta: {name} ({info.file_size:,} bayt).")
+            total_uncompressed += info.file_size
+            if total_uncompressed > _MAX_ZIP_UNCOMPRESSED_BYTES:
+                raise GitHubDevError("ZIP ochilgandagi umumiy hajm juda katta.")
+            normalized_names.append(name)
+            with zf.open(info, "r") as fh:
+                data = fh.read(_MAX_ZIP_FILE_BYTES + 1)
+            if len(data) > _MAX_ZIP_FILE_BYTES:
+                raise GitHubDevError(f"Fayl juda katta: {name}")
+            members[name] = data
+    finally:
+        zf.close()
+
+    if not members:
+        raise GitHubDevError("ZIP ichida yuklanadigan fayl topilmadi.")
+
+    # ZIP exports commonly contain one artificial top-level project folder.
+    # Removing it avoids creating e.g. repo/student-ai-main/... unintentionally.
+    common_root = _zip_project_root(list(members))
+    if common_root:
+        prefix = common_root + "/"
+        members = {name[len(prefix):]: data for name, data in members.items()}
+        members = {name: data for name, data in members.items() if name}
+
+    final_files: dict[str, bytes] = {}
+    for relative_path, data in members.items():
+        final_path = "/".join(x for x in (target_path, relative_path) if x)
+        final_path = _normalize_zip_path(final_path)
+        if not final_path:
+            continue
+        if final_path in final_files:
+            raise GitHubDevError(f"ZIP yo'llari to'qnashdi: {final_path}")
+        final_files[final_path] = data
+
+    if not final_files:
+        raise GitHubDevError("ZIP ichida yuklanadigan fayl topilmadi.")
+
+    skipped = len(members) - len(final_files)
+    logger.info(
+        "GitHub ZIP stage=zip_validated repo=%s files=%d bytes=%d common_root=%s protected_skipped=%d",
+        repo, len(final_files), sum(len(v) for v in final_files.values()), common_root or "-", skipped_protected,
+    )
+
+    workflow_paths = sorted(
+        path for path in final_files if _is_github_workflow_path(path)
+    )
+    if workflow_paths:
+        logger.warning(
+            "GitHub ZIP stage=workflow_files_detected repo=%s count=%d paths=%s "
+            "note=GitHub_Actions_workflow_files_require_workflow_write_permission",
+            repo,
+            len(workflow_paths),
+            workflow_paths,
+        )
+    else:
+        logger.info(
+            "GitHub ZIP stage=workflow_files_detected repo=%s count=0",
+            repo,
+        )
+
+    repo_info = get_repository(repo)
+    branch = branch or repo_info.get("default_branch") or "main"
+    owner, name = _repo_parts(repo)
+
+    # Preflight repository permissions before creating 24+ orphan Git blobs.
+    # GitHub may allow blob creation while refusing tree creation when the
+    # token does not have write access to this repository. This check makes
+    # that situation explicit in Render logs.
+    permissions = repo_info.get("permissions") or {}
+    logger.info(
+        "GitHub ZIP stage=repo_permission_check repo=%s owner=%s name=%s "
+        "private=%s default_branch=%s repo_permissions=%s security_and_analysis=%s",
+        repo,
+        repo_info.get("owner", {}).get("login") or owner,
+        name,
+        repo_info.get("private"),
+        repo_info.get("default_branch"),
+        {
+            "admin": permissions.get("admin"),
+            "maintain": permissions.get("maintain"),
+            "push": permissions.get("push"),
+            "triage": permissions.get("triage"),
+            "pull": permissions.get("pull"),
+        },
+        repo_info.get("security_and_analysis"),
+    )
+
+    if permissions and permissions.get("push") is False:
+        logger.error(
+            "GitHub ZIP stage=permission_denied repo=%s reason=no_push_permission "
+            "permissions=%s. Token can read this repository but cannot write to it.",
+            repo,
+            permissions,
+        )
+        raise GitHubDevError(
+            f"GitHub repositoryga yozish huquqi yo'q: {repo}. "
+            "Token repositoryga kira oladi, lekin push/write huquqi yo'q. "
+            "Fine-grained PAT → Repository access → shu repo → "
+            "Repository permissions → Contents = Read and write qiling."
+        )
+
+    # Read the current branch tip and base tree. `base_tree` makes this an
+    # additive/overwrite merge: every repository path not mentioned by the ZIP
+    # remains in the resulting tree exactly as it was.
+    logger.info("GitHub ZIP stage=base_ref_read repo=%s branch=%s", repo, branch)
+    ref = _request("GET", f"{_API}/repos/{owner}/{name}/git/ref/heads/{branch}").json()
+    old_commit_sha = ((ref.get("object") or {}).get("sha"))
+    if not old_commit_sha:
+        raise GitHubDevError("Branch HEAD aniqlanmadi.")
+    commit = _request("GET", f"{_API}/repos/{owner}/{name}/git/commits/{old_commit_sha}").json()
+    base_tree = ((commit.get("tree") or {}).get("sha"))
+    if not base_tree:
+        raise GitHubDevError("Repository tree aniqlanmadi.")
+
+    logger.info("GitHub ZIP stage=blob_create_start repo=%s files=%d", repo, len(final_files))
+    logger.info(
+        "GitHub ZIP stage=write_permission_check repo=%s owner=%s branch=%s "
+        "token_type=github_pat",
+        repo, owner, branch,
+    )
+    tree_entries = []
+    for index, (path, data) in enumerate(sorted(final_files.items()), start=1):
+        try:
+            blob = _request(
+                "POST",
+                f"{_API}/repos/{owner}/{name}/git/blobs",
+                json={
+                    "content": base64.b64encode(data).decode("ascii"),
+                    "encoding": "base64",
+                },
+            ).json()
+        except GitHubDevError as exc:
+            message = str(exc)
+            if "403" in message:
+                raise GitHubDevError(
+                    "GitHub ZIP yozish uchun token ruxsati yetarli emas. "
+                    f"Repository: {repo}. Fine-grained PAT bo'lsa: Repository access ichida shu repositoryni tanlang "
+                    "va Repository permissions → Contents → Read and write ni bering. "
+                    "Classic PAT bo'lsa private repository uchun repo scope kerak. "
+                    "Keyin Render Environment'dagi GITHUB_TOKEN ni yangi token bilan almashtirib redeploy qiling."
+                ) from exc
+            raise
+        blob_sha = blob.get("sha")
+        if index == 1 or index % 25 == 0 or index == len(final_files):
+            logger.info("GitHub ZIP stage=blob_create progress=%d/%d path=%s", index, len(final_files), path)
+        if not blob_sha:
+            raise GitHubDevError(f"GitHub blob yaratilmadi: {path}")
+        tree_entries.append({"path": path, "mode": "100644", "type": "blob", "sha": blob_sha})
+
+    logger.info(
+        "GitHub ZIP stage=tree_create_start repo=%s branch=%s base_tree=%s entries=%d",
+        repo, branch, base_tree, len(tree_entries)
+    )
+    try:
+        new_tree = _request(
+            "POST",
+            f"{_API}/repos/{owner}/{name}/git/trees",
+            json={"base_tree": base_tree, "tree": tree_entries},
+        ).json()
+    except GitHubDevError as exc:
+        logger.exception(
+            "GitHub ZIP stage=tree_create_failed repo=%s branch=%s "
+            "base_tree=%s entries=%d error=%s",
+            repo, branch, base_tree, len(tree_entries), exc
+        )
+        if workflow_paths:
+            logger.error(
+                "GitHub ZIP stage=workflow_permission_likely repo=%s "
+                "workflow_count=%d workflow_paths=%s error=%s",
+                repo,
+                len(workflow_paths),
+                workflow_paths,
+                exc,
+            )
+            raise GitHubDevError(
+                "GitHub ZIP ichida GitHub Actions workflow fayli bor va GitHub uni "
+                "token ruxsati sabab qabul qilmadi. "
+                f"Workflow fayllari: {', '.join(workflow_paths)}. "
+                "Fine-grained PAT uchun Repository access → shu repository → "
+                "Contents = Read and write VA Workflows = Read and write ni bering. "
+                "So'ng Render'dagi GITHUB_TOKEN ni yangilang va redeploy qiling. "
+                f"Asl GitHub xatosi: {exc}"
+            ) from exc
+        raise GitHubDevError(
+            "GitHub ZIP tree yaratish bosqichida xato. "
+            "Render logida `GitHub API FAILED` va `tree_create_failed` qatorlarini tekshiring. "
+            f"Asl xato: {exc}"
+        ) from exc
+    new_tree_sha = new_tree.get("sha")
+    if not new_tree_sha:
+        raise GitHubDevError("GitHub yangi tree yaratmadi.")
+
+    logger.info("GitHub ZIP stage=tree_created repo=%s tree=%s", repo, new_tree_sha)
+
+    commit_message = f"Update project from ZIP ({len(final_files)} files)"
+    logger.info("GitHub ZIP stage=commit_create repo=%s", repo)
+    new_commit = _request(
+        "POST",
+        f"{_API}/repos/{owner}/{name}/git/commits",
+        json={"message": commit_message, "tree": new_tree_sha, "parents": [old_commit_sha]},
+    ).json()
+    new_commit_sha = new_commit.get("sha")
+    if not new_commit_sha:
+        raise GitHubDevError("GitHub commit yaratmadi.")
+
+    logger.info("GitHub ZIP stage=commit_created repo=%s commit=%s", repo, new_commit_sha)
+
+    # No force push: if somebody changed the branch while the ZIP was being
+    # prepared, GitHub rejects the ref update instead of overwriting their work.
+    try:
+        logger.info("GitHub ZIP stage=ref_update repo=%s branch=%s commit=%s", repo, branch, new_commit_sha)
+        _request(
+            "PATCH",
+            f"{_API}/repos/{owner}/{name}/git/refs/heads/{branch}",
+            json={"sha": new_commit_sha, "force": False},
+        )
+    except GitHubDevError as exc:
+        raise GitHubDevError(
+            "ZIP commit tayyorlandi, lekin branch boshqa commitga o'zgarib ketgani uchun "
+            "avtomatik qo'llanmadi. Hech narsa ustidan majburan yozilmadi. Qayta urinib ko'ring."
+        ) from exc
+
+    logger.info("GitHub ZIP stage=completed repo=%s branch=%s files=%d commit=%s", repo, branch, len(final_files), new_commit_sha)
+    return {
+        "repo": repo,
+        "branch": branch,
+        "commit_sha": new_commit_sha,
+        "files": sorted(final_files),
+        "file_count": len(final_files),
+        "bytes": sum(len(v) for v in final_files.values()),
+        "target_path": target_path,
+        "common_root_removed": common_root,
+        "protected_skipped": skipped_protected,
+    }
+
+def display_text(text: str, limit: int = _MAX_VIEW_CHARS) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + f"\n\n… [qisqartirildi: jami {len(text):,} belgi]"
+
+
+def format_size(size: int) -> str:
+    if size < 1024:
+        return f"{size} B"
+    if size < 1024 * 1024:
+        return f"{size / 1024:.1f} KB"
+    return f"{size / (1024 * 1024):.1f} MB"
+
+
+def item_icon(item_type: str) -> str:
+    return {"dir": "📁", "file": "📄", "symlink": "🔗", "submodule": "📦"}.get(item_type, "❓")

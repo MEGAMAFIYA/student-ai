@@ -1,0 +1,10 @@
+# Maxfiy ma'lumotlar — HECH QACHON repo'ga commit qilinmasin
+.env
+.env.*
+!.env.example
+cookies.txt
+*.cookies.txt
+
+# Python
+__pycache__/
+*.pyc

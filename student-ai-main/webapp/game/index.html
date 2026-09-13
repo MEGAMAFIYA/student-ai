@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta http-equiv="Permissions-Policy" content="camera=(self), microphone=(self)">
+<title>Student AI • 1v1</title>
+<link rel="stylesheet" href="/miniapp/game/style.css">
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div><div class="eyebrow">STUDENT AI • 1V1</div><h1 id="gameTitle">🎮 O‘yin</h1></div>
+    <div id="turnBadge" class="badge">⏳ Ulanmoqda…</div>
+  </header>
+
+  <section id="lobby" class="panel">
+    <div class="hero"><div class="hero-orb">♟</div><div><h2>Do‘stingiz bilan o‘ynang</h2><p id="lobbyText">Xona ochilmoqda…</p></div></div>
+    <div class="choices">
+      <div><h3>1. Rangni tanlang</h3><div class="row">
+        <button class="choice side" data-side="w">⚪ <b>Oq</b><span>birinchi yurish</span></button>
+        <button class="choice side" data-side="b">⚫ <b>Qora</b><span>ikkinchi yurish</span></button>
+      </div></div>
+      <div><h3>2. Donalar ko‘rinishi</h3><div class="row">
+        <button class="choice style" data-style="classic">♟ <b>Klassik</b><span>an’anaviy</span></button>
+        <button class="choice style" data-style="crystal">✦ <b>Kristall</b><span>yaltiroq</span></button>
+        <button class="choice style" data-style="neon">◈ <b>Neon</b><span>zamonaviy</span></button>
+      </div></div>
+      <button id="readyBtn" class="primary" disabled>✓ Tanlovni tasdiqlash</button>
+    </div>
+    <div id="players" class="players"></div>
+  </section>
+
+  <section id="game" class="hidden">
+    <div class="players-video">
+      <div id="playerMe" class="playercard">
+        <div class="player-meta"><span class="avatar">🙂</span><span class="player-name">Siz</span><span class="side-label"></span></div>
+        <div class="video-slot"><video id="localVideo" autoplay muted playsinline></video><span class="video-placeholder">📷 Kamera o‘chiq</span></div>
+      </div>
+      <div class="vs">VS</div>
+      <div id="playerOpp" class="playercard right">
+        <div class="player-meta"><span class="avatar">👤</span><span class="player-name">Do‘stingiz</span><span class="side-label"></span></div>
+        <div class="video-slot"><video id="remoteVideo" autoplay playsinline></video><span class="video-placeholder">📷 Kamera o‘chiq</span></div>
+      </div>
+    </div>
+
+    <div class="boardWrap"><div id="board" class="board" aria-label="O‘yin doskasi"></div><div id="fx" class="fx"></div></div>
+    <div class="actions">
+      <button id="soundBtn" class="tool">🔊 Ovoz</button>
+      <button id="callBtn" class="tool">📹 Kamera</button>
+      <button id="micBtn" class="tool">🎙 Mikrofon</button>
+      <button id="resignBtn" class="danger">🏳 Taslim</button>
+    </div>
+    <div id="result" class="result hidden"></div>
+
+    <section class="chat game-chat">
+      <div class="chat-title"><span>💬 Chat</span><span id="chatStatus" class="chat-status"></span></div>
+      <div id="emojiPicker" class="emoji-picker hidden"></div>
+      <div id="messages" class="messages"></div>
+      <form id="chatForm"><button id="emojiBtn" class="emoji-btn" type="button">😊</button><input id="chatInput" maxlength="500" autocomplete="off" placeholder="Xabar yozing..."><button class="send-btn" type="submit">➤</button></form>
+    </section>
+  </section>
+</div>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="/miniapp/game/app.js"></script>
+</body>
+</html>
