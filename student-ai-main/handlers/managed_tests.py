@@ -9,7 +9,7 @@ import managed_tests as db
 
 def inline_results():
  n=len(db.get_questions())
- return [InlineQueryResultArticle('managed-tests','📝 Faol testlar',InputTextMessageContent(f'📝 {n} ta test faol\nTestni boshlash uchun pastdagi tugmani bosing.',parse_mode='HTML'),reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('▶️ Testlarni boshlash',callback_data='mt:start')]]))]
+ return [InlineQueryResultArticle('managed-tests-' + str(n),'📝 Faol testlar',InputTextMessageContent(f'📝 {n} ta test faol\nTestni boshlash uchun pastdagi tugmani bosing.',parse_mode='HTML'),reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('▶️ Testlarni boshlash',callback_data='mt:start')]]))]
 async def on_inline(update,context):
  q=update.inline_query.query.strip().lower()
  if q in ('test','tests','testlar'):
