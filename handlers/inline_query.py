@@ -271,6 +271,11 @@ async def on_inline_query(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
+    if update.inline_query.query.strip().lower() in ("test", "testlar", "tests"):
+        from handlers import managed_tests
+        await managed_tests.on_inline(update, context)
+        return
+
     query = update.inline_query.query.strip()
     user = update.inline_query.from_user
     logger.info("🔍 INLINE START: user_id=%s username=%s query=%r", getattr(user, "id", "?"), _user_label(user), query)
@@ -878,6 +883,13 @@ async def on_chosen_inline_result(
     # Kesh server restartidan keyin yo'qolgan bo'lsa ham `chosen.query`
     # orqali bu maxsus oqimni aniqlab, shu yerning o'zida to'xtatamiz.
     special_query = (chosen.query or "").strip()
+    # 📝 TEST INLINE NATIJASI: hech qachon universal AI oqimiga tushmasin.
+    # Cache yo‘qolgan yoki restart bo‘lgan taqdirda ham query/result_id orqali
+    # qat’iy to‘xtatiladi.
+    if chosen.result_id.startswith("managed-tests") or re.match(r"^test(?:lar|s)?(?:\s|$)", special_query, re.IGNORECASE):
+        logger.info("📝 [CHOSEN_INLINE] test natijasi tanlandi — AI ga yuborilmaydi")
+        return
+
     # 🎮 GAME ham og'ir/AI oqim emas: natija tanlanganda AI chaqirilmasin.
     # Cache restart bo'lsa ham query/result_id orqali aniqlanadi.
     if chosen.result_id.startswith("game_") or re.match(r"^game(?:\s+|$)", special_query, re.IGNORECASE):

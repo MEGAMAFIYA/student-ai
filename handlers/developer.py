@@ -267,7 +267,8 @@ def _main_menu_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("🎵 Qo'shiq qidirish", callback_data="dev:music"),
          InlineKeyboardButton("💎 Pro / Tabrik", callback_data="dev:pt")],
         [InlineKeyboardButton("📊 Statistika", callback_data="dev:stats"),
-         InlineKeyboardButton("🧪 Testlarni sinash", callback_data="dev:tests")],
+         InlineKeyboardButton("🧪 Testlarni sinash", callback_data="dev:tests"),
+         InlineKeyboardButton("📝 Testlar bazasi", callback_data="dev:managed_tests")],
         [InlineKeyboardButton("☁️ RENDER", callback_data="dev:render"),
          InlineKeyboardButton("☁️ GitHub", callback_data="dev:github")],
         [InlineKeyboardButton("🔍 Inline jurnali", callback_data="dev:inlinelog:all")],
@@ -1413,6 +1414,30 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _safe_edit_query(query, _moliya_menu_text(), reply_markup=_moliya_menu_keyboard(), parse_mode="HTML")
         return DEV_MENU
 
+    # ---------- 📝 Boshqariladigan testlar ----------
+    if action == "managed_tests":
+        from handlers import managed_tests
+        await _safe_edit_query(query, managed_tests.admin_menu_text(), reply_markup=managed_tests.admin_menu_keyboard(), parse_mode="HTML")
+        return DEV_MENU
+    if action == "mt_topics":
+        from handlers import managed_tests
+        await _safe_edit_query(query, managed_tests.admin_topics_text(), reply_markup=managed_tests.admin_topics_keyboard(), parse_mode="HTML")
+        return DEV_MENU
+    if action == "mt_topic":
+        from handlers import managed_tests
+        tid = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+        topic = next((r for r in managed_tests.db.topics(False) if r[0] == tid), None)
+        if not topic:
+            await _safe_edit_query(query, "⚠️ Mavzu topilmadi.", reply_markup=managed_tests.admin_topics_keyboard(), parse_mode="HTML")
+        else:
+            status = "faol" if topic[2] else "nofaol"
+            text = f"📝 <b>{topic[1]}</b>\nHolati: {status}\n\nSavol qo‘shish/tahrirlash boshqaruvi keyingi integratsiya bosqichida ulanadi."
+            await _safe_edit_query(query, text, reply_markup=managed_tests.admin_topics_keyboard(), parse_mode="HTML")
+        return DEV_MENU
+    if action == "mt_new":
+        context.user_data["dev_action"] = {"type": "mt_new_topic"}
+        await _safe_edit_query(query, "📝 Yangi test mavzusi nomini yuboring:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:managed_tests")]]), parse_mode="HTML")
+        return DEV_WAIT_TEXT
     # ---------- 🧪 Loyiha testlari ----------
     if action == "tests":
         await _safe_edit_query(query, "🧪 <b>tests/ papkasi tekshirilmoqda...</b>\nBarcha testlar ishga tushirilmoqda, biroz kuting.", parse_mode="HTML")
@@ -2235,6 +2260,17 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ============================================================
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    mt_action = context.user_data.get("dev_action") or {}
+    if mt_action.get("type") == "mt_new_topic":
+        from handlers import managed_tests
+        name = (update.message.text or "").strip()
+        if not name:
+            await update.message.reply_text("⚠️ Mavzu nomi bo‘sh bo‘lmasin.")
+            return DEV_WAIT_TEXT
+        managed_tests.db.add_topic(name)
+        context.user_data.pop("dev_action", None)
+        await update.message.reply_text(f"✅ «{name}» mavzusi yaratildi. Endi unga savollar qo‘shishingiz mumkin.")
+        return DEV_MENU
     if not _is_admin(update):
         return ConversationHandler.END
 

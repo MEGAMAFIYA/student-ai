@@ -48,7 +48,7 @@ import game
 import drawing_game
 from handlers import (
     menu, universal_chat, course_work, translate as translate_handler, images_to_pdf,
-    edit_pdf, guide, inline_query, developer, pptx_gen, essay, quiz, solve, summarize,
+    edit_pdf, guide, inline_query, developer, pptx_gen, essay, quiz, solve, summarize, managed_tests,
     grammar, citation, my_files, reminders, voice, wallet_ui, tabrik, rasim,
     vid, qoshiq, kino, mention_dispatch, pro_tabrik, my_cabinet,
 )
@@ -1445,8 +1445,10 @@ def main():
     # (bot o'sha chatga a'zo bo'lmasa ham) ishlaydi. BotFather'da /setinline va
     # /setinlinefeedback (Enabled) sozlangan bo'lishi SHART — inline_query.py
     # faylidagi izohga qarang.
+    # managed_tests inline so‘rovlari inline_query.on_inline_query ichida boshqariladi.
     app.add_handler(InlineQueryHandler(inline_query.on_inline_query))
     app.add_handler(ChosenInlineResultHandler(inline_query.on_chosen_inline_result))
+    app.add_handler(CallbackQueryHandler(managed_tests.callback, pattern=r"^mt:"))
 
     app.add_error_handler(_error_handler)
 
