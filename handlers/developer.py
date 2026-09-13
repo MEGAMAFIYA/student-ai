@@ -1391,7 +1391,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # oldingi "kutilayotgan matn kiritish" holatini tozalaydi — pastda
     # tegishli branch (edit/keyaddprov/keyrepl/keymodel/bulkprov/keybulkscope)
     # kerak bo'lsa uni qaytadan o'rnatadi.
-    if action not in ("edit", "bulkprov", "keyaddprov", "keyrepl", "keymodel", "keybulkscope", "priceedit", "balsearch", "ptsong", "ptemoji", "ptdelay", "ptrevert", "gh", "github"):
+    if action not in ("edit", "bulkprov", "keyaddprov", "keyrepl", "keymodel", "keybulkscope", "priceedit", "balsearch", "ptsong", "ptemoji", "ptdelay", "ptrevert", "gh", "github", "mt_stop"):
         context.user_data.pop("dev_action", None)
 
     # ---------- Asosiy menyu ----------
@@ -1415,29 +1415,9 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return DEV_MENU
 
     # ---------- 📝 Boshqariladigan testlar ----------
-    if action == "managed_tests":
+    if action == "managed_tests" or action.startswith("mt_"):
         from handlers import managed_tests
-        await _safe_edit_query(query, managed_tests.admin_menu_text(), reply_markup=managed_tests.admin_menu_keyboard(), parse_mode="HTML")
-        return DEV_MENU
-    if action == "mt_topics":
-        from handlers import managed_tests
-        await _safe_edit_query(query, managed_tests.admin_topics_text(), reply_markup=managed_tests.admin_topics_keyboard(), parse_mode="HTML")
-        return DEV_MENU
-    if action == "mt_topic":
-        from handlers import managed_tests
-        tid = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
-        topic = next((r for r in managed_tests.db.topics(False) if r[0] == tid), None)
-        if not topic:
-            await _safe_edit_query(query, "⚠️ Mavzu topilmadi.", reply_markup=managed_tests.admin_topics_keyboard(), parse_mode="HTML")
-        else:
-            status = "faol" if topic[2] else "nofaol"
-            text = f"📝 <b>{topic[1]}</b>\nHolati: {status}\n\nSavol qo‘shish/tahrirlash boshqaruvi keyingi integratsiya bosqichida ulanadi."
-            await _safe_edit_query(query, text, reply_markup=managed_tests.admin_topics_keyboard(), parse_mode="HTML")
-        return DEV_MENU
-    if action == "mt_new":
-        context.user_data["dev_action"] = {"type": "mt_new_topic"}
-        await _safe_edit_query(query, "📝 Yangi test mavzusi nomini yuboring:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:managed_tests")]]), parse_mode="HTML")
-        return DEV_WAIT_TEXT
+        return await managed_tests.handle_dev_callback(action, parts, update, context, query, DEV_MENU, DEV_WAIT_TEXT)
     # ---------- 🧪 Loyiha testlari ----------
     if action == "tests":
         await _safe_edit_query(query, "🧪 <b>tests/ papkasi tekshirilmoqda...</b>\nBarcha testlar ishga tushirilmoqda, biroz kuting.", parse_mode="HTML")
@@ -2261,16 +2241,9 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mt_action = context.user_data.get("dev_action") or {}
-    if mt_action.get("type") == "mt_new_topic":
+    if str(mt_action.get("type", "")).startswith("mt_"):
         from handlers import managed_tests
-        name = (update.message.text or "").strip()
-        if not name:
-            await update.message.reply_text("⚠️ Mavzu nomi bo‘sh bo‘lmasin.")
-            return DEV_WAIT_TEXT
-        managed_tests.db.add_topic(name)
-        context.user_data.pop("dev_action", None)
-        await update.message.reply_text(f"✅ «{name}» mavzusi yaratildi. Endi unga savollar qo‘shishingiz mumkin.")
-        return DEV_MENU
+        return await managed_tests.handle_dev_text(mt_action, update, context, DEV_MENU, DEV_WAIT_TEXT)
     if not _is_admin(update):
         return ConversationHandler.END
 
