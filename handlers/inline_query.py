@@ -271,7 +271,13 @@ async def on_inline_query(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-    if update.inline_query.query.strip().lower() in ("test", "testlar", "tests"):
+    _raw_q = update.inline_query.query.strip()
+    _first_word = _raw_q.split(" ", 1)[0].lower() if _raw_q else ""
+    if _first_word in ("test", "testlar", "tests"):
+        # "test", "test 10", "test pro", "test pro jas 17" va h.k. — to'liq
+        # tahlil (raqam/pro/jas qo'shimchalari) handlers/managed_tests.py
+        # ichida (parse_query) amalga oshiriladi; mos kelmasa jimgina hech
+        # narsa qaytarilmaydi (aynan avvalgi xatti-harakat kabi).
         from handlers import managed_tests
         await managed_tests.on_inline(update, context)
         return
