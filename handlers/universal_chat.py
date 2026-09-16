@@ -36,6 +36,7 @@ from handlers.qoshiq import qoshiq_cmd
 from handlers.pro_tabrik import pro_cmd
 from handlers.my_cabinet import my_cabinet_cmd, on_personal_key_text
 from handlers.kino import kino_entry
+from handlers import managed_tests
 import pending_input
 import storage
 
@@ -95,6 +96,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     is_group = chat.type in ("group", "supergroup")
     user_text = update.message.text.strip()
+
+    # 📝 HAMMASIDAN OLDIN: foydalanuvchi "test pro" rejimida savolga
+    # matn javobini kutayaptimi? (variantlar YO'Q, javob oddiy xabar
+    # sifatida keladi.) Bo'lsa — bu xabar universal AI/mention/"dase"
+    # oqimiga UMUMAN yuborilmaydi, to'g'ridan-to'g'ri shu yerda "iste'mol"
+    # qilinadi (qarang: handlers/managed_tests.py > handle_pro_text_answer).
+    if managed_tests.is_waiting_text_answer(context):
+        await managed_tests.handle_pro_text_answer(update, context)
+        return
 
     # 🎮 Inline game trigger/result hech qachon Universal/Dase AI'ga yuborilmaydi.
     # Ayrim Telegram klientlari inline natijani oddiy Message sifatida qayta
