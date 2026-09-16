@@ -1,5 +1,6 @@
 import html
 import random
+import re
 import sys
 from pathlib import Path
 
@@ -18,26 +19,105 @@ def _esc(value) -> str:
 
 # ============================================================
 # 🎮 Foydalanuvchi tomoni — inline "test" so'rovi va testni yechish
+#
+# Qo'llab-quvvatlanadigan inline so'rovlar (barchasi "test"/"tests"/
+# "testlar" so'zi bilan boshlanadi, keyin ixtiyoriy tartibda bir nechta
+# qo'shimcha berilishi mumkin):
+#
+#   "test"                -> barcha faol savollar, aralash, variantlar bilan
+#   "test 10"              -> 10 ta savol aralash tanlanadi (variantlar bilan)
+#   "test pro"              -> variantlarSIZ, javob matn holida kutiladi
+#   "test pro 18"           -> pro rejim + 18 ta savol
+#   "test jas"              -> variantlar matni TESKARI (harflari aylantirilgan)
+#   "test jas 12"           -> jas rejim + 12 ta savol
+#   "test pro jas 17" / "test jas pro 16" -> barcha 3 ta o'zgarish (yoki
+#   ularning istalgan kombinatsiyasi) birga ishlaydi, tartib muhim emas.
 # ============================================================
 
-def inline_results():
-    n = len(db.get_questions())
-    if n == 0:
+# "test"/"tests"/"testlar" so'zidan keyin FAQAT "pro", "jas" va son
+# (1-3 xonali) so'zlari, istalgan tartibda, bir necha marta kelishi mumkin.
+_QUERY_RE = re.compile(
+    r'^(?:test|tests|testlar)((?:\s+(?:pro|jas|\d{1,3}))*)\s*$',
+    re.IGNORECASE,
+)
+
+
+def parse_query(raw_query: str):
+    """Inline so'rov matnini tahlil qiladi. Mos kelmasa `None` qaytaradi,
+    aks holda {'n': int|None, 'pro': bool, 'jas': bool} lug'atini qaytaradi."""
+    q = (raw_query or '').strip()
+    if not q:
+        return None
+    m = _QUERY_RE.match(q)
+    if not m:
+        return None
+    n = None
+    pro = False
+    jas = False
+    for tok in m.group(1).split():
+        tl = tok.lower()
+        if tl == 'pro':
+            pro = True
+        elif tl == 'jas':
+            jas = True
+        elif tl.isdigit() and int(tl) > 0:
+            n = int(tl)
+    return {'n': n, 'pro': pro, 'jas': jas}
+
+
+def _encode_flags(n, pro, jas) -> str:
+    return f'{n or 0}:{int(bool(pro))}:{int(bool(jas))}'
+
+
+def _decode_flags(data: str):
+    """"mt:start" yoki "mt:start:<n>:<pro>:<jas>" formatini o'qiydi —
+    eski (yangilanishdan oldingi) inline xabarlar bilan ham moslikni
+    saqlash uchun qismlar yo'q bo'lsa standart qiymatlar qaytariladi."""
+    parts = data.split(':')
+    n = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+    pro = bool(int(parts[3])) if len(parts) > 3 and parts[3].isdigit() else False
+    jas = bool(int(parts[4])) if len(parts) > 4 and parts[4].isdigit() else False
+    return n, pro, jas
+
+
+def inline_results(n=None, pro=False, jas=False):
+    total = len(db.get_questions())
+    if total == 0:
         return [InlineQueryResultArticle(
             'managed-tests-empty', '📝 Faol testlar yo\u2019q',
             InputTextMessageContent('📝 Hozircha faol testlar mavjud emas.'),
         )]
+
+    title_bits = ['📝 Test']
+    if n:
+        title_bits.append(f'{n} ta')
+    if pro:
+        title_bits.append('Pro (matn javob)')
+    if jas:
+        title_bits.append('Teskari variant')
+    title = ' — '.join(title_bits)
+
+    count_label = f'{n} ta' if n else f'{total} ta (barchasi)'
+    mode_lines = []
+    if pro:
+        mode_lines.append('✍️ Pro rejim: variantlarsiz, javobni matn holida yozasiz.')
+    if jas:
+        mode_lines.append('🔄 Jas rejim: variantlar teskari (harflari aylantirilgan) beriladi.')
+    body = f'📝 {count_label} test tayyor.\n' + ('\n'.join(mode_lines) + '\n' if mode_lines else '') + 'Boshlash uchun pastdagi tugmani bosing.'
+
+    flags = _encode_flags(n, pro, jas)
     return [InlineQueryResultArticle(
-        'managed-tests-' + str(n), '📝 Faol testlar',
-        InputTextMessageContent(f'📝 {n} ta test faol\nTestni boshlash uchun pastdagi tugmani bosing.', parse_mode='HTML'),
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('▶️ Testlarni boshlash', callback_data='mt:start')]]),
+        'managed-tests-' + flags, title,
+        InputTextMessageContent(body),
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('▶️ Testlarni boshlash', callback_data=f'mt:start:{flags}')]]),
     )]
 
 
 async def on_inline(update, context):
-    q = update.inline_query.query.strip().lower()
-    if q in ('test', 'tests', 'testlar'):
-        await update.inline_query.answer(inline_results(), cache_time=0, is_personal=True)
+    parsed = parse_query(update.inline_query.query)
+    if parsed is None:
+        return
+    await update.inline_query.answer(inline_results(**parsed), cache_time=0, is_personal=True)
 
 
 def _shuffle_question(row):
@@ -51,8 +131,25 @@ def _shuffle_question(row):
     return (i, topic, question, new_opts, new_correct)
 
 
+def _reverse_options(row):
+    """"jas" rejimi uchun — variantlar tartibi va to'g'ri javob indeksi
+    o'zgarmaydi, faqat har bir variant matnining harflari teskari
+    yoziladi (masalan "dase" -> "esad")."""
+    i, topic, question, opts, correct = row
+    new_opts = [o[::-1] for o in opts]
+    return (i, topic, question, new_opts, correct)
+
+
 def kb(opts):
     return InlineKeyboardMarkup([[InlineKeyboardButton(f'{chr(65 + i)}) {x}', callback_data=f'mt:ans:{i}')] for i, x in enumerate(opts)])
+
+
+def _question_html(topic, question) -> str:
+    """Savol matnini KATTAROQ va aniq ko'rinishi uchun qalin (bold) qilib
+    qaytaradi — Telegram xabar matnida haqiqiy shrift o'lchamini
+    o'zgartirish imkoni yo'q, shuning uchun qalin yozuv eng kuchli
+    (va hamma qurilmada ishlaydigan) ko'rinadigan farq beradi."""
+    return f'📚 <b>{_esc(topic)}</b>\n\n<b>{_esc(question)}</b>'
 
 
 async def callback(update, context):
@@ -60,18 +157,32 @@ async def callback(update, context):
     await q.answer()
     data = q.data
 
-    if data == 'mt:start':
+    if data.startswith('mt:start'):
+        n, pro, jas = _decode_flags(data)
         qs = db.get_questions()
         if not qs:
             await q.edit_message_text('📝 Hozircha faol testlar mavjud emas.')
             return
         random.shuffle(qs)
-        qs = [_shuffle_question(row) for row in qs]
+        if n:
+            qs = qs[:n]
+        if pro:
+            # Pro rejimda variantlar umuman ko'rsatilmaydi — faqat savol
+            # matni va to'g'ri javob (matn taqqoslash uchun) kerak, shuning
+            # uchun variant tartibini aralashtirish/teskari qilishning
+            # ma'nosi yo'q (foydalanuvchi ularni ko'rmaydi).
+            pass
+        else:
+            qs = [_shuffle_question(row) for row in qs]
+            if jas:
+                qs = [_reverse_options(row) for row in qs]
         context.user_data['mt_qs'] = qs
         context.user_data['mt_i'] = 0
         context.user_data['mt_ok'] = 0
         context.user_data['mt_bad'] = 0
+        context.user_data['mt_pro'] = pro
         context.user_data.pop('mt_answered', None)
+        context.user_data.pop('mt_wait_text', None)
         return await send(update, context)
 
     if data.startswith('mt:ans:'):
@@ -89,18 +200,23 @@ async def callback(update, context):
         next_label = '📊 Natija' if pos + 1 >= len(qs) else '➡️ Keyingisi'
         next_data = 'mt:result' if pos + 1 >= len(qs) else 'mt:next'
         await q.edit_message_text(
-            ('🥰 To\u2018g\u2018ri javob!' if good else '😡 Xato javob!') + f'\n\n{qs[pos][2]}',
+            ('🥰 To\u2018g\u2018ri javob!' if good else '😡 Xato javob!') + f'\n\n<b>{_esc(qs[pos][2])}</b>',
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(next_label, callback_data=next_data)]]),
+            parse_mode='HTML',
         )
+        return
     if data == 'mt:next':
         context.user_data['mt_i'] += 1
         context.user_data.pop('mt_answered', None)
+        context.user_data.pop('mt_wait_text', None)
         return await send(update, context)
     if data == 'mt:result':
         n = len(context.user_data.get('mt_qs', []))
         ok = context.user_data.get('mt_ok', 0)
         p = ok * 100 / n if n else 0
         s = 'yomon🙁' if p <= 50 else 'o\u2018rta😐' if p <= 85 else 'yaxshi🙂' if p < 100 else 'alo🥰'
+        context.user_data.pop('mt_wait_text', None)
+        context.user_data.pop('mt_pro', None)
         await q.edit_message_text(f'Testlar: {n} ta\nTo\u2018g\u2018ri javoblar: {ok} ta\nXato javoblar: {n - ok} ta\nHolati: {s}')
 
 
@@ -108,9 +224,62 @@ async def send(update, context):
     qs = context.user_data.get('mt_qs', [])
     i = context.user_data.get('mt_i', 0)
     if i >= len(qs):
+        context.user_data.pop('mt_wait_text', None)
         return await update.callback_query.edit_message_text('Testlar tugadi.', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('📊 Natija', callback_data='mt:result')]]))
     _, topic, question, opts, correct = qs[i]
-    await update.callback_query.edit_message_text(f'📚 {topic}\n\n{question}', reply_markup=kb(opts))
+    if context.user_data.get('mt_pro'):
+        # Pro rejim: variantlar YO'Q — foydalanuvchi javobni oddiy matn
+        # xabari sifatida yuboradi (qarang: handle_pro_text_answer).
+        context.user_data['mt_wait_text'] = True
+        await update.callback_query.edit_message_text(
+            _question_html(topic, question) + '\n\n✍️ Javobingizni oddiy xabar sifatida yozib yuboring:',
+            parse_mode='HTML',
+        )
+        return
+    await update.callback_query.edit_message_text(_question_html(topic, question), reply_markup=kb(opts), parse_mode='HTML')
+
+
+# ============================================================
+# ✍️ Pro rejim — variantlarsiz matn javobini qabul qilish
+#
+# Chaqiruvchi (handlers/universal_chat.py) HAR bir oddiy matn xabaridan
+# OLDIN `is_waiting_text_answer(context)`ni tekshiradi — True bo'lsa, shu
+# xabar ENDI universal AI/mention oqimiga YUBORILMAYDI, balki to'g'ridan-
+# to'g'ri shu yerga (`handle_pro_text_answer`) beriladi.
+# ============================================================
+
+def is_waiting_text_answer(context) -> bool:
+    return bool(context.user_data.get('mt_pro') and context.user_data.get('mt_wait_text'))
+
+
+async def handle_pro_text_answer(update, context) -> None:
+    """Pro rejimdagi savolga foydalanuvchi yuborgan matn javobini tekshiradi.
+
+    Katta/kichik harf farqi E'TIBORGA OLINMAYDI ("DASe", "daSe", "dase" —
+    barchasi bir xil qabul qilinadi), lekin boshqa harf/son/belgi qo'shilgan
+    yoki yetishmagan javob XATO hisoblanadi (aniq mos kelish kerak)."""
+    qs = context.user_data.get('mt_qs', [])
+    pos = context.user_data.get('mt_i', 0)
+    if not qs or pos >= len(qs):
+        context.user_data.pop('mt_wait_text', None)
+        return
+
+    context.user_data['mt_wait_text'] = False
+    _, topic, question, opts, correct = qs[pos]
+    correct_text = str(opts[correct]).strip()
+    user_answer = (update.message.text or '').strip()
+    good = user_answer.casefold() == correct_text.casefold()
+    context.user_data['mt_ok'] = context.user_data.get('mt_ok', 0) + (1 if good else 0)
+    context.user_data['mt_bad'] = context.user_data.get('mt_bad', 0) + (0 if good else 1)
+
+    next_label = '📊 Natija' if pos + 1 >= len(qs) else '➡️ Keyingisi'
+    next_data = 'mt:result' if pos + 1 >= len(qs) else 'mt:next'
+    result_line = '🥰 To\u2018g\u2018ri javob!' if good else f'😡 Xato javob! To\u2018g\u2018ri javob: <b>{_esc(correct_text)}</b>'
+    await update.message.reply_text(
+        result_line + f'\n\n<b>{_esc(question)}</b>',
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(next_label, callback_data=next_data)]]),
+        parse_mode='HTML',
+    )
 
 
 # ============================================================
