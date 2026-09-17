@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Standart holatda faqat HTTPS ruxsat etiladi (xavfsizlik uchun).
+    10.0.2.2 — Android emulyatordan kompyuteringizdagi mahalliy serverga
+    (masalan http://127.0.0.1:8080 bilan ishga tushirilgan botga) ulanish
+    uchun maxsus manzil — FAQAT shu uchun cleartext (http) ga ruxsat berilgan.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

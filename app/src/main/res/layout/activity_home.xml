@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/background">
+
+    <com.google.android.material.appbar.MaterialToolbar
+        android:id="@+id/toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="?attr/actionBarSize"
+        android:background="@color/brand_primary"
+        android:title="@string/app_name"
+        app:titleTextColor="@color/white" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="10dp">
+
+            <!-- STUDENT — botdagi /start menyusi shu yerga ochiladi -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnStudent"
+                style="@style/HomeButton"
+                android:layout_width="match_parent"
+                android:layout_height="96dp"
+                android:layout_margin="6dp"
+                android:text="@string/home_student"
+                android:textSize="20sp"
+                app:cornerRadius="18dp"
+                app:icon="@android:drawable/ic_menu_edit"
+                app:iconGravity="textStart" />
+
+            <!-- KINO — botdagi /kino o'rniga -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnKino"
+                style="@style/HomeButton"
+                android:layout_width="match_parent"
+                android:layout_height="96dp"
+                android:layout_margin="6dp"
+                android:text="@string/home_kino"
+                android:textSize="20sp"
+                app:cornerRadius="18dp"
+                app:icon="@android:drawable/ic_media_play"
+                app:iconGravity="textStart"
+                app:backgroundTint="@color/brand_accent" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnTabrik"
+                    style="@style/HomeButton"
+                    android:text="@string/home_tabrik"
+                    app:backgroundTint="@color/text_secondary" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnRasim"
+                    style="@style/HomeButton"
+                    android:text="@string/home_rasim"
+                    app:backgroundTint="@color/text_secondary" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnVid"
+                    style="@style/HomeButton"
+                    android:text="@string/home_vid"
+                    app:backgroundTint="@color/text_secondary" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnQoshiq"
+                    style="@style/HomeButton"
+                    android:text="@string/home_qoshiq"
+                    app:backgroundTint="@color/text_secondary" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnPro"
+                    style="@style/HomeButton"
+                    android:text="@string/home_pro"
+                    app:backgroundTint="@color/text_secondary" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnMy"
+                    style="@style/HomeButton"
+                    android:text="@string/home_my"
+                    app:backgroundTint="@color/text_secondary" />
+            </LinearLayout>
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnLogout"
+                style="@style/Widget.MaterialComponents.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:layout_marginTop="16dp"
+                android:text="@string/home_logout" />
+
+        </LinearLayout>
+    </ScrollView>
+</LinearLayout>

@@ -1,10 +1,14 @@
-# Maxfiy ma'lumotlar — HECH QACHON repo'ga commit qilinmasin
-.env
-.env.*
-!.env.example
-cookies.txt
-*.cookies.txt
-
-# Python
-__pycache__/
-*.pyc
+*.iml
+.gradle/
+/local.properties
+.idea/
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+/app/build
+/app/release
+*.apk
+!/.github/workflows/*.yml

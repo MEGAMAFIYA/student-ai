@@ -1,0 +1,49 @@
+<resources>
+    <string name="app_name">Talaba AI</string>
+
+    <string name="btn_login_telegram">Telegramda kirish</string>
+    <string name="login_title">Talaba AI ilovasiga xush kelibsiz</string>
+    <string name="login_subtitle">Kirish uchun Telegram akkauntingizdan foydalaning — parol shart emas.</string>
+    <string name="login_waiting">Telegram\'da \"START\" tugmasini bosishingizni kutyapmiz\u2026</string>
+    <string name="login_expired">Kirish havolasining muddati o\'tdi. Qaytadan urinib ko\'ring.</string>
+    <string name="login_open_telegram">Telegramni ochish</string>
+
+    <string name="home_student">STUDENT</string>
+    <string name="home_kino">KINO</string>
+    <string name="home_tabrik">TABRIK</string>
+    <string name="home_rasim">RASM</string>
+    <string name="home_vid">VIDEO</string>
+    <string name="home_qoshiq">QO\'SHIQ</string>
+    <string name="home_pro">PRO</string>
+    <string name="home_my">MENING KABINETIM</string>
+    <string name="home_logout">Chiqish</string>
+
+    <string name="student_menu_title">STUDENT — funksiyalar</string>
+    <string name="student_universal_chat">\uD83D\uDCAC UNIVERSAL CHAT</string>
+    <string name="student_quiz">\uD83D\uDCCB Test/Viktorina</string>
+
+    <string name="coming_soon_title">Tez orada</string>
+    <string name="coming_soon_message">Bu funksiya keyingi bosqichda qo\'shiladi.</string>
+
+    <string name="chat_hint">Xabar yozing\u2026</string>
+    <string name="chat_send">Yuborish</string>
+
+    <string name="quiz_setup_title">Test sozlamalari</string>
+    <string name="quiz_count_label">Savollar soni (bo\'sh — barchasi)</string>
+    <string name="quiz_pro_label">Pro rejim (variantlarsiz, matn javob)</string>
+    <string name="quiz_jas_label">Jas rejim (variantlar teskari)</string>
+    <string name="quiz_start">Boshlash</string>
+    <string name="quiz_next">Keyingisi</string>
+    <string name="quiz_finish_title">Test yakunlandi</string>
+    <string name="quiz_answer_hint">Javobingizni yozing\u2026</string>
+    <string name="quiz_submit">Javobni yuborish</string>
+
+    <string name="kino_list_title">KINO — katalog</string>
+    <string name="kino_search_hint">Qidirish\u2026</string>
+    <string name="kino_empty">Hozircha kino topilmadi.</string>
+    <string name="kino_loading">Yuklanmoqda\u2026</string>
+
+    <string name="error_network">Tarmoq xatosi. Qaytadan urinib ko\'ring.</string>
+    <string name="error_unauthorized">Sessiya tugagan. Qaytadan kiring.</string>
+    <string name="retry">Qaytadan urinish</string>
+</resources>
