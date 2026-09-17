@@ -11,8 +11,10 @@ android {
         applicationId = "uz.studentai.mobile"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0-phase1"
+        // GitHub Actions har bir yangi APK uchun versionCode'ni avtomatik beradi.
+        // Lokal buildda esa eski 1/1.0-phase1 qiymatlaridan foydalaniladi.
+        versionCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 1
+        versionName = (project.findProperty("versionName") as String?) ?: "1.0-phase1"
 
         // 🔧 Botning HTTP serveri (bot.py) qaysi manzilda ochiq bo'lsa,
         // ilova SHU manzilga ulanadi. Render'ga deploy qilingandan keyin
@@ -21,9 +23,24 @@ android {
         buildConfigField("String", "BASE_URL", "\"https://student-ai-uz.onrender.com/\"")
     }
 
+    // Yangilanishlar eski APK ustiga o'rnatilishi uchun release APK bir xil
+    // applicationId va doimiy GitHub Actions signing key bilan imzolanadi.
+    signingConfigs {
+        create("release") {
+            val keystorePath = System.getenv("ANDROID_KEYSTORE_PATH")
+            if (!keystorePath.isNullOrBlank()) {
+                storeFile = file(keystorePath)
+                storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
         debug {

@@ -1,7 +1,4 @@
-name: Build debug APK
-
-# GitHub'ga push qilinganda yoki qo'lda ishga tushirilganda debug APK yig'iladi.
-# Tayyor APK Actions -> run -> Artifacts bo'limida chiqadi.
+name: Build APK
 
 on:
   push:
@@ -22,20 +19,37 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # ZIP ichida Gradle Wrapper (gradlew) yo'q.
-      # Shuning uchun Gradle 8.7 GitHub Actions tomonidan PATH'ga o'rnatiladi.
-      # AGP 8.5.2 uchun Gradle 8.7 mos.
       - name: Gradle 8.7 o'rnatish
         uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: "8.7"
 
-      - name: Debug APK yig'ish
-        run: gradle assembleDebug --no-daemon
+      # Doimiy signing key: keyingi APKlar oldingi APK ustiga o'rnatiladi.
+      # KEYSTORE fayli GitHub Secrets ichida saqlanadi, repoga qo'shilmaydi.
+      - name: Signing keystore tayyorlash
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "ERROR: ANDROID_KEYSTORE_BASE64 GitHub Secret sozlanmagan."
+            exit 1
+          fi
+          echo "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/student-ai-release.keystore"
+
+      - name: APK yig'ish va imzolash
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/student-ai-release.keystore
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          gradle assembleRelease --no-daemon \
+            -PversionCode=${{ github.run_number }} \
+            -PversionName="1.0.${{ github.run_number }}"
 
       - name: APK'ni artifact sifatida saqlash
         uses: actions/upload-artifact@v4
         with:
-          name: student-ai-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: student-ai-update-apk
+          path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
