@@ -1,4 +1,4 @@
-name: Build debug APK
+name: Build and Release APK
 
 on:
   push:
@@ -6,37 +6,77 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  build:
+  build-release:
+    name: Build signed APK and publish Release
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Repository-ni yuklash
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: JDK 17 o'rnatish
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
           cache: gradle
 
-      - name: Set up Gradle 8.7
+      - name: Gradle 8.7 o'rnatish
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.7"
 
-      - name: Build debug APK
+      - name: Signing secretlar mavjudligini tekshirish
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          gradle assembleDebug --no-daemon \
+          set -euo pipefail
+          test -n "$KEYSTORE_B64" || { echo "ERROR: ANDROID_KEYSTORE_BASE64 Secret yo'q"; exit 1; }
+          test -n "$KEYSTORE_PASSWORD" || { echo "ERROR: ANDROID_KEYSTORE_PASSWORD Secret yo'q"; exit 1; }
+          test -n "$KEY_ALIAS" || { echo "ERROR: ANDROID_KEY_ALIAS Secret yo'q"; exit 1; }
+          test -n "$KEY_PASSWORD" || { echo "ERROR: ANDROID_KEY_PASSWORD Secret yo'q"; exit 1; }
+          echo "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/student-ai-release.keystore"
+          test -s "$RUNNER_TEMP/student-ai-release.keystore" || { echo "ERROR: keystore bo'sh yoki Base64 noto'g'ri"; exit 1; }
+
+      - name: Release APK build qilish
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/student-ai-release.keystore
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          gradle :app:clean :app:assembleRelease --no-daemon --stacktrace \
             -PversionCode=${{ github.run_number }} \
             -PversionName="1.0.${{ github.run_number }}"
+          test -s app/build/outputs/apk/release/app-release.apk
 
-      - name: Upload APK artifact
+      - name: APK nomini tayyorlash
+        run: |
+          set -euo pipefail
+          cp app/build/outputs/apk/release/app-release.apk \
+             "StudentAI-v1.0.${{ github.run_number }}.apk"
+
+      - name: GitHub Release yaratish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "v1.0.${{ github.run_number }}" \
+            "StudentAI-v1.0.${{ github.run_number }}.apk" \
+            --title "Eng so'nggi build v1.0.${{ github.run_number }}" \
+            --notes "Student AI Android ilovasining yangi buildi.\n\nVersion: 1.0.${{ github.run_number }}\nBuild: ${{ github.run_number }}" \
+            --latest
+
+      - name: APK artifact ham saqlash
         uses: actions/upload-artifact@v4
         with:
-          name: student-ai-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: StudentAI-v1.0.${{ github.run_number }}-apk
+          path: StudentAI-v1.0.${{ github.run_number }}.apk
           if-no-files-found: error

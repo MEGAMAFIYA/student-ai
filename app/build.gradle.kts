@@ -23,13 +23,18 @@ android {
         buildConfigField("String", "BASE_URL", "\"https://student-ai-uz.onrender.com/\"")
     }
 
-    // Yangilanishlar eski APK ustiga o'rnatilishi uchun release APK bir xil
-    // applicationId va doimiy GitHub Actions signing key bilan imzolanadi.
-    signingConfigs {
-        create("release") {
-            val keystorePath = System.getenv("ANDROID_KEYSTORE_PATH")
-            if (!keystorePath.isNullOrBlank()) {
-                storeFile = file(keystorePath)
+    // Release imzosi faqat GitHub Secrets mavjud bo'lsa ulanadi.
+    // Secrets bo'lmasa workflow assembleDebug orqali xavfsiz build qiladi.
+    val releaseKeystorePath = System.getenv("ANDROID_KEYSTORE_PATH")
+    val hasReleaseSigning = !releaseKeystorePath.isNullOrBlank() &&
+        !System.getenv("ANDROID_KEYSTORE_PASSWORD").isNullOrBlank() &&
+        !System.getenv("ANDROID_KEY_ALIAS").isNullOrBlank() &&
+        !System.getenv("ANDROID_KEY_PASSWORD").isNullOrBlank()
+
+    if (hasReleaseSigning) {
+        signingConfigs {
+            create("ciRelease") {
+                storeFile = file(releaseKeystorePath!!)
                 storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
                 keyAlias = System.getenv("ANDROID_KEY_ALIAS")
                 keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
@@ -40,7 +45,9 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("release")
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("ciRelease")
+            }
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
         debug {
