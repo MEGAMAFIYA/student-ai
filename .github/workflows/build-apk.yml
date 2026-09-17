@@ -1,34 +1,41 @@
 name: Build debug APK
 
-# Bu workflow GitHub'ga push qilinganda avtomatik ravishda debug APK
-# yig'adi (Android Studio shart emas). Tayyor .apk fayl "Actions" bo'limi
-# > tanlangan run > "Artifacts" ostida yuklab olinadi.
+# GitHub'ga push qilinganda yoki qo'lda ishga tushirilganda debug APK yig'iladi.
+# Tayyor APK Actions -> run -> Artifacts bo'limida chiqadi.
 
 on:
   push:
-    branches: [ "main" ]
-  workflow_dispatch: {}
+    branches: ["main"]
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Repository'ni yuklash
+        uses: actions/checkout@v4
 
       - name: JDK 17 o'rnatish
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
 
-      - name: Gradle wrapper'ga ishga tushirish huquqi
-        run: chmod +x ./gradlew
+      # ZIP ichida Gradle Wrapper (gradlew) yo'q.
+      # Shuning uchun Gradle 8.7 GitHub Actions tomonidan PATH'ga o'rnatiladi.
+      # AGP 8.5.2 uchun Gradle 8.7 mos.
+      - name: Gradle 8.7 o'rnatish
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: "8.7"
 
       - name: Debug APK yig'ish
-        run: ./gradlew assembleDebug --no-daemon
+        run: gradle assembleDebug --no-daemon
 
       - name: APK'ni artifact sifatida saqlash
         uses: actions/upload-artifact@v4
         with:
           name: student-ai-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
