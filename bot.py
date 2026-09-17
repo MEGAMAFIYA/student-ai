@@ -42,6 +42,8 @@ import pending_input
 import wallet
 import payment_providers
 import webapp_security
+import mobile_auth
+import mobile_api
 import inline_media
 import movie_watch
 import game
@@ -732,6 +734,8 @@ def _serve_kino_router(handler: "HealthHandler") -> bool:
 
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
+        if mobile_api.handle_get(self):
+            return
         if self.path == _PLACEHOLDER_PDF_PATH and _PLACEHOLDER_PDF_BYTES:
             self.send_response(200)
             self.send_header("Content-Type", "application/pdf")
@@ -908,6 +912,9 @@ class HealthHandler(BaseHTTPRequestHandler):
         return
 
     def do_POST(self):
+        if mobile_api.handle_post(self):
+            return
+
         """💳 Kapitalbank to'lov webhook'i VA 🎨 /rasim Mini App rasm
         yuklash so'rovi shu yerga keladi."""
         if self.path.startswith("/api/draw/"):
@@ -1335,6 +1342,7 @@ def main():
     global _MAIN_LOOP, _BOT_INSTANCE
     _MAIN_LOOP = loop
     _BOT_INSTANCE = app.bot
+    mobile_api.set_application(app)
 
     # ⏳ "/qoshiq"/"/vid" ikki bosqichli kiritishning kutish holatini
     # BOSHQA istalgan buyruq kelganda bekor qiladi — group=-1 bo'lgani

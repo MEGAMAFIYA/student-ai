@@ -94,4 +94,10 @@ interface ApiService {
 
     @GET("api/mobile/kino/watch/{id}")
     suspend fun kinoWatch(@Path("id") id: String): Response<KinoWatchResponse>
+
+    @POST("api/mobile/task")
+    suspend fun task(@Body body: MobileTaskRequest): Response<MobileTaskResponse>
+
+    @POST("api/mobile/file-task")
+    suspend fun fileTask(@Body body: MobileFileTaskRequest): Response<MobileTaskResponse>
 }

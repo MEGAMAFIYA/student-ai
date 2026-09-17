@@ -20,9 +20,10 @@ class StudentMenuActivity : AppCompatActivity() {
                 "universal" -> startActivity(Intent(this, ChatActivity::class.java))
                 "quiz" -> startActivity(Intent(this, QuizSetupActivity::class.java))
                 else -> {
-                    val i = Intent(this, ComingSoonActivity::class.java)
-                    i.putExtra(ComingSoonActivity.EXTRA_TITLE, item.label)
-                    startActivity(i)
+                    startActivity(Intent(this, FeatureActivity::class.java).apply {
+                        putExtra(FeatureActivity.EXTRA_FEATURE, item.key)
+                        putExtra(FeatureActivity.EXTRA_TITLE, item.label)
+                    })
                 }
             }
         }

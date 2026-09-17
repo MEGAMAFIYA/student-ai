@@ -1,78 +1,47 @@
-# Talaba AI — Android ilova (native Kotlin) — 1-bosqich
+# Talaba AI — Android + Telegram bot
 
-Bu — Telegram botdagi (`@Student_ai_uz_bot`) funksiyalarga ega, alohida
-Android ilova (APK). Bot bilan **bir xil backend**dan foydalanadi —
-hech qanday funksiya logikasi qayta yozilmagan, faqat qayta ishlatilgan.
+Bu repository Telegram bot va native Android ilovasini bitta backend bilan ishlatadi.
 
-## Nima ishlaydi (1-bosqich)
+## Android ilovada ishlaydigan bo'limlar
 
-- **Login** — parol/SMS yo'q. "Telegramda kirish" bosiladi → Telegram
-  ochiladi → botning shaxsiy chatida "START" bosiladi → ilova avtomatik
-  kirgan bo'ladi.
-- **STUDENT** tugmasi → botdagi `/start` menyusi bilan bir xil ro'yxat:
-  - 💬 **UNIVERSAL CHAT** — to'liq ishlaydi (AI bilan suhbat, tarix bilan).
-  - 📋 **Test/Viktorina** — to'liq ishlaydi: savollar soni, **Pro** rejim
-    (variantlarsiz, matn javob) va **Jas** rejim (variantlar teskari) —
-    botdagi inline `test <N> pro jas` bilan bir xil.
-  - Qolgan bandlar (kurs ishi, tarjima, pptx va h.k.) — "Tez orada"
-    yorlig'i bilan ko'rinadi, 2/3-bosqichda ulanadi.
-- **KINO** tugmasi → kino katalogi + tomosha qilish (botdagi Watch Party
-  streaming mexanizmi qayta ishlatiladi).
-- Bosh ekranda TABRIK/RASM/VIDEO/QO'SHIQ/PRO/MENING KABINETIM tugmalari
-  ham bor (bot buyruqlari bilan bir xil tartibda) — hozircha "Tez orada".
+- Telegram orqali parolsiz login
+- Universal AI chat
+- Kurs ishi / loyiha (PDF)
+- Referat / insho (PDF)
+- Tarjima
+- Test / Viktorina (developer qo'shgan faol testlar + AI fallback, Pro/Jas)
+- Masala yechish (matn va rasm)
+- Konspekt qisqartirish
+- Imlo / grammatika
+- Iqtibos generatori
+- Suratlarni PDF qilish
+- PDF tahrirlash
+- Qo'llanma tayyorlash
+- PPTX taqdimot
+- Mening fayllarim / kabinet
+- Eslatmalar
+- Balans va to'lovlar tarixi
+- Tabrik / Pro tabriknoma
+- Qo'shiq qidirish
+- Video yuklash
+- Rasm chizish Mini App havolasi
+- Kino katalogi va server oqimi
 
-## Backend (Telegram bot loyihasida, allaqachon qo'shilgan)
+Android ilova `mobile_api.py` orqali botning o'zi ishlayotgan HTTP serverga ulanadi. Telegram login ma'lumotlari serverda tasdiqlanadi; mijoz faqat server bergan session tokenni saqlaydi. Telegram Mini Apps uchun `initData` kabi autentifikatsiya ma'lumotlarini serverda tekshirish kerak. See Telegram documentation: https://core.telegram.org/bots/webapps
 
-Quyidagi fayllar bot loyihasiga (`student-ai-main/`) qo'shildi/o'zgardi —
-**hech qanday alohida server kerak emas**, bot allaqachon ishlatayotgan
-HTTP serverning o'zi (`bot.py > HealthHandler`) ishlatiladi:
+## Render
 
-- `mobile_auth.py` — YANGI. Login (deep-link + polling).
-- `mobile_api.py` — YANGI. `/api/mobile/...` REST API.
-- `movie_watch.py` — qo'shildi: `make_solo_stream_url()`.
-- `bot.py` — 4 qatorli qo'shimcha (import + 2 ta route hook).
-- `handlers/menu.py` — `start_cmd` ichida `login_<token>` payload'ini
-  qabul qilish qo'shildi.
+Render Environment Variables ichida `PUBLIC_BASE_URL` botning haqiqiy HTTPS manziliga o'rnatilishi kerak. Android `app/build.gradle.kts` ichidagi `BASE_URL` ham aynan shu manzilga mos bo'lishi kerak.
 
-Botni **qayta ishga tushirish kifoya** — boshqa hech narsa o'zgartirish
-shart emas.
+## GitHub Actions — Release / Latest
 
-## Ilovani sozlash
+`.github/workflows/build-apk.yml` har bir `main` commit yoki manual workflow ishga tushirilganda signed Release APK yig'adi va GitHub Releases ichida `Latest` release yaratadi.
 
-`app/build.gradle.kts` faylida:
+Doimiy update uchun bir xil signing key ishlatiladi. GitHub Secrets:
 
-```kotlin
-buildConfigField("String", "BASE_URL", "\"https://student-ai-uz.onrender.com/\"")
-```
+- `ANDROID_KEYSTORE_BASE64`
+- `ANDROID_KEYSTORE_PASSWORD`
+- `ANDROID_KEY_ALIAS`
+- `ANDROID_KEY_PASSWORD`
 
-`BASE_URL`'ni botingiz ishlab turgan HAQIQIY manzilga almashtiring
-(Render'dagi https manzil, oxirida albatta "/" bilan). Bot username
-ilova tomonida sozlanmaydi — login havolasini (`deep_link`) backend
-o'zi (`config.BOT_USERNAME_FALLBACK` asosida) tayyorlab beradi.
-
-## APK qanday yig'iladi
-
-**A) Android Studio orqali (eng oson):**
-1. Android Studio'da `File > Open` → shu papkani (`StudentAiApp/`) tanlang.
-2. Gradle sinxronizatsiyasini kuting (birinchi marta internet kerak —
-   kutubxonalarni yuklab oladi).
-3. `Build > Build Bundle(s) / APK(s) > Build APK(s)`.
-4. Tayyor `.apk` — `app/build/outputs/apk/debug/app-debug.apk`.
-
-**B) GitHub Actions orqali (Android Studio shart emas):**
-1. Shu papkani GitHub repozitoriyingizga yuklang (`git push`).
-2. `.github/workflows/build-apk.yml` avtomatik ishga tushadi.
-3. GitHub'da **Actions** bo'limi → oxirgi run → **Artifacts** →
-   `student-ai-debug-apk` — shu yerdan `.apk`ni yuklab oling.
-
-## Keyingi bosqichlar (2, 3, 4...)
-
-Har bir yangi funksiya (kurs ishi, tarjima, pptx, pdf, rasim, tabrik,
-vid, qo'shiq, wallet va h.k.) aynan shu naqsh bo'yicha qo'shiladi:
-1. `mobile_api.py`ga yangi endpoint (mavjud `handlers/*.py` logikasini
-   qayta ishlatib).
-2. `network/ApiService.kt`ga mos so'rov.
-3. Yangi Activity (yoki `ComingSoonActivity` o'rniga haqiqiy ekran).
-
-Bu tartib botning ishlashiga HECH QANDAY ta'sir qilmaydi — backend'da
-qo'shilgan hamma narsa faqat `/api/mobile/` yo'li ostida, alohida.
+Birinchi marta o'rnatilgan APK boshqa signing key bilan imzolangan bo'lsa, Android uni boshqa kalitdagi APK ustiga o'rnatmaydi. Keyingi barcha buildlar esa aynan bir xil key bilan imzolansa, `applicationId` o'zgarmagan holda eski APK ustiga yangilanadi.

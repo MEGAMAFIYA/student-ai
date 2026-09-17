@@ -11,10 +11,9 @@ android {
         applicationId = "uz.studentai.mobile"
         minSdk = 24
         targetSdk = 34
-        // GitHub Actions har bir yangi APK uchun versionCode'ni avtomatik beradi.
-        // Lokal buildda esa eski 1/1.0-phase1 qiymatlaridan foydalaniladi.
-        versionCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 1
-        versionName = (project.findProperty("versionName") as String?) ?: "1.0-phase1"
+        val ciVersionCode = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
+        versionCode = ciVersionCode
+        versionName = "1.0.$ciVersionCode"
 
         // 🔧 Botning HTTP serveri (bot.py) qaysi manzilda ochiq bo'lsa,
         // ilova SHU manzilga ulanadi. Render'ga deploy qilingandan keyin
@@ -23,21 +22,14 @@ android {
         buildConfigField("String", "BASE_URL", "\"https://student-ai-uz.onrender.com/\"")
     }
 
-    // Release imzosi faqat GitHub Secrets mavjud bo'lsa ulanadi.
-    // Secrets bo'lmasa workflow assembleDebug orqali xavfsiz build qiladi.
-    val releaseKeystorePath = System.getenv("ANDROID_KEYSTORE_PATH")
-    val hasReleaseSigning = !releaseKeystorePath.isNullOrBlank() &&
-        !System.getenv("ANDROID_KEYSTORE_PASSWORD").isNullOrBlank() &&
-        !System.getenv("ANDROID_KEY_ALIAS").isNullOrBlank() &&
-        !System.getenv("ANDROID_KEY_PASSWORD").isNullOrBlank()
-
-    if (hasReleaseSigning) {
-        signingConfigs {
-            create("ciRelease") {
-                storeFile = file(releaseKeystorePath!!)
-                storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
-                keyAlias = System.getenv("ANDROID_KEY_ALIAS")
-                keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+    signingConfigs {
+        create("release") {
+            val keystore = rootProject.file("release.keystore")
+            if (keystore.exists()) {
+                storeFile = keystore
+                storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD") ?: ""
+                keyAlias = System.getenv("ANDROID_KEY_ALIAS") ?: ""
+                keyPassword = System.getenv("ANDROID_KEY_PASSWORD") ?: ""
             }
         }
     }
@@ -45,9 +37,7 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
-            if (hasReleaseSigning) {
-                signingConfig = signingConfigs.getByName("ciRelease")
-            }
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
         debug {

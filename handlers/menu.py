@@ -62,6 +62,21 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user = update.effective_user
     logger.info(f"/start bosildi: user_id={user.id if user else '?'}.")
+    # Native Android login: /start login_<token> tasdiqlansa,
+    # Telegram foydalanuvchisi mobil ilovadagi polling sessiyasiga bog'lanadi.
+    payload = ""
+    if context.args:
+        payload = str(context.args[0]).strip()
+    if payload.startswith("login_"):
+        try:
+            import mobile_auth
+            if mobile_auth.complete_login(payload[6:], user):
+                await update.message.reply_text("✅ Talaba AI ilovasiga kirish tasdiqlandi. Ilovaga qayting.")
+                logger.info("📱 Mobile login tasdiqlandi: user_id=%s", user.id)
+                return
+        except Exception as e:
+            logger.warning("📱 Mobile login payload xatosi: %s", e)
+
     context.user_data.clear()
     await update.message.reply_text(
         "🤖 *Talaba AI botiga xush kelibsiz!*\n\n"
