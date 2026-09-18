@@ -15,11 +15,15 @@ android {
         versionCode = ciVersionCode
         versionName = "1.0.$ciVersionCode"
 
-        // 🔧 Botning HTTP serveri (bot.py) qaysi manzilda ochiq bo'lsa,
-        // ilova SHU manzilga ulanadi. Render'ga deploy qilingandan keyin
-        // BASE_URL'ni haqiqiy https manzilga almashtiring (masalan
-        // "https://student-ai-uz.onrender.com/"). Oxirida "/" bo'lishi shart.
-        buildConfigField("String", "BASE_URL", "\"https://student-ai-uz.onrender.com/\"")
+        // Backend URL: GitHub Actions'da STUDENT_AI_BASE_URL orqali berilishi
+        // mumkin. Agar berilmasa, loyiha uchun belgilangan fallback ishlatiladi.
+        // Retrofit uchun URL oxirida aynan bitta "/" bo'lishi kerak.
+        val apiBaseUrl = (
+            System.getenv("STUDENT_AI_BASE_URL")
+                ?: (project.findProperty("studentAiBaseUrl") as String?)
+                ?: "https://student-ai-uz.onrender.com/"
+        ).trim().trimEnd('/') + "/"
+        buildConfigField("String", "BASE_URL", "\"$apiBaseUrl\"")
     }
 
     signingConfigs {
