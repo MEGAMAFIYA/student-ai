@@ -1257,11 +1257,7 @@ def _github_path_keyboard(repo: str, path_value: str, items: list[dict]) -> Inli
         label = f"{github_dev.item_icon(item['type'])} {item['name']}"
         if item["type"] == "file":
             label += f"  ({github_dev.format_size(item['size'])})"
-        row = [InlineKeyboardButton(label[:64], callback_data=f"dev:gh:item:{i}")]
-        if item["type"] == "dir":
-            # Papka yonida o'chirish belgisi: faqat shu papkani (ichidagilari bilan) o'chiradi.
-            row.append(InlineKeyboardButton("🗑", callback_data=f"dev:gh:rmdir:{i}"))
-        rows.append(row)
+        rows.append([InlineKeyboardButton(label[:64], callback_data=f"dev:gh:item:{i}")])
 
     rows.append([InlineKeyboardButton("➕ Yangi fayl qo'shish", callback_data="dev:gh:new")])
     rows.append([InlineKeyboardButton("📤 ZIP loyihani yuklash", callback_data="dev:gh:zip")])
@@ -1345,13 +1341,6 @@ def _github_confirm_delete_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("⚠️ Ha, o'chirish", callback_data="dev:gh:delete_yes")],
         [InlineKeyboardButton("⬅️ Bekor qilish", callback_data="dev:gh:file")],
-    ])
-
-
-def _github_confirm_rmdir_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("⚠️ Ha, papkani o'chirish", callback_data="dev:gh:rmdir_yes")],
-        [InlineKeyboardButton("⬅️ Bekor qilish", callback_data="dev:gh:backfile")],
     ])
 
 
@@ -1684,16 +1673,15 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 await _github_send_file_view(update, context)
             except Exception as exc:
-                await _github_error(context, exc)
+                await _github_error(context)
             return DEV_MENU
 
         if sub == "backfile":
-            context.user_data.pop("github_rmdir", None)
             path_value = context.user_data.get("github_path") or ""
             try:
                 await _github_open_path(context, path_value)
             except Exception as exc:
-                await _github_error(context, exc)
+                await _github_error(context)
             return DEV_MENU
 
         if sub == "up":
@@ -1702,7 +1690,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 await _github_open_path(context, parent)
             except Exception as exc:
-                await _github_error(context, exc)
+                await _github_error(context)
             return DEV_MENU
 
         if sub == "zip":
@@ -1787,59 +1775,6 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             except Exception as exc:
                 await _github_error(context, exc, "dev:gh:file")
-            return DEV_MENU
-
-        if sub == "rmdir":
-            idx = int(parts[3])
-            items = context.user_data.get("github_items") or []
-            repo = context.user_data.get("github_repo")
-            branch = context.user_data.get("github_branch") or "main"
-            if not repo or not (0 <= idx < len(items)) or items[idx]["type"] != "dir":
-                await _github_error(context, github_dev.GitHubDevError("Papka ro'yxati eskirgan. Yangilang."), "dev:gh:repos")
-                return DEV_MENU
-            folder = items[idx]
-            await _safe_edit_query(query, "🗑 Papka tekshirilmoqda...", parse_mode="HTML")
-            try:
-                count = await asyncio.to_thread(github_dev.count_folder_files, repo, folder["path"], branch)
-            except Exception as exc:
-                await _github_error(context, exc, "dev:gh:backfile")
-                return DEV_MENU
-            # Faqat shu bitta papka eslab qolinadi; o'chirish aynan shu yo'l bo'yicha bajariladi.
-            context.user_data["github_rmdir"] = {"repo": repo, "branch": branch, "path": folder["path"]}
-            await _safe_edit_query(
-                query,
-                f"🗑 <b>Papkani o'chirish</b>\n\n"
-                f"📦 <code>{_esc(repo)}</code>\n"
-                f"📁 <code>/{_esc(folder['path'])}</code>\n"
-                f"📄 Ichidagi fayllar: <b>{count}</b> ta\n\n"
-                "⚠️ Faqat shu papka va uning ichidagi fayllar o'chiriladi, "
-                "repositorydagi boshqa fayllarga tegilmaydi. "
-                "O'chirish GitHub'da bitta commit sifatida qo'llanadi.",
-                reply_markup=_github_confirm_rmdir_keyboard(),
-                parse_mode="HTML",
-            )
-            return DEV_MENU
-
-        if sub == "rmdir_yes":
-            pending = context.user_data.pop("github_rmdir", None)
-            if not pending or pending.get("repo") != context.user_data.get("github_repo"):
-                await _github_error(context, github_dev.GitHubDevError("Papka tanlanmagan. Qaytadan tanlang."), "dev:gh:backfile")
-                return DEV_MENU
-            await _safe_edit_query(query, "🗑 Papka GitHub'dan o'chirilmoqda...", parse_mode="HTML")
-            try:
-                result = await asyncio.to_thread(
-                    github_dev.delete_directory, pending["repo"], pending["path"], pending["branch"]
-                )
-                await _safe_edit_query(
-                    query,
-                    f"✅ <b>Papka o'chirildi.</b>\n\n"
-                    f"📁 <code>/{_esc(result['path'])}</code>\n"
-                    f"📄 O'chirilgan fayllar: <b>{result['file_count']}</b> ta",
-                    reply_markup=_back_keyboard("dev:gh:backfile"),
-                    parse_mode="HTML",
-                )
-            except Exception as exc:
-                await _github_error(context, exc, "dev:gh:backfile")
             return DEV_MENU
 
     # ---------- ☁️ RENDER ----------
