@@ -1,4 +1,0 @@
-{
-  "tests/test_drawing_room_url.py": true,
-  "tests/test_render_api.py": true
-}
