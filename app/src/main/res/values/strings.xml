@@ -46,4 +46,47 @@
     <string name="error_network">Tarmoq xatosi. Qaytadan urinib ko\'ring.</string>
     <string name="error_unauthorized">Sessiya tugagan. Qaytadan kiring.</string>
     <string name="retry">Qaytadan urinish</string>
+
+    <!-- 2-bosqich: oddiy AI vositalari -->
+    <string name="copy_result">Nusxa olish</string>
+    <string name="copied_toast">Nusxalandi</string>
+    <string name="insufficient_balance_title">Balans yetarli emas</string>
+    <string name="insufficient_balance_message">Kerak: %1$d so\'m, balansingizda: %2$d so\'m.</string>
+    <string name="feature_disabled_message">Bu funksiya hozircha o\'chirilgan.</string>
+
+    <string name="translate_title">Tarjima qilish</string>
+    <string name="translate_lang_hint">Qaysi tilga? (masalan: Inglizcha)</string>
+    <string name="translate_text_hint">Tarjima qilinadigan matn</string>
+    <string name="translate_submit">Tarjima qilish</string>
+
+    <string name="grammar_title">Imlo/Grammatika tekshirish</string>
+    <string name="grammar_text_hint">Tekshiriladigan matn</string>
+    <string name="grammar_submit">Tekshirish</string>
+
+    <string name="summarize_title">Konspekt qisqartirish</string>
+    <string name="summarize_text_hint">Qisqartiriladigan matn</string>
+    <string name="summarize_submit">Qisqartirish</string>
+
+    <string name="solve_title">Masala yechish</string>
+    <string name="solve_text_hint">Masala yoki misolni yozing</string>
+    <string name="solve_submit">Yechish</string>
+
+    <string name="citation_title">Iqtibos generatori</string>
+    <string name="citation_style_label">Uslub</string>
+    <string name="citation_source_type_label">Manba turi</string>
+    <string name="citation_generate">Iqtibos yaratish</string>
+    <string-array name="citation_source_types">
+        <item>📕 Kitob (darslik/monografiya)</item>
+        <item>📰 Ilmiy maqola</item>
+        <item>🌐 Veb-sayt</item>
+        <item>📜 Qonun hujjati</item>
+        <item>✍️ Boshqa/erkin</item>
+    </string-array>
+    <string-array name="citation_source_type_hints">
+        <item>Muallif(lar), kitob nomi, nashr shahri, nashriyot, yil, bet soni</item>
+        <item>Muallif(lar), maqola nomi, jurnal nomi, jild/son, yil, betlar</item>
+        <item>Muallif (agar bo\'lsa), sahifa nomi, sayt nomi, havola (URL), ko\'rilgan sana</item>
+        <item>Hujjat nomi, qabul qilingan sana, raqami, manba</item>
+        <item>Manba haqida bor bo\'lgan barcha ma\'lumotni yozing</item>
+    </string-array>
 </resources>

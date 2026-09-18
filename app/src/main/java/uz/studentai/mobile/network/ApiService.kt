@@ -72,6 +72,23 @@ data class MovieDto(val id: String, val title: String, val size: Long)
 data class KinoListResponse(val movies: List<MovieDto> = emptyList(), val error: String? = null)
 data class KinoWatchResponse(val stream_url: String? = null, val error: String? = null)
 
+// ---- 2-bosqich: oddiy matn -> AI javob (pullik) funksiyalar ----
+// Bu turdagi so'rovlar 200 (natija), 400 (kiritish xato), 401
+// (sessiya tugagan), 402 (balans yetarli emas) yoki 403 (o'chirilgan)
+// qaytarishi mumkin — Activity kodi shu kodlarni tekshiradi.
+data class SimpleAiResponse(
+    val result: String? = null,
+    val error: String? = null,
+    val message: String? = null,
+    val price: Int? = null,
+    val balance: Int? = null,
+)
+
+data class TranslateRequest(val text: String, val target_lang: String)
+data class TextOnlyRequest(val text: String)
+data class SolveRequest(val problem: String)
+data class CitationRequest(val style: String, val source_type: String, val details: String)
+
 interface ApiService {
 
     @POST("api/mobile/auth/start")
@@ -95,9 +112,18 @@ interface ApiService {
     @GET("api/mobile/kino/watch/{id}")
     suspend fun kinoWatch(@Path("id") id: String): Response<KinoWatchResponse>
 
-    @POST("api/mobile/task")
-    suspend fun task(@Body body: MobileTaskRequest): Response<MobileTaskResponse>
+    @POST("api/mobile/translate")
+    suspend fun translate(@Body body: TranslateRequest): Response<SimpleAiResponse>
 
-    @POST("api/mobile/file-task")
-    suspend fun fileTask(@Body body: MobileFileTaskRequest): Response<MobileTaskResponse>
+    @POST("api/mobile/grammar")
+    suspend fun grammar(@Body body: TextOnlyRequest): Response<SimpleAiResponse>
+
+    @POST("api/mobile/summarize")
+    suspend fun summarize(@Body body: TextOnlyRequest): Response<SimpleAiResponse>
+
+    @POST("api/mobile/solve")
+    suspend fun solve(@Body body: SolveRequest): Response<SimpleAiResponse>
+
+    @POST("api/mobile/citation")
+    suspend fun citation(@Body body: CitationRequest): Response<SimpleAiResponse>
 }

@@ -11,37 +11,19 @@ android {
         applicationId = "uz.studentai.mobile"
         minSdk = 24
         targetSdk = 34
-        val ciVersionCode = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
-        versionCode = ciVersionCode
-        versionName = "1.0.$ciVersionCode"
+        versionCode = 1
+        versionName = "1.0-phase1"
 
-        // Backend URL: GitHub Actions'da STUDENT_AI_BASE_URL orqali berilishi
-        // mumkin. Agar berilmasa, loyiha uchun belgilangan fallback ishlatiladi.
-        // Retrofit uchun URL oxirida aynan bitta "/" bo'lishi kerak.
-        val apiBaseUrl = (
-            System.getenv("STUDENT_AI_BASE_URL")
-                ?: (project.findProperty("studentAiBaseUrl") as String?)
-                ?: "https://student-ai-uz.onrender.com/"
-        ).trim().trimEnd('/') + "/"
-        buildConfigField("String", "BASE_URL", "\"$apiBaseUrl\"")
-    }
-
-    signingConfigs {
-        create("release") {
-            val keystore = rootProject.file("release.keystore")
-            if (keystore.exists()) {
-                storeFile = keystore
-                storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD") ?: ""
-                keyAlias = System.getenv("ANDROID_KEY_ALIAS") ?: ""
-                keyPassword = System.getenv("ANDROID_KEY_PASSWORD") ?: ""
-            }
-        }
+        // 🔧 Botning HTTP serveri (bot.py) qaysi manzilda ochiq bo'lsa,
+        // ilova SHU manzilga ulanadi. Render'ga deploy qilingandan keyin
+        // BASE_URL'ni haqiqiy https manzilga almashtiring (masalan
+        // "https://student-ai-uz.onrender.com/"). Oxirida "/" bo'lishi shart.
+        buildConfigField("String", "BASE_URL", "\"https://student-ai-uz.onrender.com/\"")
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("release")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
         debug {

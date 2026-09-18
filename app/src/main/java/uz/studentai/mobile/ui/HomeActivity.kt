@@ -27,12 +27,12 @@ class HomeActivity : AppCompatActivity() {
         binding.btnStudent.setOnClickListener { startActivity(Intent(this, StudentMenuActivity::class.java)) }
         binding.btnKino.setOnClickListener { startActivity(Intent(this, KinoListActivity::class.java)) }
 
-        binding.btnTabrik.setOnClickListener { openFeature("tabrik", getString(uz.studentai.mobile.R.string.home_tabrik)) }
-        binding.btnRasim.setOnClickListener { openFeature("rasim", getString(uz.studentai.mobile.R.string.home_rasim)) }
-        binding.btnVid.setOnClickListener { openFeature("vid", getString(uz.studentai.mobile.R.string.home_vid)) }
-        binding.btnQoshiq.setOnClickListener { openFeature("qoshiq", getString(uz.studentai.mobile.R.string.home_qoshiq)) }
-        binding.btnPro.setOnClickListener { openFeature("pro", getString(uz.studentai.mobile.R.string.home_pro)) }
-        binding.btnMy.setOnClickListener { openFeature("my", getString(uz.studentai.mobile.R.string.home_my)) }
+        binding.btnTabrik.setOnClickListener { openComingSoon(getString(uz.studentai.mobile.R.string.home_tabrik)) }
+        binding.btnRasim.setOnClickListener { openComingSoon(getString(uz.studentai.mobile.R.string.home_rasim)) }
+        binding.btnVid.setOnClickListener { openComingSoon(getString(uz.studentai.mobile.R.string.home_vid)) }
+        binding.btnQoshiq.setOnClickListener { openComingSoon(getString(uz.studentai.mobile.R.string.home_qoshiq)) }
+        binding.btnPro.setOnClickListener { openComingSoon(getString(uz.studentai.mobile.R.string.home_pro)) }
+        binding.btnMy.setOnClickListener { openComingSoon(getString(uz.studentai.mobile.R.string.home_my)) }
 
         binding.btnLogout.setOnClickListener {
             SessionManager(this).clear()
@@ -41,10 +41,9 @@ class HomeActivity : AppCompatActivity() {
         }
     }
 
-    private fun openFeature(feature: String, title: String) {
-        startActivity(Intent(this, FeatureActivity::class.java).apply {
-            putExtra(FeatureActivity.EXTRA_FEATURE, feature)
-            putExtra(FeatureActivity.EXTRA_TITLE, title)
-        })
+    private fun openComingSoon(title: String) {
+        val intent = Intent(this, ComingSoonActivity::class.java)
+        intent.putExtra(ComingSoonActivity.EXTRA_TITLE, title)
+        startActivity(intent)
     }
 }

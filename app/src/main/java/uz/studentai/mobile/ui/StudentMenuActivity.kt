@@ -19,13 +19,23 @@ class StudentMenuActivity : AppCompatActivity() {
             when (item.key) {
                 "universal" -> startActivity(Intent(this, ChatActivity::class.java))
                 "quiz" -> startActivity(Intent(this, QuizSetupActivity::class.java))
+                "translate" -> openSimpleTool(SimpleToolKind.TRANSLATE)
+                "grammar" -> openSimpleTool(SimpleToolKind.GRAMMAR)
+                "summarize" -> openSimpleTool(SimpleToolKind.SUMMARIZE)
+                "solve" -> openSimpleTool(SimpleToolKind.SOLVE)
+                "citation" -> startActivity(Intent(this, CitationActivity::class.java))
                 else -> {
-                    startActivity(Intent(this, FeatureActivity::class.java).apply {
-                        putExtra(FeatureActivity.EXTRA_FEATURE, item.key)
-                        putExtra(FeatureActivity.EXTRA_TITLE, item.label)
-                    })
+                    val i = Intent(this, ComingSoonActivity::class.java)
+                    i.putExtra(ComingSoonActivity.EXTRA_TITLE, item.label)
+                    startActivity(i)
                 }
             }
         }
+    }
+
+    private fun openSimpleTool(kind: SimpleToolKind) {
+        val intent = Intent(this, SimpleAiToolActivity::class.java)
+        intent.putExtra(SimpleAiToolActivity.EXTRA_KIND, kind.name)
+        startActivity(intent)
     }
 }
