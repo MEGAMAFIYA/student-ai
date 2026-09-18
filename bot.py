@@ -894,16 +894,6 @@ class HealthHandler(BaseHTTPRequestHandler):
                 self.send_response(404)
                 self.end_headers()
             return
-
-        if self.path.startswith("/api/kino/stream/"):
-            stream_key = self.path.split("/api/kino/stream/", 1)[1].split("?", 1)[0]
-            parts = stream_key.split("/")
-            if len(parts) == 2:
-                movie_watch.serve_movie_head(self, parts[0], parts[1])
-            else:
-                self.send_response(404)
-                self.end_headers()
-            return
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.end_headers()

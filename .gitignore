@@ -12,3 +12,15 @@ local.properties
 /app/release
 *.apk
 !/.github/workflows/*.yml
+
+# --- Python / bot runtime (qo'shildi) ---
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# --- Foydalanuvchi ma'lumotlari / runtime data (HECH QACHON commit qilinmasin) ---
+mening_kabinetim/
+*.session
