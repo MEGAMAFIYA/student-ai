@@ -354,6 +354,8 @@ async def on_inline_query(
         for gkey,title,desc,emoji in [
             ("chess","♟ Shaxmat","2 kishi • oq/qora • klassik yurish qoidalari","♟"),
             ("checkers","⚪ Rus shashkasi","2 kishi • majburiy urish • damka","⚪"),
+            ("memory","🧠 Xotira o'yini","2 kishi • juftlik topish • katak/belgi tanlanadi","🧠"),
+            ("tictactoe","❌⭕ X-O o'yini","2 kishi • 3x3 • qator/ustun/diagonal","❌"),
         ]:
             rid=game.create_room(gkey,user.id)
             if not rid:

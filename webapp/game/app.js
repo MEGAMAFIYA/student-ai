@@ -9,7 +9,7 @@
   if (!room && startParam.startsWith("game_")) room = startParam.slice(5);
   const initData = tg?.initData || "";
 
-  let state = null, selected = null, mySide = null, myStyle = "classic";
+  let state = null, selected = null, mySide = null, myStyle = "classic", myMark = null;
   let lastVersion = -1, lastChat = "", busy = false;
   let peer = null, peerTarget = 0, makingOffer = false, pendingIce = [], ignoreOffer = false;
   let localStream = new MediaStream();
@@ -41,7 +41,7 @@
     if (!room) return status("Xona topilmadi");
     try {
       state = await api("/api/game/join", null, {room});
-      $("gameTitle").textContent = state.game === "chess" ? "♟ Shaxmat" : "⚪ Rus shashkasi";
+      $("gameTitle").textContent = state.game === "chess" ? "♟ Shaxmat" : state.game === "checkers" ? "⚪ Rus shashkasi" : state.game === "memory" ? "🧠 Xotira o‘yini" : "❌⭕ X-O o‘yini";
       renderLobby(); render();
       await pollChat();
       setInterval(poll, 650);
@@ -51,8 +51,56 @@
     } catch (e) { status("❌ " + e.message); }
   }
 
+  const memSizeLabels = {"4x4":"4×4 (8 juft)","4x6":"4×6 (12 juft)","6x6":"6×6 (18 juft)"};
+  let myMemSize = null, myMemSymbols = null, memButtonsBuilt = false;
+
+  function buildMemoryButtons() {
+    if (memButtonsBuilt || !state) return;
+    const sizes = state.memory_sizes || Object.keys(memSizeLabels);
+    $("memSizeRow").innerHTML = sizes.map(s => `<button class="choice memsize" data-size="${s}">📐 <b>${escapeHtml(memSizeLabels[s] || s)}</b></button>`).join("");
+    const symbolSets = state.memory_symbol_sets || {};
+    $("memSymbolsRow").innerHTML = Object.entries(symbolSets).map(([key, label]) => `<button class="choice memsym" data-symbols="${key}">${escapeHtml(label)}</button>`).join("");
+    document.querySelectorAll(".memsize").forEach(b => b.onclick = () => { myMemSize = b.dataset.size; renderLobby(); });
+    document.querySelectorAll(".memsym").forEach(b => b.onclick = () => { myMemSymbols = b.dataset.symbols; renderLobby(); });
+    memButtonsBuilt = true;
+  }
+
   function renderLobby() {
-    const ps = state?.players || [];
+    if (!state) return;
+    const ps = state.players || [];
+    if (state.game === "memory") {
+      $("lobbyChess").classList.add("hidden");
+      $("lobbyTTT").classList.add("hidden");
+      $("lobbyMemory").classList.remove("hidden");
+      buildMemoryButtons();
+      if (myMemSize == null) myMemSize = state.memory_size;
+      if (myMemSymbols == null) myMemSymbols = state.memory_symbols;
+      $("lobbyText").textContent = ps.length < 2 ? "Do‘stingiz ham shu xona orqali kirishini kuting." : "Ikkalangiz katak o‘lchami va belgilarni tanlab, tayyor bo‘ling.";
+      $("players").innerHTML = ps.map(p => `<span>● ${escapeHtml(p.name || (p.id === state.me ? "Siz" : "Do‘st"))} ${state.memory_ready?.[String(p.id)] ? "✅ Tayyor" : "⏳"}</span>`).join("");
+      document.querySelectorAll(".memsize").forEach(b => b.classList.toggle("selected", b.dataset.size === myMemSize));
+      document.querySelectorAll(".memsym").forEach(b => b.classList.toggle("selected", b.dataset.symbols === myMemSymbols));
+      const iAmReady = !!state.memory_ready?.[String(state.me)];
+      $("memReadyBtn").disabled = iAmReady;
+      $("memReadyBtn").textContent = iAmReady ? "⏳ Do‘stingiz kutilmoqda…" : "✓ Tayyor";
+      const readyCount = Object.keys(state.memory_ready || {}).length;
+      $("memReadyStatus").textContent = ps.length < 2 ? "" : `Tayyor: ${readyCount}/2`;
+      return;
+    }
+    if (state.game === "tictactoe") {
+      $("lobbyChess").classList.add("hidden");
+      $("lobbyMemory").classList.add("hidden");
+      $("lobbyTTT").classList.remove("hidden");
+      const me = ps.find(p => p.id === state.me);
+      if (myMark == null) myMark = me?.mark || null;
+      $("lobbyText").textContent = ps.length < 2 ? "Do‘stingiz ham shu xona orqali kirishini kuting." : "Ikkalangiz belgi (X yoki O) tanlang.";
+      $("players").innerHTML = ps.map(p => `<span>● ${escapeHtml(p.name || (p.id === state.me ? "Siz" : "Do‘st"))} ${p.mark ? (p.mark === "x" ? "❌ X" : "⭕ O") : "— tanlamagan"}</span>`).join("");
+      document.querySelectorAll(".mark").forEach(b => b.classList.toggle("selected", b.dataset.mark === myMark));
+      $("markReadyBtn").disabled = !myMark;
+      return;
+    }
+    $("lobbyMemory").classList.add("hidden");
+    $("lobbyTTT").classList.add("hidden");
+    $("lobbyChess").classList.remove("hidden");
     $("lobbyText").textContent = ps.length < 2 ? "Do‘stingiz ham shu xona orqali kirishini kuting." : "Ikkalangiz rang va ko‘rinishni tanlang.";
     $("players").innerHTML = ps.map(p => `<span>● ${escapeHtml(p.name || (p.id === state.me ? "Siz" : "Do‘st"))} ${p.side === "w" ? "⚪ Oq" : p.side === "b" ? "⚫ Qora" : "— tanlamagan"}</span>`).join("");
     document.querySelectorAll(".side").forEach(b => b.classList.toggle("selected", b.dataset.side === mySide));
@@ -61,23 +109,54 @@
   }
   document.querySelectorAll(".side").forEach(b => b.onclick = () => { mySide = b.dataset.side; renderLobby(); });
   document.querySelectorAll(".style").forEach(b => b.onclick = () => { myStyle = b.dataset.style; renderLobby(); });
+  document.querySelectorAll(".mark").forEach(b => b.onclick = () => { myMark = b.dataset.mark; renderLobby(); });
   $("readyBtn").onclick = async () => {
     try { state = await api("/api/game/choose", null, {room, side:mySide, style:myStyle}); renderLobby(); render(); }
     catch (e) { tg?.showAlert?.(e.message); }
+  };
+  $("markReadyBtn").onclick = async () => {
+    try { state = await api("/api/game/tictactoe/mark", {room, mark: myMark}); renderLobby(); render(); }
+    catch (e) { tg?.showAlert?.(e.message); }
+  };
+  $("memReadyBtn").onclick = async () => {
+    try {
+      state = await api("/api/game/memory/config", {room, size: myMemSize, symbols: myMemSymbols});
+      state = await api("/api/game/memory/ready", {room});
+      renderLobby(); render();
+    } catch (e) { tg?.showAlert?.(e.message); }
   };
 
   function playerById(id) { return state?.players?.find(p => Number(p.id) === Number(id)); }
   function render() {
     if (!state) return;
-    if (state.status === "lobby") { $("lobby").classList.remove("hidden"); $("game").classList.add("hidden"); return; }
+    if (state.status === "lobby") { renderLobby(); $("lobby").classList.remove("hidden"); $("game").classList.add("hidden"); return; }
     $("lobby").classList.add("hidden"); $("game").classList.remove("hidden");
     const me = playerById(state.me), op = state.players.find(p => Number(p.id) !== Number(state.me));
-    mySide = me?.side || mySide; myStyle = me?.style || myStyle;
-    fillPlayer($("playerMe"), me, true); fillPlayer($("playerOpp"), op, false);
-    status(state.status === "finished" ? "🏁 Tugadi" : state.turn === mySide ? "🟢 Sizning yurishingiz" : "🕐 Do‘stingiz yurmoqda");
-    drawBoard();
+    if (state.game === "memory") {
+      fillPlayer($("playerMe"), me, true); fillPlayer($("playerOpp"), op, false);
+      const myTurn = String(state.turn) === String(state.me);
+      status(state.status === "finished" ? "🏁 Tugadi" : myTurn ? "🟢 Sizning navbatingiz" : "🕐 Do‘stingiz navbati");
+      drawMemoryBoard();
+      renderMemScoreboard();
+    } else if (state.game === "tictactoe") {
+      myMark = me?.mark || myMark;
+      fillPlayer($("playerMe"), me, true); fillPlayer($("playerOpp"), op, false);
+      const myTurn = state.turn === myMark;
+      status(state.status === "finished" ? "🏁 Tugadi" : myTurn ? "🟢 Sizning navbatingiz" : "🕐 Do‘stingiz navbati");
+      drawTTTBoard();
+      $("memScoreboard").classList.add("hidden");
+    } else {
+      mySide = me?.side || mySide; myStyle = me?.style || myStyle;
+      fillPlayer($("playerMe"), me, true); fillPlayer($("playerOpp"), op, false);
+      status(state.status === "finished" ? "🏁 Tugadi" : state.turn === mySide ? "🟢 Sizning yurishingiz" : "🕐 Do‘stingiz yurmoqda");
+      drawBoard();
+      $("memScoreboard").classList.add("hidden");
+    }
     if (state.status === "finished") {
-      const text = state.winner ? `🏆 ${state.winner === mySide ? "Siz yutdingiz!" : "Do‘stingiz yutdi!"}` : "🤝 Durang";
+      const iWon = (state.game === "memory" || state.game === "tictactoe")
+        ? String(state.winner) === String(state.me)
+        : state.winner === mySide;
+      const text = state.winner ? `🏆 ${iWon ? "Siz yutdingiz!" : "Do‘stingiz yutdi!"}` : "🤝 Durang";
       $("result").textContent = text + "  " + (state.reason || "");
       $("result").classList.remove("hidden");
       if (state.winner) winFx();
@@ -86,18 +165,94 @@
   function fillPlayer(card, p, mine) {
     const name = p?.name || (mine ? "Siz" : "Do‘stingiz");
     card.querySelector(".player-name").textContent = name;
-    card.querySelector(".side-label").textContent = p?.side === "w" ? "⚪ Oq" : p?.side === "b" ? "⚫ Qora" : "";
+    const label = card.querySelector(".side-label");
+    if (state.game === "memory") {
+      const sc = (state.scores && p) ? (state.scores[String(p.id)] || 0) : 0;
+      label.textContent = `🎯 ${sc} juft`;
+    } else if (state.game === "tictactoe") {
+      label.textContent = p?.mark === "x" ? "❌ X" : p?.mark === "o" ? "⭕ O" : "";
+    } else {
+      label.textContent = p?.side === "w" ? "⚪ Oq" : p?.side === "b" ? "⚫ Qora" : "";
+    }
     card.querySelector(".avatar").textContent = mine ? "🙂" : "👤";
+  }
+
+  function drawTTTBoard() {
+    board.className = "board ttt";
+    board.style.gridTemplateColumns = "repeat(3, 1fr)";
+    board.innerHTML = "";
+    const canPlay = state.status === "playing" && state.turn === myMark;
+    (state.board || []).forEach((v, idx) => {
+      const btn = document.createElement("button");
+      btn.className = "card ttt-cell " + (v ? "card-revealed" : "card-hidden");
+      if (state.win_line && state.win_line.includes(idx)) btn.classList.add("card-matched");
+      const face = document.createElement("span");
+      face.className = "card-face";
+      face.textContent = v === "x" ? "❌" : v === "o" ? "⭕" : "";
+      btn.appendChild(face);
+      if (!v && canPlay) btn.onclick = () => tttMove(idx); else btn.disabled = true;
+      board.appendChild(btn);
+    });
+  }
+  async function tttMove(idx) {
+    if (busy) return; busy = true;
+    try { state = await api("/api/game/tictactoe/move", {room, index: idx}); render(); tone(420, .07); }
+    catch (e) { tg?.showAlert?.(e.message); }
+    finally { busy = false; }
+  }
+
+  function renderMemScoreboard() {
+    const box = $("memScoreboard");
+    box.classList.remove("hidden");
+    const me = playerById(state.me), op = state.players.find(p => Number(p.id) !== Number(state.me));
+    const myScore = (state.scores && me) ? (state.scores[String(me.id)] || 0) : 0;
+    const opScore = (state.scores && op) ? (state.scores[String(op.id)] || 0) : 0;
+    box.innerHTML = `<span>🙂 Siz: <b>${myScore}</b></span><span>👤 ${escapeHtml(op?.name || "Do‘st")}: <b>${opScore}</b></span>`;
+  }
+
+  let lastRevealTs = 0, memBusy = false;
+  function drawMemoryBoard() {
+    const rows = state.rows || 4, cols = state.cols || 4;
+    board.className = "board memory";
+    board.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+    const fresh = state.last_reveal && state.last_reveal.ts !== lastRevealTs ? state.last_reveal : null;
+    board.innerHTML = "";
+    (state.board || []).forEach((cell, idx) => {
+      const btn = document.createElement("button");
+      const canFlip = cell.state === "hidden" && state.status === "playing" && String(state.turn) === String(state.me);
+      btn.className = "card " + (cell.state === "hidden" ? "card-hidden" : cell.state === "matched" ? "card-matched" : "card-revealed");
+      if (fresh && fresh.indices.includes(idx)) btn.classList.add(fresh.matched ? "pop-match" : "pop-miss");
+      const face = document.createElement("span");
+      face.className = "card-face";
+      face.textContent = cell.state === "hidden" ? "❔" : cell.symbol;
+      btn.appendChild(face);
+      if (canFlip) btn.onclick = () => flipCard(idx); else btn.disabled = true;
+      board.appendChild(btn);
+    });
+    if (state.last_reveal) lastRevealTs = state.last_reveal.ts;
+  }
+  async function flipCard(idx) {
+    if (memBusy) return; memBusy = true;
+    try {
+      state = await api("/api/game/memory/flip", {room, index: idx});
+      render();
+      if (state.last_reveal) tone(state.last_reveal.matched ? 560 : 160, .08);
+    } catch (e) { tg?.showAlert?.(e.message); }
+    finally { memBusy = false; }
   }
 
   function orient(r,c) { return mySide === "b" ? [7-r,7-c] : [r,c]; }
   function drawBoard() {
+    board.className = "board"; board.style.gridTemplateColumns = "";
     board.innerHTML = ""; const b = state.board;
     for (let vr=0;vr<8;vr++) for (let vc=0;vc<8;vc++) {
       const [r,c] = orient(vr,vc), sq = document.createElement("button");
       sq.className = "sq " + (((r+c)%2) ? "dark" : "light"); sq.dataset.r=r; sq.dataset.c=c;
       if (selected && selected[0]===r && selected[1]===c) sq.classList.add("selected");
-      if (selected && isLegalTarget(r,c)) sq.classList.add(b[r][c] ? "capture" : "legal");
+      if (selected && isLegalTarget(r,c)) {
+        const isEpCapture = state.game === "chess" && state.ep && state.ep[0]===r && state.ep[1]===c;
+        sq.classList.add((b[r][c] || isEpCapture) ? "capture" : "legal");
+      }
       const p = b[r][c];
       if (p) {
         const d=document.createElement("span");
@@ -108,33 +263,37 @@
       sq.onclick=()=>clickSquare(r,c); board.appendChild(sq);
     }
   }
-  function isLegalTarget(r,c) { if(!selected)return false; return state.game==="chess" ? chessTargets(selected[0],selected[1]).some(x=>x[0]===r&&x[1]===c) : checkerTargets(selected[0],selected[1]).some(x=>x[0]===r&&x[1]===c); }
-  function chessTargets(r,c) {
-    const p=state.board[r][c]; if(!p || p.toLowerCase()!==mySide)return [];
-    const own=p===p.toUpperCase(), out=[]; const add=(rr,cc)=>{if(rr<0||rr>7||cc<0||cc>7)return false;if(!state.board[rr][cc]){out.push([rr,cc]);return true}if((state.board[rr][cc]===state.board[rr][cc].toUpperCase())!==own)out.push([rr,cc]);return false};
-    if(p.toLowerCase()==="p"){const d=own?-1:1;if(!state.board[r+d]?.[c]){out.push([r+d,c]);const st=own?6:1;if(r===st&&!state.board[r+2*d][c])out.push([r+2*d,c])}for(const dc of[-1,1]){const rr=r+d,cc=c+dc;if(rr>=0&&rr<8&&cc>=0&&cc<8&&state.board[rr][cc]&&(state.board[rr][cc]===state.board[rr][cc].toUpperCase())!==own)out.push([rr,cc])}}
-    if(p.toLowerCase()==="n")for(const[dr,dc]of[[2,1],[2,-1],[-2,1],[-2,-1],[1,2],[1,-2],[-1,2],[-1,-2]])add(r+dr,c+dc);
-    if("brq".includes(p.toLowerCase())){let ds=[];if("bq".includes(p.toLowerCase()))ds.push(...[[-1,-1],[-1,1],[1,-1],[1,1]]);if("rq".includes(p.toLowerCase()))ds.push(...[[-1,0],[1,0],[0,-1],[0,1]]);for(const[dr,dc]of ds){let rr=r+dr,cc=c+dc;while(add(rr,cc)){rr+=dr;cc+=dc}}}
-    if(p.toLowerCase()==="k")for(const[dr,dc]of[[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]])add(r+dr,c+dc);
-    return out;
+  function targetsFor(r, c) {
+    if (!state?.legal_moves) return [];
+    return state.legal_moves.filter(m => m[0] === r && m[1] === c).map(m => [m[2], m[3]]);
   }
-  function checkerTargets(r,c) {
-    const p=state.board[r][c];if(!p||p.toLowerCase()!==mySide)return[];const dirs=[[-1,-1],[-1,1],[1,-1],[1,1]],caps=[];
-    if(p===p.toUpperCase()){for(const[dr,dc]of dirs){let rr=r+dr,cc=c+dc,seen=false,cap=null;while(rr>=0&&rr<8&&cc>=0&&cc<8){const q=state.board[rr][cc];if(!q){if(seen)caps.push([rr,cc])}else{if(q.toLowerCase()===mySide||seen)break;seen=true;cap=[rr,cc]}rr+=dr;cc+=dc}}}
-    else for(const[dr,dc]of dirs){const mr=r+dr,mc=c+dc,lr=r+2*dr,lc=c+2*dc;if(lr>=0&&lr<8&&lc>=0&&lc<8&&state.board[mr]?.[mc]&&state.board[mr][mc].toLowerCase()!==mySide&&state.board[lr][lc]===null)caps.push([lr,lc]);}
-    if(caps.length)return caps;
-    if(p===p.toUpperCase()){const out=[];for(const[dr,dc]of dirs){let rr=r+dr,cc=c+dc;while(rr>=0&&rr<8&&cc>=0&&cc<8&&!state.board[rr][cc]){out.push([rr,cc]);rr+=dr;cc+=dc}}return out}
-    const d=mySide==="w"?-1:1;return[-1,1].map(dc=>[r+d,c+dc]).filter(x=>x[0]>=0&&x[0]<8&&x[1]>=0&&x[1]<8&&!state.board[x[0]][x[1]]);
-  }
+  function isLegalTarget(r,c) { if(!selected)return false; return targetsFor(selected[0],selected[1]).some(x=>x[0]===r&&x[1]===c); }
   function clickSquare(r,c){
     if(state.status!=="playing"||state.turn!==mySide)return;
     const p=state.board[r][c];
-    if(selected&&isLegalTarget(r,c)){sendMove(selected,[r,c]);selected=null;drawBoard();return;}
+    if(selected&&isLegalTarget(r,c)){
+      const moved=state.board[selected[0]][selected[1]];
+      const isPromotion = state.game==="chess" && moved && moved.toLowerCase()==="p" && (r===0||r===7);
+      const fr=selected; selected=null; drawBoard();
+      if (isPromotion) { askPromotion(fr,[r,c]); } else { sendMove(fr,[r,c]); }
+      return;
+    }
     if(p&&p.toLowerCase()===mySide){selected=[r,c];drawBoard();}else{selected=null;drawBoard();}
   }
-  async function sendMove(fr,to){
+  function askPromotion(fr, to) {
+    $("promoPicker").classList.remove("hidden");
+    const handler = (ev) => {
+      const btn = ev.target.closest(".promo-choice");
+      if (!btn) return;
+      $("promoPicker").classList.add("hidden");
+      $("promoPicker").removeEventListener("click", handler);
+      sendMove(fr, to, btn.dataset.p);
+    };
+    $("promoPicker").addEventListener("click", handler);
+  }
+  async function sendMove(fr,to,promotion="q"){
     if(busy)return;busy=true;
-    try{const old=state;state=await api("/api/game/move",{room,from:fr,to,promotion:"q"});render();fx(state.last_move?.captured?"capture":"move",to);tone(state.last_move?.captured?180:420,.07);}
+    try{const old=state;state=await api("/api/game/move",{room,from:fr,to,promotion});render();fx(state.last_move?.captured?"capture":"move",to);tone(state.last_move?.captured?180:420,.07);}
     catch(e){tg?.showAlert?.(e.message);}finally{busy=false;}
   }
   async function poll(){

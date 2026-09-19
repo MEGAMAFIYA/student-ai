@@ -1257,7 +1257,16 @@ def _github_path_keyboard(repo: str, path_value: str, items: list[dict]) -> Inli
         label = f"{github_dev.item_icon(item['type'])} {item['name']}"
         if item["type"] == "file":
             label += f"  ({github_dev.format_size(item['size'])})"
-        rows.append([InlineKeyboardButton(label[:64], callback_data=f"dev:gh:item:{i}")])
+            rows.append([InlineKeyboardButton(label[:64], callback_data=f"dev:gh:item:{i}")])
+        elif item["type"] == "dir":
+            # Papka nomi bosilsa — ichiga kiradi; yonidagi 🗑 tugma bosilsa —
+            # faqat SHU papka (va uning ichidagi hammasi) o'chirish tasdig'i so'raladi.
+            rows.append([
+                InlineKeyboardButton(label[:56], callback_data=f"dev:gh:item:{i}"),
+                InlineKeyboardButton("🗑", callback_data=f"dev:gh:deldir:{i}"),
+            ])
+        else:
+            rows.append([InlineKeyboardButton(label[:64], callback_data=f"dev:gh:item:{i}")])
 
     rows.append([InlineKeyboardButton("➕ Yangi fayl qo'shish", callback_data="dev:gh:new")])
     rows.append([InlineKeyboardButton("📤 ZIP loyihani yuklash", callback_data="dev:gh:zip")])
@@ -1341,6 +1350,13 @@ def _github_confirm_delete_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("⚠️ Ha, o'chirish", callback_data="dev:gh:delete_yes")],
         [InlineKeyboardButton("⬅️ Bekor qilish", callback_data="dev:gh:file")],
+    ])
+
+
+def _github_confirm_deldir_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⚠️ Ha, papkani o'chirish", callback_data="dev:gh:deldir_yes")],
+        [InlineKeyboardButton("⬅️ Bekor qilish", callback_data="dev:gh:backfile")],
     ])
 
 
@@ -1775,6 +1791,53 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             except Exception as exc:
                 await _github_error(context, exc, "dev:gh:file")
+            return DEV_MENU
+
+        if sub == "deldir":
+            idx = int(parts[3])
+            items = context.user_data.get("github_items") or []
+            if not (0 <= idx < len(items)) or items[idx]["type"] != "dir":
+                await _github_error(context, github_dev.GitHubDevError("Papka ro'yxati eskirgan. Yangilang."), "dev:gh:backfile")
+                return DEV_MENU
+            item = items[idx]
+            context.user_data["github_del_dir_path"] = item["path"]
+            context.user_data["github_del_dir_name"] = item["name"]
+            await _safe_edit_query(
+                query,
+                f"🗑 <b>Papkani o'chirish</b>\n\n📁 <code>{_esc(item['path'])}</code>\n\n"
+                "⚠️ Bu papka ichidagi <b>barcha fayllar va ichki papkalar</b> "
+                "GitHub'dan o'chiriladi. Repository'dagi boshqa hech narsaga tegilmaydi. "
+                "Bu amal darhol commit qilinadi. Davom etasizmi?",
+                reply_markup=_github_confirm_deldir_keyboard(),
+            )
+            return DEV_MENU
+
+        if sub == "deldir_yes":
+            repo = context.user_data.get("github_repo")
+            branch = context.user_data.get("github_branch") or "main"
+            dir_path = context.user_data.get("github_del_dir_path")
+            if not repo or not dir_path:
+                await _github_error(context, github_dev.GitHubDevError("Papka tanlanmagan."), "dev:github")
+                return DEV_MENU
+            await _safe_edit_query(query, "🗑 Papka GitHub'dan o'chirilmoqda...", parse_mode="HTML")
+            try:
+                result = await asyncio.to_thread(github_dev.delete_directory, repo, dir_path, branch)
+                parent = dir_path.rsplit("/", 1)[0] if "/" in dir_path else ""
+                context.user_data.pop("github_del_dir_path", None)
+                context.user_data.pop("github_del_dir_name", None)
+                items = await asyncio.to_thread(github_dev.list_directory, repo, parent, branch)
+                context.user_data["github_path"] = parent
+                context.user_data["github_items"] = items
+                await _safe_edit_query(
+                    query,
+                    f"✅ <b>Papka o'chirildi:</b> <code>{_esc(dir_path)}</code>\n"
+                    f"🗑 {result['deleted_files']} ta fayl o'chirildi. Boshqa hech narsaga tegilmadi.\n\n"
+                    + _github_path_text(repo, parent, items),
+                    reply_markup=_github_path_keyboard(repo, parent, items),
+                    parse_mode="HTML",
+                )
+            except Exception as exc:
+                await _github_error(context, exc, "dev:gh:backfile")
             return DEV_MENU
 
     # ---------- ☁️ RENDER ----------

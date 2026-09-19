@@ -1,10 +1,11 @@
 """
 🎮 Student AI — 1v1 Games backend.
-Authoritative server-side rules for Chess and Russian Draughts.
-All moves are validated on the server; clients are only a UI.
-Rooms are persisted through the project's existing persistence layer.
+Authoritative server-side rules for Chess, Russian Draughts and the Memory
+(juftlik topish) game. All moves are validated on the server; clients are
+only a UI. Rooms are persisted through the project's existing persistence
+layer.
 """
-import copy, json, logging, os, re, threading, time, uuid
+import copy, json, logging, os, random, re, threading, time, uuid
 import config
 import webapp_security
 
@@ -18,6 +19,34 @@ MAX_CHAT = 200
 MAX_CHAT_CLIENT_KEYS = 500
 MAX_SIGNAL_ITEMS = 60
 LOCK = threading.RLock()
+
+# ---------------- 🧠 Xotira o'yini (Memory / juftlik topish) sozlamalari ----------------
+# Katak o'lchami -> (qatorlar, ustunlar). Har biri juft sonli katak beradi.
+MEMORY_SIZES = {
+    "4x4": (4, 4),   # 16 katak — 8 juft — tez o'yin
+    "4x6": (4, 6),   # 24 katak — 12 juft — o'rtacha
+    "6x6": (6, 6),   # 36 katak — 18 juft — uzun o'yin
+}
+MEMORY_DEFAULT_SIZE = "4x4"
+
+# Har bir kategoriya kamida 18 ta belgi beradi (6x6 = 18 juft uchun yetarli).
+MEMORY_SYMBOL_SETS = {
+    "fruits": ["🍒","🍓","🍇","🍉","🍋","🍍","🍑","🍎","🍌","🥝","🍈","🍐","🥭","🍏","🫐","🥥","🍅","🥑"],
+    "numbers": ["1️⃣","2️⃣","3️⃣","4️⃣","5️⃣","6️⃣","7️⃣","8️⃣","9️⃣","🔟","➕","➖","✖️","➗","🔢","💯","🔣","🆗"],
+    "faces": ["🙃","😀","😂","😍","😎","🥳","🤩","😜","🤔","😴","🥶","🤯","😇","🤠","🥸","😱","🤗","😏"],
+    "animals": ["🐇","🐶","🐱","🐼","🦊","🐸","🐵","🦁","🐯","🐨","🐷","🐮","🐔","🐙","🦄","🐢","🐝","🦉"],
+    "space": ["🚀","🪐","🌟","☄️","🌙","🛸","👽","🌌","⭐","🌎","🔭","🛰️","☀️","🌠","🌑","🧑‍🚀","🌕","💫"],
+    "sports": ["⚽","🏀","🏈","⚾","🎾","🏐","🏉","🎱","🏓","🏸","🥊","🥋","🎯","🏹","⛳","🛹","🏒","🥅"],
+}
+MEMORY_DEFAULT_SYMBOLS = "fruits"
+MEMORY_SYMBOL_LABELS = {
+    "fruits": "🍒 Mevalar",
+    "numbers": "🔢 Raqamlar",
+    "faces": "🙃 Emoji kallalar",
+    "animals": "🐇 Hayvonlar",
+    "space": "🚀 Kosmos",
+    "sports": "⚽ Sport",
+}
 
 raw, _ = config.persist_read(GAME_FILE, GAME_KEY)
 try:
@@ -55,17 +84,32 @@ def _initial_checkers():
     return b
 
 def create_room(game, creator_id):
-    if game not in ("chess","checkers"): return None
+    if game not in ("chess", "checkers", "memory", "tictactoe"): return None
     _purge()
     rid=uuid.uuid4().hex[:24]
     room={
         "id":rid,"game":game,"created_at":time.time(),"updated_at":time.time(),
-        "players":{}, "board": _initial_chess() if game=="chess" else _initial_checkers(),
-        "turn":"w","status":"lobby","winner":None,"reason":None,"version":0,
-        "castling":"KQkq","ep":None,"halfmove":0,"fullmove":1,
-        "selected":{}, "forced_piece":None, "last_move":None,"history":[],
-        "rematch_votes":{}, "signals":{}, "chat":[], "chat_keys":{}
+        "players":{}, "version":0,
+        "selected":{}, "rematch_votes":{}, "signals":{}, "chat":[], "chat_keys":{},
     }
+    if game=="memory":
+        room.update({
+            "board": [], "status":"lobby","winner":None,"reason":None,"turn":None,
+            "memory_size": MEMORY_DEFAULT_SIZE, "memory_symbols": MEMORY_DEFAULT_SYMBOLS,
+            "memory_ready": {}, "scores": {}, "last_reveal": None, "order": [],
+        })
+    elif game=="tictactoe":
+        room.update({
+            "board": [None]*9, "status":"lobby","winner":None,"reason":None,"turn":None,
+            "win_line": None, "last_move": None,
+        })
+    else:
+        room.update({
+            "board": _initial_chess() if game=="chess" else _initial_checkers(),
+            "turn":"w","status":"lobby","winner":None,"reason":None,
+            "castling":"KQkq","ep":None,"halfmove":0,"fullmove":1,
+            "forced_piece":None, "last_move":None,"history":[],
+        })
     room["players"][str(int(creator_id))]={"side":None,"style":"classic","joined_at":time.time(),"name":str(creator_id)}
     with LOCK:
         ROOMS[rid]=room
@@ -89,14 +133,36 @@ def _room(rid):
 def _public(room, uid):
     players=[]
     for k,p in room["players"].items():
-        players.append({"id":int(k),"side":p.get("side"),"style":p.get("style","classic"),"name":p.get("name") or str(k)})
-    return {
+        players.append({"id":int(k),"side":p.get("side"),"style":p.get("style","classic"),"mark":p.get("mark"),"name":p.get("name") or str(k)})
+    base = {
         "id":room["id"],"game":room["game"],"status":room["status"],"winner":room["winner"],
         "reason":room["reason"],"turn":room["turn"],"board":room["board"],
         "players":players,"me":int(uid),"version":room["version"],
-        "last_move":room["last_move"],"forced_piece":room.get("forced_piece"),"castling":room["castling"],"ep":room["ep"],
-        "halfmove":room["halfmove"],"fullmove":room["fullmove"],
     }
+    if room["game"]=="memory":
+        base.update({
+            "memory_size": room.get("memory_size", MEMORY_DEFAULT_SIZE),
+            "memory_symbols": room.get("memory_symbols", MEMORY_DEFAULT_SYMBOLS),
+            "memory_ready": room.get("memory_ready", {}),
+            "memory_sizes": list(MEMORY_SIZES),
+            "memory_symbol_sets": MEMORY_SYMBOL_LABELS,
+            "rows": room.get("rows"), "cols": room.get("cols"),
+            "scores": room.get("scores", {}),
+            "last_reveal": room.get("last_reveal"),
+        })
+    elif room["game"]=="tictactoe":
+        base.update({
+            "win_line": room.get("win_line"),
+            "last_move": room.get("last_move"),
+        })
+    else:
+        base.update({
+            "last_move":room["last_move"],"forced_piece":room.get("forced_piece"),
+            "castling":room["castling"],"ep":room["ep"],
+            "halfmove":room["halfmove"],"fullmove":room["fullmove"],
+            "legal_moves":_client_legal_moves(room),
+        })
+    return base
 
 def join(rid, init_data):
     user=_verify(init_data)
@@ -123,6 +189,7 @@ def choose(rid, init_data, side, style):
     with LOCK:
         room=_room(rid)
         if not room:return None,"Xona topilmadi."
+        if room["game"] not in ("chess","checkers"):return None,"Bu o'yin turi uchun mos emas."
         if uid not in room["players"]:return None,"Avval xonaga kiring."
         taken={p.get("side") for k,p in room["players"].items() if k!=uid}
         if side in taken:return None,"Bu rangni do'stingiz tanlagan. Boshqa rangni tanlang."
@@ -132,6 +199,200 @@ def choose(rid, init_data, side, style):
         if len(room["players"])==2 and all(s in ("w","b") for s in sides) and len(set(sides))==2:
             room["status"]="playing"
             room["turn"]="w"
+        room["updated_at"]=time.time(); room["version"]+=1; _save()
+        return _public(room,uid),None
+
+
+# ---------------- ❌⭕ X-O (Tic-Tac-Toe) ----------------
+TTT_LINES = ((0,1,2),(3,4,5),(6,7,8),(0,3,6),(1,4,7),(2,5,8),(0,4,8),(2,4,6))
+
+def _opp_mark(m): return "o" if m=="x" else "x"
+
+def _ttt_winner(board):
+    for a,b,c in TTT_LINES:
+        if board[a] and board[a]==board[b]==board[c]:
+            return board[a], (a,b,c)
+    return None, None
+
+def choose_mark(rid, init_data, mark):
+    user=_verify(init_data)
+    if not user:return None,"Sessiya tasdiqlanmadi."
+    uid=str(int(user["id"])); mark=(mark or "").lower()
+    if mark not in ("x","o"): return None,"Belgi noto'g'ri."
+    with LOCK:
+        room=_room(rid)
+        if not room:return None,"Xona topilmadi."
+        if room["game"]!="tictactoe":return None,"Bu o'yin turi uchun mos emas."
+        if uid not in room["players"]:return None,"Avval xonaga kiring."
+        if room["status"]!="lobby":return None,"O'yin allaqachon boshlangan."
+        taken={p.get("mark") for k,p in room["players"].items() if k!=uid}
+        if mark in taken:return None,"Bu belgini do'stingiz tanlagan. Boshqasini tanlang."
+        room["players"][uid]["mark"]=mark
+        marks=[p.get("mark") for p in room["players"].values()]
+        if len(room["players"])==2 and all(m in ("x","o") for m in marks) and len(set(marks))==2:
+            room["status"]="playing"
+            room["turn"]="x"
+        room["updated_at"]=time.time(); room["version"]+=1; _save()
+        return _public(room,uid),None
+
+def tictactoe_move(rid, init_data, index):
+    user=_verify(init_data)
+    if not user:return None,"Sessiya tasdiqlanmadi."
+    uid=str(int(user["id"]))
+    try: index=int(index)
+    except (TypeError, ValueError): return None,"Katak raqami noto'g'ri."
+    with LOCK:
+        room=_room(rid)
+        if not room:return None,"Xona topilmadi."
+        if room["game"]!="tictactoe":return None,"Bu xona X-O o'yini emas."
+        pl=room["players"].get(uid)
+        if not pl:return None,"Siz bu xonada emassiz."
+        mark=pl.get("mark")
+        if room["status"]!="playing":return None,"O'yin hali boshlanmadi yoki tugagan."
+        if mark not in ("x","o") or room["turn"]!=mark:return None,"Hozir yurish navbati sizda emas."
+        if not (0<=index<9):return None,"Katak raqami noto'g'ri."
+        board=room["board"]
+        if board[index] is not None:return None,"Bu katak band."
+        board[index]=mark
+        room["last_move"]={"index":index,"mark":mark,"by":int(uid)}
+        win_mark,line=_ttt_winner(board)
+        if win_mark:
+            room["status"]="finished"; room["reason"]="line"
+            room["winner"]=uid; room["win_line"]=list(line)
+        elif all(x is not None for x in board):
+            room["status"]="finished"; room["reason"]="draw"; room["winner"]=None
+        else:
+            room["turn"]=_opp_mark(mark)
+        room["updated_at"]=time.time(); room["version"]+=1; _save()
+        return _public(room,uid),None
+
+
+# ---------------- 🧠 Xotira o'yini (Memory / juftlik topish) ----------------
+
+def memory_set_config(rid, init_data, size, symbols):
+    """Lobbyda katak o'lchami va belgilar to'plamini tanlash (istalgan o'yinchi)."""
+    user=_verify(init_data)
+    if not user:return None,"Sessiya tasdiqlanmadi."
+    uid=str(int(user["id"]))
+    size=(size or MEMORY_DEFAULT_SIZE).strip()
+    symbols=(symbols or MEMORY_DEFAULT_SYMBOLS).strip().lower()
+    if size not in MEMORY_SIZES: return None,"Katak o'lchami noto'g'ri."
+    if symbols not in MEMORY_SYMBOL_SETS: return None,"Belgilar turi noto'g'ri."
+    with LOCK:
+        room=_room(rid)
+        if not room:return None,"Xona topilmadi."
+        if room["game"]!="memory":return None,"Bu xona xotira o'yini emas."
+        if uid not in room["players"]:return None,"Avval xonaga kiring."
+        if room["status"]!="lobby":return None,"O'yin allaqachon boshlangan."
+        room["memory_size"]=size
+        room["memory_symbols"]=symbols
+        # Sozlama o'zgarsa — hamma qaytadan "Tayyor" bosishi kerak.
+        room["memory_ready"]={}
+        room["updated_at"]=time.time(); room["version"]+=1; _save()
+        return _public(room,uid),None
+
+def _deal_memory(room):
+    rows,cols=MEMORY_SIZES.get(room.get("memory_size") or MEMORY_DEFAULT_SIZE, MEMORY_SIZES[MEMORY_DEFAULT_SIZE])
+    total=rows*cols
+    pairs=total//2
+    pool=MEMORY_SYMBOL_SETS.get(room.get("memory_symbols") or MEMORY_DEFAULT_SYMBOLS, MEMORY_SYMBOL_SETS[MEMORY_DEFAULT_SYMBOLS])
+    if len(pool)>=pairs:
+        chosen=pool[:pairs]
+    else:
+        chosen=(pool*((pairs//len(pool))+1))[:pairs]
+    deck=chosen*2
+    random.shuffle(deck)
+    room["board"]=[{"symbol":s,"state":"hidden"} for s in deck]
+    room["rows"]=rows; room["cols"]=cols
+
+def memory_ready(rid, init_data):
+    """O'yinchi joriy sozlamalar bilan tayyorligini bildiradi.
+
+    Ikkala o'yinchi ham tayyor bo'lgach, katak/belgi tanloviga mos taxta
+    tarqatiladi va o'yin boshlanadi.
+    """
+    user=_verify(init_data)
+    if not user:return None,"Sessiya tasdiqlanmadi."
+    uid=str(int(user["id"]))
+    with LOCK:
+        room=_room(rid)
+        if not room:return None,"Xona topilmadi."
+        if room["game"]!="memory":return None,"Bu xona xotira o'yini emas."
+        if uid not in room["players"]:return None,"Avval xonaga kiring."
+        if room["status"]!="lobby":
+            return _public(room,uid),None
+        room.setdefault("memory_ready",{})[uid]=True
+        if len(room["players"])==2 and all(room["memory_ready"].get(k) for k in room["players"]):
+            _deal_memory(room)
+            order=list(room["players"].keys())
+            room["order"]=order
+            room["turn"]=order[0]
+            room["scores"]={k:0 for k in order}
+            room["last_reveal"]=None
+            room["status"]="playing"
+        room["updated_at"]=time.time(); room["version"]+=1; _save()
+        return _public(room,uid),None
+
+def memory_flip(rid, init_data, index):
+    """Bitta katakni ochish. Ikkinchi katak ochilgach juftlik tekshiriladi."""
+    user=_verify(init_data)
+    if not user:return None,"Sessiya tasdiqlanmadi."
+    uid=str(int(user["id"]))
+    try: index=int(index)
+    except (TypeError, ValueError): return None,"Katak raqami noto'g'ri."
+    with LOCK:
+        room=_room(rid)
+        if not room:return None,"Xona topilmadi."
+        if room["game"]!="memory":return None,"Bu xona xotira o'yini emas."
+        if uid not in room["players"]:return None,"Siz bu xonada emassiz."
+        if room["status"]!="playing":return None,"O'yin hali boshlanmadi yoki tugagan."
+        if room["turn"]!=uid:return None,"Hozir yurish navbati sizda emas."
+        board=room["board"]
+        if not (0<=index<len(board)):return None,"Katak raqami noto'g'ri."
+        if board[index]["state"]!="hidden":return None,"Bu katak allaqachon ochilgan."
+
+        # Xavfsizlik: oldingi urinishdan ochiq qolgan (juftlashmagan) kataklar
+        # bo'lsa — ular avtomatik yopiladi (bu holat normalda yuzaga kelmaydi).
+        pending=[i for i,c in enumerate(board) if c["state"]=="revealed"]
+        if len(pending)>=2:
+            for i in pending: board[i]["state"]="hidden"
+            pending=[]
+
+        board[index]["state"]="revealed"
+        pending.append(index)
+
+        if len(pending)==1:
+            room["last_reveal"]=None
+            room["updated_at"]=time.time(); room["version"]+=1; _save()
+            return _public(room,uid),None
+
+        i,j=pending
+        si,sj=board[i]["symbol"],board[j]["symbol"]
+        matched=si==sj
+        if matched:
+            board[i]["state"]="matched"; board[j]["state"]="matched"
+            scores=room.setdefault("scores",{})
+            scores[uid]=scores.get(uid,0)+1
+        else:
+            board[i]["state"]="hidden"; board[j]["state"]="hidden"
+
+        room["last_reveal"]={"indices":[i,j],"symbols":[si,sj],"matched":matched,"by":int(uid),"ts":time.time()}
+
+        if all(c["state"]=="matched" for c in board):
+            room["status"]="finished"; room["reason"]="completed"
+            scores=room.get("scores",{})
+            order=room.get("order") or list(room["players"].keys())
+            if len(order)==2:
+                a,b=order; sa,sb=scores.get(a,0),scores.get(b,0)
+                room["winner"]=a if sa>sb else (b if sb>sa else None)
+            else:
+                room["winner"]=None
+        elif not matched:
+            # Juft topilmadi — navbat boshqa o'yinchiga o'tadi.
+            others=[k for k in room.get("order") or room["players"] if k!=uid]
+            if others: room["turn"]=others[0]
+        # matched bo'lsa — navbat o'zgarmaydi, o'yinchi yana bir juft urinadi.
+
         room["updated_at"]=time.time(); room["version"]+=1; _save()
         return _public(room,uid),None
 
@@ -266,6 +527,23 @@ def _update_castling(room,p,r,c,nr,nc,captured):
         rights=rights.replace("q","")
     room["castling"]=rights
 
+def _insufficient_material(board):
+    """K vs K, K+B vs K, K+N vs K, K+B vs K+B (same-colour bishops) — dead
+    positions where checkmate is impossible for either side."""
+    pieces=[p for row in board for p in row if p]
+    if any(p.lower() in ("q","r","p") for p in pieces): return False
+    minors=[p for p in pieces if p.lower() in ("b","n")]
+    if len(minors)==0: return True                 # K vs K
+    if len(minors)==1: return True                 # K+minor vs K
+    if len(minors)==2 and all(p.lower()=="b" for p in minors):
+        # K+B vs K+B is a draw only when both bishops sit on the same square colour.
+        squares=[]
+        for r in range(8):
+            for c in range(8):
+                if board[r][c] and board[r][c].lower()=="b": squares.append((r+c)%2)
+        if len(squares)==2 and squares[0]==squares[1]: return True
+    return False
+
 def _chess_move(room, side, r,c,nr,nc,promo):
     legal=_legal_chess_moves(room,side)
     if (r,c,nr,nc) not in legal:return False,"Bu yurish mumkin emas."
@@ -288,7 +566,27 @@ def _chess_move(room, side, r,c,nr,nc,promo):
         room["status"]="finished";room["winner"]=side;room["reason"]="checkmate" if _in_check(room["board"],opp) else "stalemate"
     elif room["halfmove"]>=100:
         room["status"]="finished";room["winner"]=None;room["reason"]="50-move draw"
+    elif _insufficient_material(room["board"]):
+        room["status"]="finished";room["winner"]=None;room["reason"]="insufficient material"
     return True,None
+
+def _client_legal_moves(room):
+    """Authoritative move list for the side to move, in [r,c,nr,nc] form, so
+    the client highlights exactly what the server rules engine allows —
+    including castling, en passant, and check-safety — instead of
+    re-implementing (and risking drifting from) the chess/draughts rules
+    a second time in JavaScript."""
+    if room.get("status")!="playing": return []
+    side=room["turn"]
+    if room["game"]=="chess":
+        return [list(m) for m in _legal_chess_moves(room,side)]
+    if room["game"]=="checkers":
+        board=room["board"]; forced=room.get("forced_piece")
+        if forced:
+            r,c=forced
+            return [[r,c,x["to"][0],x["to"][1]] for x in _checkers_captures(board,r,c)]
+        return [[r,c,x["to"][0],x["to"][1]] for r,c,x in _all_checkers_moves(board,side)]
+    return []
 
 # ---------------- Russian Draughts ----------------
 def _checkers_captures(board,r,c):
@@ -422,7 +720,12 @@ def resign(rid,init_data):
         room=_room(rid);p=room and room["players"].get(uid)
         if not p:return None,"Siz bu xonada emassiz."
         if room["status"]=="playing":
-            room["status"]="finished";room["winner"]=_opp(p["side"]);room["reason"]="resignation"
+            room["status"]="finished";room["reason"]="resignation"
+            if room["game"] in ("memory","tictactoe"):
+                others=[k for k in room["players"] if k!=uid]
+                room["winner"]=others[0] if others else None
+            else:
+                room["winner"]=_opp(p["side"])
             room["version"]+=1;room["updated_at"]=time.time();_save()
         return _public(room,uid),None
 
@@ -503,8 +806,20 @@ def rematch(rid,init_data):
         if not room or uid not in room["players"]:return None,"Xona topilmadi."
         room["rematch_votes"][uid]=True
         if len(room["rematch_votes"])==2:
-            game=room["game"]; room["board"]=_initial_chess() if game=="chess" else _initial_checkers()
-            room.update({"status":"playing","winner":None,"reason":None,"turn":"w","castling":"KQkq","ep":None,"halfmove":0,"fullmove":1,"history":[],"forced_piece":None,"last_move":None,"rematch_votes":{}})
+            gkey=room["game"]
+            if gkey=="memory":
+                room.update({
+                    "status":"lobby","winner":None,"reason":None,"turn":None,"board":[],
+                    "scores":{}, "last_reveal":None, "memory_ready":{}, "rematch_votes":{},
+                })
+            elif gkey=="tictactoe":
+                room.update({
+                    "status":"playing","winner":None,"reason":None,"turn":"x",
+                    "board":[None]*9,"win_line":None,"last_move":None,"rematch_votes":{},
+                })
+            else:
+                room["board"]=_initial_chess() if gkey=="chess" else _initial_checkers()
+                room.update({"status":"playing","winner":None,"reason":None,"turn":"w","castling":"KQkq","ep":None,"halfmove":0,"fullmove":1,"history":[],"forced_piece":None,"last_move":None,"rematch_votes":{}})
         room["version"]+=1;room["updated_at"]=time.time();_save()
         return _public(room,uid),None
 
@@ -540,6 +855,11 @@ def handle_post(handler):
     elif p=="/api/game/rematch":d,e=rematch(rid,init)
     elif p=="/api/game/signal":d,e=signal(rid,init,body.get("target_user_id"),body.get("payload") or {})
     elif p=="/api/game/chat":d,e=add_chat(rid,init,body.get("text",""),body.get("client_id",""))
+    elif p=="/api/game/memory/config":d,e=memory_set_config(rid,init,body.get("size",MEMORY_DEFAULT_SIZE),body.get("symbols",MEMORY_DEFAULT_SYMBOLS))
+    elif p=="/api/game/memory/ready":d,e=memory_ready(rid,init)
+    elif p=="/api/game/memory/flip":d,e=memory_flip(rid,init,body.get("index"))
+    elif p=="/api/game/tictactoe/mark":d,e=choose_mark(rid,init,body.get("mark",""))
+    elif p=="/api/game/tictactoe/move":d,e=tictactoe_move(rid,init,body.get("index"))
     else:return _json(handler,404,{"ok":False,"error":"Not found"})
     return _json(handler,200 if not e else 400,{"ok":not bool(e),"data":d,"error":e})
 

@@ -16,7 +16,7 @@
 
   <section id="lobby" class="panel">
     <div class="hero"><div class="hero-orb">♟</div><div><h2>Do‘stingiz bilan o‘ynang</h2><p id="lobbyText">Xona ochilmoqda…</p></div></div>
-    <div class="choices">
+    <div id="lobbyChess" class="choices">
       <div><h3>1. Rangni tanlang</h3><div class="row">
         <button class="choice side" data-side="w">⚪ <b>Oq</b><span>birinchi yurish</span></button>
         <button class="choice side" data-side="b">⚫ <b>Qora</b><span>ikkinchi yurish</span></button>
@@ -27,6 +27,19 @@
         <button class="choice style" data-style="neon">◈ <b>Neon</b><span>zamonaviy</span></button>
       </div></div>
       <button id="readyBtn" class="primary" disabled>✓ Tanlovni tasdiqlash</button>
+    </div>
+    <div id="lobbyMemory" class="choices hidden">
+      <div><h3>1. Necha katakdan iborat bo‘lsin?</h3><div class="row" id="memSizeRow"></div></div>
+      <div><h3>2. Qanday belgilar bo‘lsin?</h3><div class="row" id="memSymbolsRow"></div></div>
+      <button id="memReadyBtn" class="primary">✓ Tayyor</button>
+      <p id="memReadyStatus" class="mem-ready-status"></p>
+    </div>
+    <div id="lobbyTTT" class="choices hidden">
+      <div><h3>Belgingizni tanlang</h3><div class="row">
+        <button class="choice mark" data-mark="x">❌ <b>X</b><span>birinchi yuradi</span></button>
+        <button class="choice mark" data-mark="o">⭕ <b>O</b><span>ikkinchi yuradi</span></button>
+      </div></div>
+      <button id="markReadyBtn" class="primary" disabled>✓ Tanlovni tasdiqlash</button>
     </div>
     <div id="players" class="players"></div>
   </section>
@@ -44,7 +57,18 @@
       </div>
     </div>
 
-    <div class="boardWrap"><div id="board" class="board" aria-label="O‘yin doskasi"></div><div id="fx" class="fx"></div></div>
+    <div class="boardWrap"><div id="board" class="board" aria-label="O‘yin doskasi"></div><div id="fx" class="fx"></div>
+      <div id="promoPicker" class="promo-picker hidden">
+        <div class="promo-title">Kimga aylantirasiz?</div>
+        <div class="promo-row">
+          <button data-p="q" class="promo-choice">♛</button>
+          <button data-p="r" class="promo-choice">♜</button>
+          <button data-p="b" class="promo-choice">♝</button>
+          <button data-p="n" class="promo-choice">♞</button>
+        </div>
+      </div>
+    </div>
+    <div id="memScoreboard" class="mem-scoreboard hidden"></div>
     <div class="actions">
       <button id="soundBtn" class="tool">🔊 Ovoz</button>
       <button id="callBtn" class="tool">📹 Kamera</button>

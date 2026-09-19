@@ -128,8 +128,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     normalized_game = user_text.lower().replace("’", "'").replace("‘", "'")
     is_game_result = (
         ("1v1 o'yin xonasi tayyor" in normalized_game and
-         ("♟ shaxmat" in normalized_game or "⚪ rus shashkasi" in normalized_game))
-        or normalized_game.strip() in {"♟ shaxmat", "⚪ rus shashkasi"}
+         ("♟ shaxmat" in normalized_game or "⚪ rus shashkasi" in normalized_game or "🧠 xotira o'yini" in normalized_game or "❌⭕ x-o o'yini" in normalized_game))
+        or normalized_game.strip() in {"♟ shaxmat", "⚪ rus shashkasi", "🧠 xotira o'yini", "❌⭕ x-o o'yini"}
         or normalized_game.startswith("🎮 o'yinni boshlash")
     )
     if is_game_result:

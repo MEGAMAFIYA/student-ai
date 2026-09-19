@@ -321,6 +321,99 @@ def delete_file(repo: str, path: str, branch: str | None = None, sha: str | None
     return response.json()
 
 
+def delete_directory(repo: str, path: str, branch: str | None = None) -> dict[str, Any]:
+    """Delete a whole folder (and everything inside it) in a single commit.
+
+    Only blob paths that live strictly under ``path/`` are removed; every
+    other file in the repository — including sibling files and folders —
+    is left untouched. Uses the Git Data API (recursive tree read + a tree
+    that nulls out the removed blobs) instead of deleting file by file, so
+    the whole folder disappears in exactly one commit.
+    """
+    path = (path or "").strip("/")
+    if not path:
+        raise GitHubDevError("Ildiz papkani bu yerdan o'chirib bo'lmaydi.")
+    if ".." in path.split("/"):
+        raise GitHubDevError("Papka yo'li noto'g'ri.")
+
+    branch = branch or (get_repository(repo).get("default_branch") or "main")
+    owner, name = _repo_parts(repo)
+
+    ref = _request("GET", f"{_API}/repos/{owner}/{name}/git/ref/heads/{branch}").json()
+    old_commit_sha = (ref.get("object") or {}).get("sha")
+    if not old_commit_sha:
+        raise GitHubDevError("Branch HEAD aniqlanmadi.")
+
+    commit = _request("GET", f"{_API}/repos/{owner}/{name}/git/commits/{old_commit_sha}").json()
+    base_tree = (commit.get("tree") or {}).get("sha")
+    if not base_tree:
+        raise GitHubDevError("Repository tree aniqlanmadi.")
+
+    tree_resp = _request(
+        "GET", f"{_API}/repos/{owner}/{name}/git/trees/{base_tree}", params={"recursive": "1"}
+    ).json()
+    all_entries = tree_resp.get("tree") or []
+    if tree_resp.get("truncated"):
+        logger.warning("GitHub deldir stage=tree_truncated repo=%s path=%s", repo, path)
+
+    prefix = path + "/"
+    # Faqat shu papka ICHIDAGI fayllar (blob) — boshqa hech narsaga tegilmaydi.
+    to_delete = [
+        e for e in all_entries
+        if e.get("type") == "blob" and e.get("path", "").startswith(prefix)
+    ]
+    if not to_delete:
+        raise GitHubDevError("Bu papka bo'sh yoki allaqachon o'chirilgan.")
+
+    # GitHub Git Trees API: base_tree bilan tree yaratilganda, mavjud entry'ni
+    # olib tashlash uchun uning sha'sini null qilib yuboriladi.
+    tree_entries = [
+        {"path": e["path"], "mode": e.get("mode") or "100644", "type": "blob", "sha": None}
+        for e in to_delete
+    ]
+    new_tree = _request(
+        "POST",
+        f"{_API}/repos/{owner}/{name}/git/trees",
+        json={"base_tree": base_tree, "tree": tree_entries},
+    ).json()
+    new_tree_sha = new_tree.get("sha")
+    if not new_tree_sha:
+        raise GitHubDevError("GitHub yangi tree yaratmadi.")
+
+    new_commit = _request(
+        "POST",
+        f"{_API}/repos/{owner}/{name}/git/commits",
+        json={
+            "message": f"Delete folder {path} ({len(to_delete)} files)",
+            "tree": new_tree_sha,
+            "parents": [old_commit_sha],
+        },
+    ).json()
+    new_commit_sha = new_commit.get("sha")
+    if not new_commit_sha:
+        raise GitHubDevError("GitHub commit yaratmadi.")
+
+    try:
+        _request(
+            "PATCH",
+            f"{_API}/repos/{owner}/{name}/git/refs/heads/{branch}",
+            json={"sha": new_commit_sha, "force": False},
+        )
+    except GitHubDevError as exc:
+        raise GitHubDevError(
+            "Papka o'chirish commit'i tayyorlandi, lekin branch shu orada boshqa "
+            "commitga o'zgargani uchun avtomatik qo'llanmadi. Hech narsa ustidan "
+            "majburan yozilmadi. Qayta urinib ko'ring."
+        ) from exc
+
+    return {
+        "repo": repo,
+        "branch": branch,
+        "path": path,
+        "deleted_files": len(to_delete),
+        "commit_sha": new_commit_sha,
+    }
+
 
 _MAX_ZIP_BYTES = 20 * 1024 * 1024
 _MAX_ZIP_FILES = 1000
