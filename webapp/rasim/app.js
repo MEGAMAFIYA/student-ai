@@ -130,7 +130,10 @@
       restartBtn.classList.remove("hidden");
       sendBtn.disabled = true;
     } else if (s.submitted) {
-      statusMsg.textContent = "⏳ Rasm yuborildi. Do'stingizni kutyapmiz...";
+      const scoreText = (s.my_score !== null && s.my_score !== undefined)
+        ? `\n📊 Sizning natijangiz — O'xshashi: ${s.my_score}%`
+        : "\n⏳ AI baholamoqda...";
+      statusMsg.textContent = "✅ Rasm yuborildi. Do'stingizni kutyapmiz..." + scoreText;
       sendBtn.disabled = true;
     } else if (players.length < 2) {
       statusMsg.textContent = "👥 Avval do'stingiz ham xonaga kirsin.";

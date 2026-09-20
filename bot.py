@@ -488,26 +488,24 @@ def _handle_draw_api(handler: "HealthHandler") -> None:
         with open(file_path, "wb") as f:
             f.write(jpeg)
         photo_url = f"{PUBLIC_BASE_URL}{_WEBAPP_GENERATED_URL_PREFIX}{filename}"
-        caption = result.get("caption", "")
 
-        if result.get("evaluate"):
-            prompt, img1, img2 = result["evaluate"]
-            try:
-                future = asyncio.run_coroutine_threadsafe(
-                    drawing_game._evaluate(prompt, img1, img2), _MAIN_LOOP
-                )
-                evaluation = future.result(timeout=100)
-            except Exception as e:
-                logger.error("🎨 Drawing duel evaluation xato: %s", e, exc_info=True)
-                evaluation = {
-                    "player1": None,
-                    "player2": None,
-                    "winner": None,
-                    "comment": "AI vaqtida javob bermadi.",
-                }
-            room = drawing_game.finish_evaluation(rid, evaluation)
-            if room:
-                caption = drawing_game._telegram_caption(evaluation, room)
+        # 🎯 HAR bir topshirish uchun (birinchi bo'lsin, ikkinchi bo'lsin)
+        # AI shu rasmni DARHOL, do'stini kutmasdan, mustaqil baholaydi —
+        # shu bilan "Berilgan shart: X / O'xshashi: Y%" rasm ostida
+        # HAR DOIM chiqadi (avval faqat 2-chi rasm kelgach chiqar edi).
+        prompt, img = result["single_eval"]
+        try:
+            future = asyncio.run_coroutine_threadsafe(
+                drawing_game._evaluate_single(prompt, img), _MAIN_LOOP
+            )
+            score = future.result(timeout=60)
+        except Exception as e:
+            logger.error("🎨 Drawing duel evaluation xato: %s", e, exc_info=True)
+            score = {"score": None, "comment": "AI vaqtida javob bermadi."}
+
+        room, caption, summary = drawing_game.finish_single_evaluation(rid, str(result["user_id"]), score)
+        if not caption:
+            caption = f"🎯 Berilgan shart: {prompt}"
 
         async def _prepare():
             prepared = InlineQueryResultPhoto(
@@ -540,6 +538,25 @@ def _handle_draw_api(handler: "HealthHandler") -> None:
             reply(502, error="Rasmni Telegram ulashish oynasiga tayyorlab bo'lmadi.")
             return
 
+        # 🏆 Ikkala o'yinchi ham yuborib bo'lgach — g'olib e'lon qilingan
+        # qo'shimcha xabar ikkala o'yinchining o'ziga, to'g'ridan-to'g'ri
+        # bot orqali (ulashish oynasiga bog'liq bo'lmagan holda) yuboriladi.
+        # Bu birinchi bo'lib yuborgan o'yinchiga ham natijani yetkazadi —
+        # aks holda uning ulashilgan rasmi hech qachon yangilanmas edi.
+        if summary:
+            recipients = {int(result["user_id"])}
+            if result.get("other_user_id"):
+                recipients.add(int(result["other_user_id"]))
+
+            async def _notify():
+                for chat_id in recipients:
+                    try:
+                        await _BOT_INSTANCE.send_message(chat_id=chat_id, text=summary)
+                    except Exception as e:
+                        logger.error("🎨 Drawing duel natija xabari yuborilmadi (chat_id=%s): %s", chat_id, e)
+
+            asyncio.run_coroutine_threadsafe(_notify(), _MAIN_LOOP)
+
         Timer(
             _WEBAPP_GENERATED_TTL_SEC,
             lambda: os.path.exists(file_path) and os.remove(file_path)
@@ -547,9 +564,9 @@ def _handle_draw_api(handler: "HealthHandler") -> None:
         reply(
             200,
             data={
-                "state": result["state"],
+                "state": (room and drawing_game.public_state(room, str(result["user_id"]))) or result["state"],
                 "status": "submitted",
-                "both_submitted": bool(result.get("evaluate")),
+                "both_submitted": bool(summary),
                 "prepared_message_id": prepared_id,
             },
         )

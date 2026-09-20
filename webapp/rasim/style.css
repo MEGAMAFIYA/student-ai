@@ -347,6 +347,7 @@ button { font-family: inherit; }
   padding-bottom: 8px;
   min-height: 16px;
   flex-shrink: 0;
+  white-space: pre-line;
 }
 
 /* ============================================================
