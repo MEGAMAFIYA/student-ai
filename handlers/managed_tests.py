@@ -26,7 +26,8 @@ def _esc(value) -> str:
 #
 #   "test"                -> barcha faol savollar, aralash, variantlar bilan
 #   "test 10"              -> 10 ta savol aralash tanlanadi (variantlar bilan)
-#   "test pro"              -> variantlarSIZ, javob matn holida kutiladi
+#   "test pro"              -> variantlarSIZ; savol ostida harf tugmalari chiqadi,
+#                            harflarni bosib so'z yig'iladi va "Yuborish" bosiladi
 #   "test pro 18"           -> pro rejim + 18 ta savol
 #   "test jas"              -> variantlar matni TESKARI (harflari aylantirilgan)
 #   "test jas 12"           -> jas rejim + 12 ta savol
@@ -92,7 +93,7 @@ def inline_results(n=None, pro=False, jas=False):
     if n:
         title_bits.append(f'{n} ta')
     if pro:
-        title_bits.append('Pro (matn javob)')
+        title_bits.append('Pro (harf tugmalari)')
     if jas:
         title_bits.append('Teskari variant')
     title = ' — '.join(title_bits)
@@ -100,7 +101,7 @@ def inline_results(n=None, pro=False, jas=False):
     count_label = f'{n} ta' if n else f'{total} ta (barchasi)'
     mode_lines = []
     if pro:
-        mode_lines.append('✍️ Pro rejim: variantlarsiz, javobni matn holida yozasiz.')
+        mode_lines.append('✍️ Pro rejim: variantlarsiz, javobni harf tugmalarini bosib yig\u2018asiz.')
     if jas:
         mode_lines.append('🔄 Jas rejim: variantlar teskari (harflari aylantirilgan) beriladi.')
     body = f'📝 {count_label} test tayyor.\n' + ('\n'.join(mode_lines) + '\n' if mode_lines else '') + 'Boshlash uchun pastdagi tugmani bosing.'
@@ -152,10 +153,178 @@ def _question_html(topic, question) -> str:
     return f'📚 <b>{_esc(topic)}</b>\n\n<b>{_esc(question)}</b>'
 
 
+# ============================================================
+# ✍️ Pro rejim — harf tugmalari bilan javob yig'ish
+#
+# Savol (masalan: تَمْ) ostida lotin harflari tugmalar holida chiqadi.
+# Foydalanuvchi harflarni bosadi — hosil bo'layotgan so'z xabarda
+# jonli ko'rinib turadi (context.user_data['mt_buf']). "✅ Yuborish"
+# bosilganda so'z to'g'ri javob bilan solishtiriladi.
+#
+# Qo'shimcha tugmalar (ch, sh, ng, c, o‘, ') FAQAT to'g'ri javobda shular bo'lsa chiqadi.
+#
+# callback_data: mt:k:<harf> | mt:x:<qo'shimcha indeksi> | mt:bk | mt:sub
+# ============================================================
+
+_PRO_LETTERS = 'qwertyuiopasdfghjklzxvbnm'
+_PRO_ROW_SIZE = 7          # Telegram bir qatorda ko'pi bilan 8 ta tugma ruxsat beradi
+_PRO_MAX_TOKENS = 40
+
+# Qo'shimcha tugmalar: FAQAT joriy savolning to'g'ri javobida shu
+# belgi/harf birikmasi bo'lsagina ko'rsatiladi (bo'lmasa chiqmaydi).
+# Tartib muhim: callback_data indeksi shu ro'yxatga tayanadi.
+# Ichki (normallashgan) ko'rinish — apostrof oddiy ' bilan yoziladi.
+_PRO_EXTRAS = ['ch', 'sh', 'ng', 'c', "o'", "'"]
+_APOSTROPHES = "\u02bb\u02bc\u2018\u2019`\u00b4"   # ʻ ʼ ‘ ’ ` ´
+
+
+def _norm(text) -> str:
+    """Solishtirish uchun: kichik harf + barcha apostrof ko'rinishlari
+    (o‘, oʻ, o’, o` ...) bitta oddiy ' ga keltiriladi."""
+    t = str(text or '').strip().casefold()
+    for ch in _APOSTROPHES:
+        t = t.replace(ch, "'")
+    return t
+
+
+def _extra_label(token: str) -> str:
+    return token.replace("'", '\u2018')   # "o'" -> "o‘"
+
+
+def pro_extras_for(correct_text) -> list:
+    """To'g'ri javobda uchraydigan qo'shimcha tugmalar (indekslari bilan)."""
+    ans = _norm(correct_text)
+    return [(i, tok) for i, tok in enumerate(_PRO_EXTRAS) if tok in ans]
+
+
+def pro_keyboard(correct_text='') -> InlineKeyboardMarkup:
+    letters = [InlineKeyboardButton(ch, callback_data=f'mt:k:{ch}') for ch in _PRO_LETTERS]
+    rows = [letters[i:i + _PRO_ROW_SIZE] for i in range(0, len(letters), _PRO_ROW_SIZE)]
+    rows[-1].append(InlineKeyboardButton('⌫', callback_data='mt:bk'))
+    extras = pro_extras_for(correct_text)
+    if extras:
+        rows.append([InlineKeyboardButton(_extra_label(tok), callback_data=f'mt:x:{i}') for i, tok in extras])
+    rows.append([InlineKeyboardButton('✅ Yuborish', callback_data='mt:sub')])
+    return InlineKeyboardMarkup(rows)
+
+
+def pro_text(topic, question, buf: str) -> str:
+    shown = _esc(_extra_label(buf)) if buf else '…'
+    return (
+        _question_html(topic, question)
+        + f'\n\n✍️ Javobingiz: <b>{shown}</b>'
+        + '\n\nHarflarni bosib so\u2018z yig\u2018ing, so\u2018ng «Yuborish»ni bosing.'
+    )
+
+
+def _pro_active(context) -> bool:
+    return bool(
+        context.user_data.get('mt_pro')
+        and context.user_data.get('mt_qs')
+        and not context.user_data.get('mt_answered')
+    )
+
+
+def _pro_state(context):
+    """Joriy savol: (topic, question, correct_text) yoki None."""
+    qs = context.user_data.get('mt_qs', [])
+    pos = context.user_data.get('mt_i', 0)
+    if pos >= len(qs):
+        return None
+    _, topic, question, opts, correct = qs[pos]
+    return topic, question, str(opts[correct]).strip()
+
+
+def _set_toks(context, toks) -> str:
+    """Bosilgan tugmalar ro'yxati (har bir bosish = bitta token: 'a', 'ch', "o'" ...).
+    ⌫ oxirgi BOSISHNI o'chiradi (masalan 'ch' tugmasi bitta bosish)."""
+    context.user_data['mt_toks'] = toks
+    buf = ''.join(toks)
+    context.user_data['mt_buf'] = buf
+    return buf
+
+
+async def _render_pro(query, context) -> None:
+    st = _pro_state(context)
+    if st is None:
+        return
+    topic, question, correct_text = st
+    try:
+        await query.edit_message_text(
+            pro_text(topic, question, context.user_data.get('mt_buf', '')),
+            reply_markup=pro_keyboard(correct_text),
+            parse_mode='HTML',
+        )
+    except BadRequest as e:
+        if 'message is not modified' not in str(e).lower():
+            raise
+
+
 async def callback(update, context):
     q = update.callback_query
-    await q.answer()
     data = q.data
+    # "mt:sub" o'zi q.answer() ni chaqiradi (bo'sh javobda ogohlantirish ko'rsatish uchun).
+    if data != 'mt:sub':
+        await q.answer()
+
+    if data.startswith('mt:k:') or data.startswith('mt:x:') or data == 'mt:bk':
+        if not _pro_active(context):
+            return
+        toks = list(context.user_data.get('mt_toks', []))
+        if data == 'mt:bk':
+            if not toks:
+                return
+            toks.pop()
+        else:
+            if len(toks) >= _PRO_MAX_TOKENS:
+                return
+            if data.startswith('mt:k:'):
+                tok = data[len('mt:k:'):]
+                if len(tok) != 1 or tok not in _PRO_LETTERS:
+                    return
+            else:
+                idx = data[len('mt:x:'):]
+                st = _pro_state(context)
+                if st is None or not idx.isdigit():
+                    return
+                # Faqat shu savol uchun ko'rsatilgan qo'shimcha tugmalar qabul qilinadi.
+                allowed = dict(pro_extras_for(st[2]))
+                tok = allowed.get(int(idx))
+                if tok is None:
+                    return
+            toks.append(tok)
+        _set_toks(context, toks)
+        return await _render_pro(q, context)
+
+    if data == 'mt:sub':
+        if not _pro_active(context):
+            await q.answer()
+            return
+        buf = context.user_data.get('mt_buf', '')
+        if not buf:
+            await q.answer('✍️ Avval harflarni tanlang', show_alert=False)
+            return
+        await q.answer()
+        qs = context.user_data['mt_qs']
+        pos = context.user_data.get('mt_i', 0)
+        _, topic, question, opts, correct = qs[pos]
+        context.user_data['mt_answered'] = True
+        correct_text = str(opts[correct]).strip()
+        good = _norm(buf) == _norm(correct_text)
+        context.user_data['mt_ok'] = context.user_data.get('mt_ok', 0) + (1 if good else 0)
+        context.user_data['mt_bad'] = context.user_data.get('mt_bad', 0) + (0 if good else 1)
+        next_label = '📊 Natija' if pos + 1 >= len(qs) else '➡️ Keyingisi'
+        next_data = 'mt:result' if pos + 1 >= len(qs) else 'mt:next'
+        result_line = (
+            '🥰 To\u2018g\u2018ri javob!' if good
+            else f'😡 Xato javob! To\u2018g\u2018ri javob: <b>{_esc(correct_text)}</b>'
+        )
+        await q.edit_message_text(
+            result_line + f'\n\n<b>{_esc(question)}</b>\n✍️ Sizning javobingiz: <b>{_esc(_extra_label(buf))}</b>',
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(next_label, callback_data=next_data)]]),
+            parse_mode='HTML',
+        )
+        return
 
     if data.startswith('mt:start'):
         n, pro, jas = _decode_flags(data)
@@ -183,6 +352,8 @@ async def callback(update, context):
         context.user_data['mt_pro'] = pro
         context.user_data.pop('mt_answered', None)
         context.user_data.pop('mt_wait_text', None)
+        context.user_data.pop('mt_buf', None)
+        context.user_data.pop('mt_toks', None)
         return await send(update, context)
 
     if data.startswith('mt:ans:'):
@@ -209,6 +380,8 @@ async def callback(update, context):
         context.user_data['mt_i'] += 1
         context.user_data.pop('mt_answered', None)
         context.user_data.pop('mt_wait_text', None)
+        context.user_data.pop('mt_buf', None)
+        context.user_data.pop('mt_toks', None)
         return await send(update, context)
     if data == 'mt:result':
         n = len(context.user_data.get('mt_qs', []))
@@ -216,6 +389,8 @@ async def callback(update, context):
         p = ok * 100 / n if n else 0
         s = 'yomon🙁' if p <= 50 else 'o\u2018rta😐' if p <= 85 else 'yaxshi🙂' if p < 100 else 'alo🥰'
         context.user_data.pop('mt_wait_text', None)
+        context.user_data.pop('mt_buf', None)
+        context.user_data.pop('mt_toks', None)
         context.user_data.pop('mt_pro', None)
         await q.edit_message_text(f'Testlar: {n} ta\nTo\u2018g\u2018ri javoblar: {ok} ta\nXato javoblar: {n - ok} ta\nHolati: {s}')
 
@@ -228,19 +403,23 @@ async def send(update, context):
         return await update.callback_query.edit_message_text('Testlar tugadi.', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('📊 Natija', callback_data='mt:result')]]))
     _, topic, question, opts, correct = qs[i]
     if context.user_data.get('mt_pro'):
-        # Pro rejim: variantlar YO'Q — foydalanuvchi javobni oddiy matn
-        # xabari sifatida yuboradi (qarang: handle_pro_text_answer).
-        context.user_data['mt_wait_text'] = True
+        # Pro rejim: variantlar YO'Q — savol ostida harf tugmalari chiqadi,
+        # foydalanuvchi so'zni harflarni bosib yig'adi (qarang: pro_keyboard).
+        _set_toks(context, [])
+        context.user_data['mt_wait_text'] = False
         await update.callback_query.edit_message_text(
-            _question_html(topic, question) + '\n\n✍️ Javobingizni oddiy xabar sifatida yozib yuboring:',
-            parse_mode='HTML',
+            pro_text(topic, question, ''), reply_markup=pro_keyboard(opts[correct]), parse_mode='HTML',
         )
         return
     await update.callback_query.edit_message_text(_question_html(topic, question), reply_markup=kb(opts), parse_mode='HTML')
 
 
 # ============================================================
-# ✍️ Pro rejim — variantlarsiz matn javobini qabul qilish
+# ✍️ (ESKI) Pro rejim — matn javobini qabul qilish
+#
+# ESLATMA: endi pro rejimda javob harf tugmalari orqali yig'iladi va
+# 'mt_wait_text' hech qachon True qilinmaydi, shuning uchun quyidagi
+# funksiyalar faqat orqaga moslik uchun qoldirilgan.
 #
 # Chaqiruvchi (handlers/universal_chat.py) HAR bir oddiy matn xabaridan
 # OLDIN `is_waiting_text_answer(context)`ni tekshiradi — True bo'lsa, shu
