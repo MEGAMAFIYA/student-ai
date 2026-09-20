@@ -25,6 +25,7 @@ from telegram import BotCommand, BotCommandScopeDefault, BotCommandScopeAllGroup
 import business_storage
 from telegram.ext import (
     ApplicationBuilder,
+    ApplicationHandlerStop,
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
@@ -158,6 +159,39 @@ async def _on_business_connection(update, context):
     business_storage.save_connection(conn)
     if not conn.is_enabled:
         logger.info(f"📇 BUSINESS_CONNECTION_DISABLED user_id={conn.user.id} connection_id={conn.id}")
+
+
+async def _intercept_pro_test_answer(update, context):
+    """🛡️ \"/test pro\" javobini HAR QANDAY boshqa handlerdan OLDIN ushlaydi.
+
+    MUAMMO: botdagi 15+ ta ConversationHandler'ning birortasida ham
+    `conversation_timeout` yo'q — ya'ni foydalanuvchi biror wizard'ni
+    (masalan /tabrik, /rasim, /vid, /pptx va h.k.) boshlab, TUGATMASDAN
+    tashlab ketsa, o'sha holat o'sha (chat, user) juftligi uchun ABADIY
+    \"faol\" bo'lib qoladi. ConversationHandler'lar bu botda
+    `MessageHandler(filters.TEXT & ~filters.COMMAND, ...)`dan foydalanadi —
+    demak keyinchalik yuborilgan HAR QANDAY oddiy matn (jumladan \"test
+    pro\" rejimidagi savolga javob) o'sha eski, aloqasiz wizard holatiga
+    \"yutilib\" ketadi va handlers/managed_tests.py hech qachon uni
+    ko'rmaydi (buning uchun handlers/universal_chat.py hatto chaqirilmaydi,
+    chunki ConversationHandler'lar bot.py'da undan OLDIN, group=0'da
+    ro'yxatdan o'tgan — PTB har bir guruhda faqat BIRINCHI mos handlerni
+    ishlatadi).
+
+    YECHIM: shu handler group=-1 (ya'ni barcha group=0 handlerlardan,
+    jumladan barcha ConversationHandler'lardan OLDIN) ishlaydi. Agar
+    foydalanuvchi aynan \"test pro\" javobini kutayotgan bo'lsa — javob
+    shu yerda ushlanadi va ApplicationHandlerStop bilan pastdagi barcha
+    handlerlar (jumladan eskirib qolgan ConversationHandler holati)
+    to'liq o'tkazib yuboriladi, shu bilan javob ikki marta qayta
+    ishlanishining (yoki umuman ko'rinmay qolishining) oldi olinadi.
+    Aks holda (kutilayotgan javob yo'q) — hech narsa qilmaydi, xabar
+    odatdagidek pastga (group=0) o'tadi."""
+    if not update.message or not update.effective_user:
+        return
+    if managed_tests.is_waiting_text_answer(context):
+        await managed_tests.handle_pro_text_answer(update, context)
+        raise ApplicationHandlerStop
 
 
 async def _clear_pending_on_other_command(update, context):
@@ -1333,6 +1367,13 @@ def main():
     _MAIN_LOOP = loop
     _BOT_INSTANCE = app.bot
     mobile_api.set_application(app)
+
+    # 🛡️ "test pro" javobini BARCHA ConversationHandler'lardan (group=0)
+    # OLDIN ushlaydi — aks holda eskirib qolgan/tugallanmagan boshqa
+    # wizard holati bu javobni "yutib" yuborishi mumkin edi (qarang:
+    # _intercept_pro_test_answer izohi). ApplicationHandlerStop tufayli
+    # javob faqat BIR MARTA qayta ishlanadi.
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _intercept_pro_test_answer), group=-1)
 
     # ⏳ "/qoshiq"/"/vid" ikki bosqichli kiritishning kutish holatini
     # BOSHQA istalgan buyruq kelganda bekor qiladi — group=-1 bo'lgani
