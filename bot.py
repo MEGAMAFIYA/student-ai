@@ -53,7 +53,7 @@ from handlers import (
     menu, universal_chat, course_work, translate as translate_handler, images_to_pdf,
     edit_pdf, guide, inline_query, developer, pptx_gen, essay, quiz, solve, summarize, managed_tests,
     grammar, citation, my_files, reminders, voice, wallet_ui, tabrik, rasim,
-    vid, qoshiq, kino, mention_dispatch, pro_tabrik, my_cabinet,
+    vid, qoshiq, kino, mention_dispatch, pro_tabrik, my_cabinet, payment_notify,
 )
 from pdf_tools import make_pdf
 
@@ -1010,7 +1010,8 @@ class HealthHandler(BaseHTTPRequestHandler):
                         self.end_headers()
                         self.wfile.write(b'{"status":"already_used"}')
                         return
-                wallet.confirm_payment(event.payment_id, actor_id="kapitalbank_webhook", source="webhook")
+                if wallet.confirm_payment(event.payment_id, actor_id="kapitalbank_webhook", source="webhook"):
+                    _notify_admins_payment_confirmed_threadsafe(event.payment_id, "Kapitalbank onlayn to'lov")
 
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -1020,6 +1021,23 @@ class HealthHandler(BaseHTTPRequestHandler):
             logger.error(f"💳 Kapitalbank webhook qayta ishlashda xato: {type(e).__name__}: {e}", exc_info=True)
             self.send_response(500)
             self.end_headers()
+
+
+def _notify_admins_payment_confirmed_threadsafe(payment_id: str, source_label: str) -> None:
+    """HTTP (webhook) thread'idan adminlarga "balans to'ldirildi" xabarini
+    botning asosiy event loop'i orqali yuboradi. Webhook javobini
+    KECHIKTIRMAYDI (natija kutilmaydi) va xato bo'lsa webhookni buzmaydi."""
+    try:
+        if _MAIN_LOOP is None or _BOT_INSTANCE is None:
+            return
+        payment = wallet.get_payment(payment_id)
+        if not payment:
+            return
+        asyncio.run_coroutine_threadsafe(
+            payment_notify.notify_admins_payment_confirmed(_BOT_INSTANCE, payment, source_label), _MAIN_LOOP
+        )
+    except Exception as e:
+        logger.warning(f"💳 Adminlarga to'lov xabarini rejalashtirib bo'lmadi: {e}")
 
 
 def start_health_server():
@@ -1443,6 +1461,8 @@ def main():
     # /developer > 💎 Pro obunalar bo'limi IKKALASI HAM shu bitta
     # handlerni chaqiradi (callback_data bir xil).
     app.add_handler(CallbackQueryHandler(my_cabinet.prosub_decision_callback, pattern="^prosub:"))
+    # 💳 Admin: balans to'ldirish xabaridagi ✅ Tasdiqlash / ❌ Rad etish tugmalari.
+    app.add_handler(CallbackQueryHandler(payment_notify.admin_payment_decision_callback, pattern="^payn:"))
     # 🖼 Kabinetga rasm yuklash — ALOHIDA guruhda (group=1), shunda
     # boshqa (masalan "Suratlarni PDF qilish") conversation'lardagi rasm
     # handlerlariga (asosiy guruh — group=0) XALAQIT bermaydi; ikkalasi

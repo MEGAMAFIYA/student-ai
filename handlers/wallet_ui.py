@@ -33,6 +33,7 @@ import wallet
 import payment_providers
 from ai_clients import ask_gemini_multimodal
 from handlers.menu import main_menu_keyboard
+from handlers import payment_notify
 
 logger = logging.getLogger(__name__)
 
@@ -128,26 +129,10 @@ async def _extract_receipt_data(image_bytes: bytes, mime_type: str) -> dict:
         return {}
 
 
-async def _notify_admins_new_receipt(context: ContextTypes.DEFAULT_TYPE, payment: dict, user) -> None:
-    if not config.ADMIN_IDS:
-        return
-    extracted = (payment.get("receipt") or {}).get("extracted") or {}
-    text = (
-        "🧾 *Yangi chek yuborildi — tekshirish kerak*\n\n"
-        f"👤 User: {user.full_name if user else '—'} (@{user.username if user and user.username else '—'})\n"
-        f"🆔 Telegram ID: `{payment['user_id']}`\n"
-        f"💰 Summa (bot ichida): {_fmt_sum(payment['amount'])}\n"
-        f"💳 Usul: {payment['method']}\n"
-        f"📌 Status: {_status_label(payment['status'])}\n\n"
-        f"🔍 Chekdan o'qilgan (AI, TASDIQ EMAS): {json.dumps(extracted, ensure_ascii=False)}\n\n"
-        f"payment_id: `{payment['payment_id']}`\n\n"
-        "/developer -> 💳 To'lovlar bo'limidan ko'rib chiqing."
-    )
-    for admin_id in config.ADMIN_IDS:
-        try:
-            await context.bot.send_message(admin_id, text, parse_mode=ParseMode.MARKDOWN)
-        except Exception as e:
-            logger.warning(f"🧾 Adminni ({admin_id}) xabardor qilib bo'lmadi: {e}")
+async def _notify_admins_new_receipt(context: ContextTypes.DEFAULT_TYPE, payment: dict, user, file_kind=None) -> None:
+    """Admin(lar)ga: "@user hisobini X ga to'ldirdi, tasdiqlaysizmi?" +
+    ✅/❌ tugmalari + chek fayli (handlers/payment_notify.py)."""
+    await payment_notify.notify_admins_new_payment(context.bot, payment, user=user, file_kind=file_kind)
 
 
 # ============================================================
@@ -432,7 +417,11 @@ async def receive_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         verifier = payment_providers.get_bank_verifier()
         result = await verifier.verify_transaction(extracted, expected_amount=payment["amount"])
         if result.ok:
-            wallet.confirm_payment(payment_id, actor_id="kapitalbank_verifier", source="bank_api_verified")
+            if wallet.confirm_payment(payment_id, actor_id="kapitalbank_verifier", source="bank_api_verified"):
+                await payment_notify.notify_admins_payment_confirmed(
+                    context.bot, wallet.get_payment(payment_id),
+                    "bank cheki avtomatik tekshiruvdan o'tdi", user=user,
+                )
             verified_automatically = True
 
     if verified_automatically:
@@ -447,7 +436,10 @@ async def receive_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "yangilanadi va sizga xabar beriladi.",
             reply_markup=main_menu_keyboard(),
         )
-        await _notify_admins_new_receipt(context, wallet.get_payment(payment_id), user)
+        await _notify_admins_new_receipt(
+            context, wallet.get_payment(payment_id), user,
+            file_kind="photo" if update.message.photo else "document",
+        )
 
     context.user_data.clear()
     return ConversationHandler.END
