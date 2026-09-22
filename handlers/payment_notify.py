@@ -10,17 +10,24 @@ Foydalanuvchi hisobini to'ldirganda (yoki chek yuborganda) barcha adminlarga
 + to'lov tafsilotlari (Telegram ID, usul, status, payment ID, sana, hozirgi
 balans, chekdan AI o'qigan ma'lumot) va chek rasmi/fayli.
 
-Ikki xil xabar bor:
-1) notify_admins_new_payment()      — TASDIQ KUTAYOTGAN to'lov (tugmalar bilan).
-2) notify_admins_payment_confirmed() — avtomatik tasdiqlangan to'lov
-   (bank API / Kapitalbank webhook) haqida faqat MA'LUMOT (tugmasiz).
+Uch xil xabar bor:
+1) notify_admins_new_payment()             — TASDIQ KUTAYOTGAN to'lov
+   (bot tekshiruvidan o'tgan bo'lsa ham, hali ham ✅/❌/⚠️ tugmalari bilan —
+   admin istalgan vaqt bot avtomatik qabul qilishidan OLDIN qaror qilishi
+   mumkin).
+2) notify_admins_payment_confirmed()       — admin o'zi tasdiqlagan/qo'lda
+   tekshirilgan to'lov haqida MA'LUMOT (tugmasiz).
+3) notify_admins_payment_auto_confirmed()  — BOT 1 soatdan keyin o'zi qabul
+   qilgan to'lov haqida xabar, "🚫 Soxta deb qaytarish" tugmasi bilan
+   (admin keyin ham soxta ekanini aniqlasa, shu tugma orqali qaytaradi).
 
 Tugmalar callback_data: payn:approve:<payment_id> | payn:reject:<payment_id>
-| payn:susp:<payment_id>. Ularni admin_payment_decision_callback() qayta
-ishlaydi (bot.py'da pattern="^payn:" bilan ro'yxatdan o'tkazilgan). Haqiqiy
-tasdiqlash/rad etish /developer > 💳 To'lovlar paneli bilan BIR XIL
-mantiq orqali bajariladi (payment_admin.apply_payment_action → wallet.py),
-shuning uchun balansga pul qo'shish yagona joyda (wallet.confirm_payment)
+| payn:susp:<payment_id> | payn:revoke:<payment_id>. Ularni
+admin_payment_decision_callback() qayta ishlaydi (bot.py'da pattern="^payn:"
+bilan ro'yxatdan o'tkazilgan). Haqiqiy tasdiqlash/rad etish/qaytarish
+/developer > 💳 To'lovlar paneli bilan BIR XIL mantiq orqali bajariladi
+(payment_admin.apply_payment_action → wallet.py), shuning uchun balansga
+pul qo'shish/ayirish yagona joyda (wallet.confirm_payment / revoke_payment)
 va idempotent qoladi.
 """
 
@@ -36,9 +43,8 @@ from handlers import payment_admin
 logger = logging.getLogger(__name__)
 
 _METHOD_LABELS = {
-    wallet.METHOD_ECOMMERCE: "Kapitalbank (onlayn to'lov)",
-    wallet.METHOD_BANK_RECEIPT: "Bank cheki (avtomatik tekshiruv urinishi)",
-    wallet.METHOD_MANUAL_RECEIPT: "Chek (admin qo'lda tekshiradi)",
+    wallet.METHOD_BANK_RECEIPT: "Chek (bot avval tekshiradi)",
+    wallet.METHOD_MANUAL_RECEIPT: "Chek (to'g'ridan admin tekshiradi)",
 }
 
 _STATUS_LABELS = {
@@ -50,10 +56,13 @@ _STATUS_LABELS = {
     wallet.STATUS_MANUAL_REVIEW: "⚠️ Qo'lda tekshirish kerak",
     wallet.STATUS_REJECTED: "❌ Rad etilgan",
     wallet.STATUS_SUSPICIOUS: "⚠️ Shubhali",
+    wallet.STATUS_AUTO_HOLD: "🤖 Bot tasdiqladi — admin javobi kutilmoqda",
+    wallet.STATUS_REVOKED: "🚫 Soxta deb qaytarilgan",
 }
 
 # Chekdan AI o'qigan maydonlar (faqat yordamchi ma'lumot — TASDIQ EMAS).
-_RECEIPT_FIELDS = ("amount", "transaction_id", "date", "time", "sender", "receiver", "provider", "confidence")
+_RECEIPT_FIELDS = ("amount", "transaction_id", "date", "time", "sender", "receiver",
+                    "receiver_card", "provider", "confidence")
 
 
 def _esc(value) -> str:
@@ -118,6 +127,13 @@ def build_admin_text(payment: dict, username=None, full_name=None, *, awaiting_d
     if payment.get("provider_transaction_id"):
         lines.append(f"🏦 Provider tranzaksiya ID: <code>{_esc(payment['provider_transaction_id'])}</code>")
 
+    if payment.get("status") == wallet.STATUS_AUTO_HOLD and payment.get("auto_confirm_at"):
+        due = _esc(str(payment["auto_confirm_at"])[:16].replace("T", " "))
+        lines.append(
+            f"\n🤖 <b>Bot tekshirdi: karta/ism/summa TO'G'RI.</b> Javob bermasangiz, "
+            f"bot to'lovni <b>{due}</b> da o'zi qabul qiladi."
+        )
+
     extracted = ((payment.get("receipt") or {}).get("extracted")) or {}
     shown = [(k, extracted[k]) for k in _RECEIPT_FIELDS if extracted.get(k) is not None]
     if shown:
@@ -129,6 +145,11 @@ def build_admin_text(payment: dict, username=None, full_name=None, *, awaiting_d
                 f"\n⚠️ <b>Diqqat:</b> chekdagi summa ({fmt_sum(seen)}) foydalanuvchi "
                 f"kiritgan summadan ({amount}) FARQ qiladi!"
             )
+
+    bot_check = ((payment.get("extra") or {}).get("bot_check")) or {}
+    notes = bot_check.get("notes")
+    if notes and payment.get("status") not in (wallet.STATUS_AUTO_HOLD, wallet.STATUS_PAID):
+        lines.append("\n🤖 <b>Bot tekshiruvi:</b> " + "; ".join(_esc(n) for n in notes))
     return "\n".join(lines)
 
 
@@ -140,6 +161,14 @@ def approval_keyboard(payment_id: str, allow_suspicious: bool = True) -> InlineK
     if allow_suspicious:
         rows.append([InlineKeyboardButton("⚠️ Shubhali deb belgilash", callback_data=f"payn:susp:{payment_id}")])
     return InlineKeyboardMarkup(rows)
+
+
+def revoke_keyboard(payment_id: str) -> InlineKeyboardMarkup:
+    """Bot avtomatik qabul qilgan (yoki admin allaqachon tasdiqlagan) to'lov
+    KEYINCHALIK soxta deb topilsa — shu tugma orqali qaytariladi."""
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("🚫 Soxta deb qaytarish", callback_data=f"payn:revoke:{payment_id}"),
+    ]])
 
 
 async def _resolve_user(bot, user_id: int, user=None):
@@ -193,7 +222,7 @@ async def notify_admins_new_payment(bot, payment: dict, user=None, file_kind=Non
 
 
 async def notify_admins_payment_confirmed(bot, payment: dict, source_label: str = "", user=None) -> int:
-    """Avtomatik tasdiqlangan to'lov (bank API / webhook) haqida faqat MA'LUMOT (tugmasiz)."""
+    """Admin o'zi tasdiqlagan/qo'lda tekshirgan to'lov haqida faqat MA'LUMOT (tugmasiz)."""
     if not payment or not config.ADMIN_IDS:
         return 0
     username, full_name = await _resolve_user(bot, payment["user_id"], user)
@@ -208,11 +237,33 @@ async def notify_admins_payment_confirmed(bot, payment: dict, source_label: str 
     return delivered
 
 
+async def notify_admins_payment_auto_confirmed(bot, payment: dict, user=None) -> int:
+    """🤖 Bot to'lovni O'ZI (admin 1 soat ichida javob bermagani uchun) qabul
+    qilganda adminlarga xabar — "🚫 Soxta deb qaytarish" tugmasi bilan, chunki
+    admin buni keyin ham ko'rib chiqib soxta deb topishi mumkin."""
+    if not payment or not config.ADMIN_IDS:
+        return 0
+    username, full_name = await _resolve_user(bot, payment["user_id"], user)
+    text = build_admin_text(
+        payment, username, full_name, awaiting_decision=False,
+        source_label="bot 1 soatdan keyin avtomatik qabul qildi",
+    )
+    keyboard = revoke_keyboard(payment["payment_id"])
+    delivered = 0
+    for admin_id in config.ADMIN_IDS:
+        try:
+            await bot.send_message(admin_id, text, parse_mode="HTML", reply_markup=keyboard)
+            delivered += 1
+        except Exception as e:
+            logger.warning(f"🤖 Adminni ({admin_id}) avtomatik qabul haqida xabardor qilib bo'lmadi: {e}")
+    return delivered
+
+
 # ============================================================
-# Admin tugmalari: ✅ Tasdiqlash / ❌ Rad etish / ⚠️ Shubhali
+# Admin tugmalari: ✅ Tasdiqlash / ❌ Rad etish / ⚠️ Shubhali / 🚫 Qaytarish
 # ============================================================
 
-_ACTIONS = {"approve": "approve", "reject": "reject", "susp": "suspicious"}
+_ACTIONS = {"approve": "approve", "reject": "reject", "susp": "suspicious", "revoke": "revoke"}
 
 
 async def admin_payment_decision_callback(update, context):
@@ -245,6 +296,34 @@ async def admin_payment_decision_callback(update, context):
         except Exception as e:
             logger.info(f"💳 Admin xabarini yangilab bo'lmadi: {e}")
 
+    who = _esc(admin.full_name or admin.id)
+
+    # 🚫 "Soxta deb qaytarish" — AKSINCHA, faqat ALLAQACHON 'paid' (bot
+    # avtomatik yoki admin tasdiqlagan) to'lovga nisbatan ishlatiladi.
+    if action == "revoke":
+        if payment["status"] != wallet.STATUS_PAID:
+            await query.answer(
+                f"ℹ️ Faqat tasdiqlangan to'lovni qaytarish mumkin (hozirgi holat: {status_label(payment['status'])}).",
+                show_alert=True,
+            )
+            return
+        result = payment_admin.apply_payment_action(payment_id, action, admin.id)
+        ok, message = result
+        if not ok:
+            await query.answer(message, show_alert=True)
+            return
+        await query.answer(message)
+        payment = wallet.get_payment(payment_id) or payment
+        await _edit(f"🚫 <b>SOXTA DEB QAYTARILDI</b> — {who}", None)
+
+        from handlers import wallet_ui  # kech import: wallet_ui ham shu modulni import qiladi
+        new_balance = wallet.get_balance(payment["user_id"])
+        await wallet_ui.notify_user_payment_revoked(
+            context.bot, payment, new_balance, reason="Admin tomonidan soxta deb topildi.",
+        )
+        logger.info(f"🚫 Admin qarori (tugma): admin_id={admin.id}, payment_id={payment_id}, action=revoke.")
+        return
+
     # Boshqa admin (yoki /developer paneli) allaqachon hal qilgan bo'lsa — takror amal qilinmaydi.
     if payment["status"] in (wallet.STATUS_PAID, wallet.STATUS_REJECTED):
         await query.answer(f"ℹ️ Bu to'lov allaqachon ko'rib chiqilgan: {status_label(payment['status'])}", show_alert=True)
@@ -258,7 +337,6 @@ async def admin_payment_decision_callback(update, context):
     await query.answer(message)
 
     payment = wallet.get_payment(payment_id) or payment
-    who = _esc(admin.full_name or admin.id)
     if action == "approve":
         await _edit(f"✅ <b>TASDIQLANDI</b> — {who}", None)
     elif action == "reject":

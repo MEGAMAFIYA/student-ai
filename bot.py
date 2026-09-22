@@ -41,7 +41,6 @@ import config
 from config import TELEGRAM_TOKEN, PUBLIC_BASE_URL
 import pending_input
 import wallet
-import payment_providers
 import webapp_security
 import mobile_auth
 import mobile_api
@@ -53,7 +52,7 @@ from handlers import (
     menu, universal_chat, course_work, translate as translate_handler, images_to_pdf,
     edit_pdf, guide, inline_query, developer, pptx_gen, essay, quiz, solve, summarize, managed_tests,
     grammar, citation, my_files, reminders, voice, wallet_ui, tabrik, rasim,
-    vid, qoshiq, kino, mention_dispatch, pro_tabrik, my_cabinet, payment_notify,
+    vid, qoshiq, kino, mention_dispatch, pro_tabrik, my_cabinet, payment_notify, payment_auto,
 )
 from pdf_tools import make_pdf
 
@@ -127,6 +126,15 @@ async def _post_init(application):
         reminders.reschedule_all(application)
     except Exception as e:
         logger.error(f"⏰ Eslatmalarni qayta rejalashtirishda xato: {type(e).__name__}: {e}", exc_info=True)
+
+    # 🤖 Bot ishga tushganda (har qayta deployda ham) storage'da saqlangan
+    # BARCHA 'auto_hold' to'lovlarni qayta rejalashtiramiz — shu orqali
+    # 1 soatlik avtomatik qabul muddati deploy/restart paytida yo'qolmaydi
+    # (handlers/payment_auto.py'dagi izohga qarang).
+    try:
+        payment_auto.reschedule_all(application)
+    except Exception as e:
+        logger.error(f"🤖 To'lovlarni qayta rejalashtirishda xato: {type(e).__name__}: {e}", exc_info=True)
 
 
 async def _on_business_message(update, context):
@@ -324,10 +332,9 @@ def _build_music_icon_png() -> bytes:
 # ============================================================
 # 🎨 /rasim MINI APP — statik fayllarni xizmat qilish + rasm yuklash
 # ============================================================
-# MUHIM: bu HTTP server ALOHIDA OS thread'da ishlaydi (yuqoridagi
-# Kapitalbank webhook izohiga qarang), lekin rasmni Telegram'ga
-# YUBORISH uchun asyncio Bot obyekti (asosiy event loop) kerak — shuning
-# uchun `_MAIN_LOOP`/`_BOT_INSTANCE` global o'zgaruvchilarga `main()`
+# MUHIM: bu HTTP server ALOHIDA OS thread'da ishlaydi, lekin rasmni
+# Telegram'ga YUBORISH uchun asyncio Bot obyekti (asosiy event loop) kerak —
+# shuning uchun `_MAIN_LOOP`/`_BOT_INSTANCE` global o'zgaruvchilarga `main()`
 # ichida `app`/`loop` tayyor bo'lgach yoziladi, bu yerdan esa
 # `asyncio.run_coroutine_threadsafe()` orqali xavfsiz chaqiriladi.
 _MAIN_LOOP = None
@@ -956,8 +963,10 @@ class HealthHandler(BaseHTTPRequestHandler):
         if mobile_api.handle_post(self):
             return
 
-        """💳 Kapitalbank to'lov webhook'i VA 🎨 /rasim Mini App rasm
-        yuklash so'rovi shu yerga keladi."""
+        # 🎨 /rasim Mini App rasm yuklash so'rovi shu yerga keladi
+        # (to'lov endi Kapitalbank webhook'i orqali EMAS — chek + bot
+        # tekshiruvi orqali amalga oshadi: handlers/wallet_ui.py va
+        # handlers/payment_auto.py ga qarang).
         if self.path.startswith("/api/draw/"):
             _handle_draw_api(self)
             return
@@ -974,70 +983,8 @@ class HealthHandler(BaseHTTPRequestHandler):
             _handle_rasim_upload(self)
             return
 
-        if self.path != "/webhook/kapitalbank":
-            self.send_response(404)
-            self.end_headers()
-            return
-
-        try:
-            length = int(self.headers.get("Content-Length", 0))
-            raw_body = self.rfile.read(length) if length > 0 else b""
-            headers = {k: v for k, v in self.headers.items()}
-
-            provider = payment_providers.get_ecommerce_provider()
-            if not provider.verify_webhook_signature(headers, raw_body):
-                logger.warning("💳 Kapitalbank webhook: imzo tekshiruvidan o'tmadi yoki sozlanmagan — rad etildi.")
-                self.send_response(403)
-                self.end_headers()
-                self.wfile.write(b'{"status":"invalid_signature"}')
-                return
-
-            event = provider.parse_webhook(raw_body)
-            if not event.ok:
-                logger.error(f"💳 Kapitalbank webhook: parse xato — {event.error}")
-                self.send_response(400)
-                self.end_headers()
-                self.wfile.write(b'{"status":"parse_error"}')
-                return
-
-            if event.status == "success":
-                if event.provider_transaction_id:
-                    try:
-                        wallet.register_provider_transaction(event.payment_id, provider.name, event.provider_transaction_id)
-                    except wallet.DuplicateTransactionError as e:
-                        logger.warning(f"💳 Kapitalbank webhook: DUPLICATE tranzaksiya — {e}")
-                        self.send_response(200)
-                        self.end_headers()
-                        self.wfile.write(b'{"status":"already_used"}')
-                        return
-                if wallet.confirm_payment(event.payment_id, actor_id="kapitalbank_webhook", source="webhook"):
-                    _notify_admins_payment_confirmed_threadsafe(event.payment_id, "Kapitalbank onlayn to'lov")
-
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(b'{"status":"ok"}')
-        except Exception as e:
-            logger.error(f"💳 Kapitalbank webhook qayta ishlashda xato: {type(e).__name__}: {e}", exc_info=True)
-            self.send_response(500)
-            self.end_headers()
-
-
-def _notify_admins_payment_confirmed_threadsafe(payment_id: str, source_label: str) -> None:
-    """HTTP (webhook) thread'idan adminlarga "balans to'ldirildi" xabarini
-    botning asosiy event loop'i orqali yuboradi. Webhook javobini
-    KECHIKTIRMAYDI (natija kutilmaydi) va xato bo'lsa webhookni buzmaydi."""
-    try:
-        if _MAIN_LOOP is None or _BOT_INSTANCE is None:
-            return
-        payment = wallet.get_payment(payment_id)
-        if not payment:
-            return
-        asyncio.run_coroutine_threadsafe(
-            payment_notify.notify_admins_payment_confirmed(_BOT_INSTANCE, payment, source_label), _MAIN_LOOP
-        )
-    except Exception as e:
-        logger.warning(f"💳 Adminlarga to'lov xabarini rejalashtirib bo'lmadi: {e}")
+        self.send_response(404)
+        self.end_headers()
 
 
 def start_health_server():
@@ -1275,10 +1222,11 @@ def build_reminders_conv():
 
 
 def build_wallet_topup_conv():
-    """➕ Balansni to'ldirish — summa tanlash -> to'lov usuli -> (bank/manual
-    uchun) chek qabul qilish. E-commerce usulida chek kutish shart emas —
-    to'lov havolasi ko'rsatilgach conversation darhol tugaydi (haqiqiy
-    to'lov Kapitalbank'ning o'z sahifasida, webhook orqali tasdiqlanadi)."""
+    """➕ Balansni to'ldirish — summa tanlash -> to'lov usuli -> chek qabul
+    qilish. "Chek yuborish" usulida bot chekni o'zi tekshiradi (karta/ism/
+    summa) va mos kelsa admin javobini yoki 1 soatlik avtomatik qabulni
+    kutadi; "To'g'ridan admin tekshiradi" usulida bot tekshiruvi
+    o'tkazilmaydi (to'g'ridan-to'g'ri manual_review)."""
     return ConversationHandler(
         entry_points=[CallbackQueryHandler(wallet_ui.entry_topup, pattern="^menu:wallet_topup$")],
         states={

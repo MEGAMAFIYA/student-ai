@@ -16,17 +16,21 @@ ARXITEKTURA — storage.py bilan BIR XIL prinsip:
 - MUHIM: `_lock` — bu ASYNCIO emas, balki OS-DARAJASIDAGI thread lock.
   Buning ikkita sababi bor: (1) storage.py bilan bir xil pattern —
   ai bot handlerlari sinxron/async aralash chaqirilishi mumkin; (2) bu
-  BUYUK ustunlik beradi: kelajakda HTTP webhook serveri (bot.py'dagi
-  HealthHandler, ALOHIDA OS thread'da ishlaydi) ham SHU modulni to'g'ridan
-  to'g'ri, xavfsiz chaqira oladi — asyncio.Lock buni qila olmas edi.
+  BUYUK ustunlik beradi: bot.py'dagi HealthHandler (ALOHIDA OS thread'da
+  ishlaydi, mobile_api) ham SHU modulni to'g'ridan-to'g'ri, xavfsiz chaqira
+  oladi — asyncio.Lock buni qila olmas edi.
 - Barcha pul miqdorlari — FAQAT INTEGER (so'm). Floating point HECH QACHON
   ishlatilmaydi (spetsifikatsiya talabi).
 
 XAVFSIZLIK / IDEMPOTENCY:
-- `confirm_payment()` — YAGONA joy, u orqali balansga pul qo'shiladi (bank
-  to'lovlari uchun). U to'liq atomik: agar payment allaqachon "paid" bo'lsa,
-  IKKINCHI marta chaqirilganda HECH NARSA qilmaydi (webhook qayta-qayta
-  kelsa ham, admin ikki marta "Tasdiqlash" bossa ham xavfsiz).
+- `confirm_payment()` / `auto_confirm_payment()` — balansga pul qo'shiladigan
+  YAGONA joylar (ikkalasi ham bitta ichki `_confirm_locked()` orqali). Ular
+  to'liq atomik: payment allaqachon "paid" bo'lsa, IKKINCHI marta
+  chaqirilganda HECH NARSA qilmaydi (admin ikki marta "Tasdiqlash" bossa
+  yoki admin va avtomatik qabul bir vaqtda ishlasa ham xavfsiz).
+- `revoke_payment()` — soxta deb topilgan to'lovni QAYTARADI: balansdan shu
+  summa ayriladi. Foydalanuvchi pulni allaqachon ishlatib bo'lgan bo'lsa,
+  balans MANFIY (qarz) bo'lib qoladi — keyingi to'ldirishlar avval qarzni yopadi.
 - `debit_balance()` / `charge_for_feature()` — pullik funksiyadan
   foydalanishda balansni yechadi; lock ichida balans qayta tekshiriladi,
   shuning uchun bir necha tez-tez bosishda balans manfiy bo'lib
@@ -63,21 +67,31 @@ STATUS_EXPIRED = "expired"
 STATUS_MANUAL_REVIEW = "manual_review"
 STATUS_REJECTED = "rejected"
 STATUS_SUSPICIOUS = "suspicious"
+# 🤖 Bot chekni tekshirdi (karta/ism/summa to'g'ri) — admin javobi kutilmoqda.
+# Admin belgilangan muddat (config.PAYMENT_AUTO_CONFIRM_SECONDS, standart 1 soat)
+# ichida javob bermasa, bot o'zi qabul qiladi (auto_confirm_payment).
+STATUS_AUTO_HOLD = "auto_hold"
+# 🚫 To'lov ilgari qabul qilingan edi, keyin admin SOXTA deb topib QAYTARDI.
+STATUS_REVOKED = "revoked"
 
 # Admin panelidagi 4 ta bo'lim shu statuslarni guruhlaydi:
-STATUS_GROUP_UNCHECKED = (STATUS_PENDING, STATUS_MANUAL_REVIEW)
+STATUS_GROUP_UNCHECKED = (STATUS_PENDING, STATUS_MANUAL_REVIEW, STATUS_AUTO_HOLD)
 STATUS_GROUP_APPROVED = (STATUS_PAID,)
-STATUS_GROUP_REJECTED = (STATUS_REJECTED, STATUS_FAILED, STATUS_CANCELLED, STATUS_EXPIRED)
+STATUS_GROUP_REJECTED = (STATUS_REJECTED, STATUS_FAILED, STATUS_CANCELLED, STATUS_EXPIRED, STATUS_REVOKED)
+# confirm_payment() qayta tasdiqlay OLMAYDIGAN (yakunlangan/o'lik) statuslar:
+STATUS_DEAD = (STATUS_REJECTED, STATUS_FAILED, STATUS_CANCELLED, STATUS_EXPIRED, STATUS_REVOKED)
 STATUS_GROUP_SUSPICIOUS = (STATUS_SUSPICIOUS,)
 
-METHOD_ECOMMERCE = "kapitalbank_ecommerce"
-METHOD_BANK_RECEIPT = "bank_receipt"          # 2-usul: chek + avtomatik tekshirish urinishi
-METHOD_MANUAL_RECEIPT = "manual_receipt"      # 3-usul: to'g'ridan-to'g'ri admin qo'lda tekshiradi
+METHOD_BANK_RECEIPT = "bank_receipt"          # 1-usul: chek + bot tekshiruvi (+ admin, yoki 1 soatdan keyin avtomatik)
+METHOD_MANUAL_RECEIPT = "manual_receipt"      # 2-usul: to'g'ridan-to'g'ri admin qo'lda tekshiradi
+# (Eski Kapitalbank e-commerce usuli olib tashlangan; saqlangan eski to'lov
+# yozuvlaridagi "kapitalbank_ecommerce" qiymati shunchaki matn sifatida qoladi.)
 
 TX_TOPUP = "topup"                # balans to'ldirish (kredit)
 TX_FEATURE_CHARGE = "feature_charge"  # pullik funksiya (debet)
 TX_REFUND = "refund"              # qaytarish (kredit)
 TX_ADMIN_ADJUST = "admin_adjust"  # admin qo'lda tuzatishi (kredit yoki debet)
+TX_REVERSAL = "reversal"          # soxta deb topilgan to'lovni qaytarish (debet — balans manfiy bo'lishi MUMKIN)
 
 # ------------------------------------------------------------------
 # 🔒 Reservation (hold) statuslari — pullik funksiya ISHGA TUSHIRILGANDA
@@ -810,10 +824,14 @@ def get_admin_financial_stats() -> dict:
         reserved_balance = sum(r["amount"] for r in _data["reservations"].values() if r["status"] == RES_STATUS_RESERVED)
         pending_payments = sum(1 for p in _data["payments"].values() if p["status"] in STATUS_GROUP_UNCHECKED)
         manual_reviews = sum(1 for p in _data["payments"].values() if p["status"] == STATUS_MANUAL_REVIEW)
+        auto_hold_payments = sum(1 for p in _data["payments"].values() if p["status"] == STATUS_AUTO_HOLD)
         refund_tx_count = sum(1 for t in _data["transactions"] if t["type"] == TX_REFUND)
         released_or_expired = sum(
             1 for r in _data["reservations"].values() if r["status"] in (RES_STATUS_RELEASED, RES_STATUS_EXPIRED)
         )
+        total_revoked = sum(-t["amount"] for t in _data["transactions"] if t["type"] == TX_REVERSAL)
+        revoked_payments = sum(1 for p in _data["payments"].values() if p["status"] == STATUS_REVOKED)
+        debt_users = sum(1 for w in _data["wallets"].values() if int(w.get("balance", 0)) < 0)
     return {
         "total_balance": total_balance,
         "total_deposits": total_deposits,
@@ -822,7 +840,11 @@ def get_admin_financial_stats() -> dict:
         "reserved_balance": reserved_balance,
         "pending_payments": pending_payments,
         "manual_reviews": manual_reviews,
+        "auto_hold_payments": auto_hold_payments,
         "failed_refunded_ops": refund_tx_count + released_or_expired,
+        "total_revoked": total_revoked,
+        "revoked_payments": revoked_payments,
+        "debt_users": debt_users,
     }
 
 
@@ -856,6 +878,11 @@ def create_payment(user_id: int, amount: int, provider: str, method: str,
         "rejected_at": None,
         "rejected_by": None,
         "reject_reason": None,
+        "auto_confirm_at": None,   # STATUS_AUTO_HOLD: bot o'zi qabul qiladigan vaqt (ISO, UTC)
+        "auto_confirmed": False,   # True — to'lovni admin emas, BOT (muddat tugagach) qabul qilgan
+        "revoked_at": None,
+        "revoked_by": None,
+        "revoke_reason": None,
     }
     with _lock:
         _data["payments"][payment_id] = payment
@@ -966,15 +993,50 @@ def set_payment_status(payment_id: str, status: str, actor_id=None, reason: str 
     return True
 
 
+def _confirm_locked(payment: dict, actor_id, source: str, log_prefix: str = "") -> bool:
+    """`_lock` ALLAQACHON ushlangan holatda chaqiriladi. Balansga pul
+    qo'shiladigan YAGONA ichki joy (confirm_payment va auto_confirm_payment
+    ikkalasi shuni ishlatadi). False — allaqachon paid yoki o'lik status."""
+    payment_id = payment["payment_id"]
+    if payment["status"] == STATUS_PAID:
+        logger.info(f"💳 confirm: ALLAQACHON tasdiqlangan (idempotent no-op), payment_id={payment_id}, source={source}.")
+        _log_audit_locked("PAYMENT_CONFIRM_DUPLICATE_IGNORED", actor_id=actor_id, payment_id=payment_id,
+                           user_id=payment["user_id"], amount=payment["amount"], details=f"source={source}")
+        return False
+
+    if payment["status"] in STATUS_DEAD:
+        logger.warning(f"💳 confirm: o'lik holatdagi to'lovni tasdiqlab bo'lmaydi, payment_id={payment_id}, status={payment['status']}.")
+        return False
+
+    user_id = payment["user_id"]
+    amount = payment["amount"]
+
+    payment["status"] = STATUS_PAID
+    payment["confirmed_at"] = _now_iso()
+    payment["confirmed_by"] = actor_id
+
+    wallet = _data["wallets"].setdefault(str(user_id), {"balance": 0})
+    before = int(wallet["balance"])
+    after = before + amount
+    wallet["balance"] = after
+    _new_tx_locked(user_id, TX_TOPUP, amount, before, after,
+                   description=f"Balansni to'ldirish ({payment['method']})",
+                   related_payment_id=payment_id)
+    _log_audit_locked("PAYMENT_CONFIRMED", actor_id=actor_id, payment_id=payment_id,
+                       user_id=user_id, amount=amount, details=f"source={source}")
+    logger.info(f"💳✅ To'lov TASDIQLANDI: payment_id={payment_id}, user_id={user_id}, amount={amount}, source={source}, actor={actor_id}.")
+    return True
+
+
 def confirm_payment(payment_id: str, actor_id=None, source: str = "manual") -> bool:
-    """💚 YAGONA joy — bu orqali to'lov TASDIQLANADI va foydalanuvchi
-    balansiga pul QO'SHILADI. TO'LIQ ATOMIK va IDEMPOTENT:
+    """💚 To'lovni TASDIQLAYDI va foydalanuvchi balansiga pul QO'SHADI.
+    TO'LIQ ATOMIK va IDEMPOTENT:
     - Agar payment topilmasa -> False.
     - Agar payment ALLAQACHON 'paid' bo'lsa -> HECH NARSA qilmaydi, False
-      qaytaradi (webhook necha marta kelsa ham, admin necha marta tugma
-      bossa ham — foydalanuvchi IKKINCHI marta kredit qilinmaydi).
-    - Agar payment 'rejected'/'failed'/'cancelled'/'expired' bo'lsa ->
-      False (o'lik holatdagi to'lovni qayta tasdiqlab bo'lmaydi).
+      qaytaradi (admin necha marta tugma bossa ham — foydalanuvchi IKKINCHI
+      marta kredit qilinmaydi).
+    - Agar payment 'rejected'/'failed'/'cancelled'/'expired'/'revoked' bo'lsa
+      -> False (o'lik holatdagi to'lovni qayta tasdiqlab bo'lmaydi).
     - Aks holda: status='paid', balans += amount, transaction+audit yoziladi.
     """
     with _lock:
@@ -982,38 +1044,9 @@ def confirm_payment(payment_id: str, actor_id=None, source: str = "manual") -> b
         if not payment:
             logger.warning(f"💳 confirm_payment: topilmadi, payment_id={payment_id}.")
             return False
-
-        if payment["status"] == STATUS_PAID:
-            logger.info(f"💳 confirm_payment: ALLAQACHON tasdiqlangan (idempotent no-op), payment_id={payment_id}, source={source}.")
-            _log_audit_locked("PAYMENT_CONFIRM_DUPLICATE_IGNORED", actor_id=actor_id, payment_id=payment_id,
-                               user_id=payment["user_id"], amount=payment["amount"], details=f"source={source}")
-            _save()
-            return False
-
-        if payment["status"] in (STATUS_REJECTED, STATUS_FAILED, STATUS_CANCELLED, STATUS_EXPIRED):
-            logger.warning(f"💳 confirm_payment: o'lik holatdagi to'lovni tasdiqlab bo'lmaydi, payment_id={payment_id}, status={payment['status']}.")
-            return False
-
-        user_id = payment["user_id"]
-        amount = payment["amount"]
-
-        payment["status"] = STATUS_PAID
-        payment["confirmed_at"] = _now_iso()
-        payment["confirmed_by"] = actor_id
-
-        wallet = _data["wallets"].setdefault(str(user_id), {"balance": 0})
-        before = int(wallet["balance"])
-        after = before + amount
-        wallet["balance"] = after
-        _new_tx_locked(user_id, TX_TOPUP, amount, before, after,
-                       description=f"Balansni to'ldirish ({payment['method']})",
-                       related_payment_id=payment_id)
-        _log_audit_locked("PAYMENT_CONFIRMED", actor_id=actor_id, payment_id=payment_id,
-                           user_id=user_id, amount=amount, details=f"source={source}")
+        ok = _confirm_locked(payment, actor_id, source)
         _save()
-
-    logger.info(f"💳✅ To'lov TASDIQLANDI: payment_id={payment_id}, user_id={user_id}, amount={amount}, source={source}, actor={actor_id}.")
-    return True
+    return ok
 
 
 def reject_payment(payment_id: str, actor_id=None, reason: str = "") -> bool:
@@ -1033,8 +1066,127 @@ def mark_manual_review(payment_id: str, reason: str = "") -> bool:
 
 
 def approve_manual_payment(payment_id: str, actor_id) -> bool:
-    """Admin panelidan '✅ Tasdiqlash' bosilganda chaqiriladi."""
+    """Admin '✅ Tasdiqlash' bosganda chaqiriladi (auto_hold holatida ham —
+    admin javobi bo'lsa, 1 soat KUTILMAYDI, pul darhol tushadi)."""
     ok = confirm_payment(payment_id, actor_id=actor_id, source="manual_admin")
     if ok:
         log_audit("MANUAL_PAYMENT_APPROVED", actor_id=actor_id, payment_id=payment_id)
     return ok
+
+
+# ============================================================
+# 🤖 Bot tekshiruvi o'tdi -> admin javobini kutish -> muddat tugagach avtomatik qabul
+# ============================================================
+
+def set_payment_extra(payment_id: str, key: str, value) -> bool:
+    """`payment["extra"][key] = value` (masalan bot tekshiruv natijasi,
+    adminlarga yuborilgan xabar id'lari). Pul harakati QILMAYDI."""
+    with _lock:
+        payment = _data["payments"].get(payment_id)
+        if not payment:
+            return False
+        payment.setdefault("extra", {})[key] = value
+        _save()
+    return True
+
+
+def mark_auto_hold(payment_id: str, delay_seconds: int, bot_check: dict | None = None) -> str | None:
+    """Bot chekni tekshirdi va HAMMASI to'g'ri — to'lov `auto_hold` holatiga
+    o'tadi. Admin `delay_seconds` ichida javob bermasa, auto_confirm_payment()
+    (fon jarayoni) to'lovni o'zi qabul qiladi. Qaytaradi: qabul qilish vaqti
+    (ISO) yoki None (to'lov topilmadi/allaqachon yakunlangan)."""
+    delay_seconds = max(int(delay_seconds), 0)
+    with _lock:
+        payment = _data["payments"].get(payment_id)
+        if not payment or payment["status"] in (STATUS_PAID,) + STATUS_DEAD:
+            return None
+        old_status = payment["status"]
+        due = _iso_plus_seconds(_now_iso(), delay_seconds)
+        payment["status"] = STATUS_AUTO_HOLD
+        payment["auto_confirm_at"] = due
+        if bot_check is not None:
+            payment.setdefault("extra", {})["bot_check"] = bot_check
+        _log_audit_locked("PAYMENT_AUTO_HOLD", payment_id=payment_id, user_id=payment["user_id"],
+                           amount=payment["amount"],
+                           details=f"{old_status} -> {STATUS_AUTO_HOLD}, avtomatik qabul: {due}")
+        _save()
+    logger.info(f"🤖 To'lov bot tekshiruvidan o'tdi, {delay_seconds}s kutiladi: payment_id={payment_id}, avtomatik qabul={due}.")
+    return due
+
+
+def get_due_auto_payments(now_iso: str | None = None) -> list[str]:
+    """Avtomatik qabul qilish vaqti KELGAN (auto_hold) to'lovlar id'lari."""
+    now = datetime.fromisoformat(now_iso or _now_iso())
+    with _lock:
+        rows = [
+            p["payment_id"] for p in _data["payments"].values()
+            if p["status"] == STATUS_AUTO_HOLD and p.get("auto_confirm_at")
+            and datetime.fromisoformat(p["auto_confirm_at"]) <= now
+        ]
+    return rows
+
+
+def auto_confirm_payment(payment_id: str, now_iso: str | None = None) -> bool:
+    """⏰ Muddat tugagach BOT to'lovni qabul qiladi. ATOMIK: to'lov hali
+    aynan 'auto_hold' holatida va vaqti kelgan bo'lsagina (bu tekshiruv
+    va kredit BITTA lock ichida) — shuning uchun admin shu tobda 'Rad etish'
+    yoki 'Shubhali' bosgan bo'lsa, pul HECH QACHON tushmaydi. False —
+    hech narsa qilinmadi."""
+    now = datetime.fromisoformat(now_iso or _now_iso())
+    with _lock:
+        payment = _data["payments"].get(payment_id)
+        if not payment or payment["status"] != STATUS_AUTO_HOLD:
+            return False
+        due = payment.get("auto_confirm_at")
+        if not due or datetime.fromisoformat(due) > now:
+            return False
+        ok = _confirm_locked(payment, actor_id="bot_auto", source="auto_after_hold")
+        if ok:
+            payment["auto_confirmed"] = True
+            _log_audit_locked("PAYMENT_AUTO_CONFIRMED", actor_id="bot_auto", payment_id=payment_id,
+                               user_id=payment["user_id"], amount=payment["amount"],
+                               details="Admin muddat ichida javob bermadi — bot bot-tekshiruvi asosida qabul qildi.")
+        _save()
+    return ok
+
+
+# ============================================================
+# 🚫 Soxta to'lovni QAYTARISH (balansdan ayirish — qarz bo'lishi mumkin)
+# ============================================================
+
+def revoke_payment(payment_id: str, actor_id=None, reason: str = "") -> dict | None:
+    """Qabul qilingan (paid) to'lov SOXTA deb topilsa — o'sha summa
+    foydalanuvchi balansidan AYRILADI. Foydalanuvchi pulni ishlatib
+    bo'lgan bo'lsa, balans MANFIY bo'ladi (qarz). Masalan: 10 000 tushdi,
+    8 000 ishlatildi (balans 2 000), soxta deb qaytarildi -> balans -8 000.
+
+    ATOMIK va IDEMPOTENT: faqat 'paid' to'lovni qaytarish mumkin, ikkinchi
+    marta chaqirilsa None qaytadi va balansga TEGILMAYDI. Muvaffaqiyatda
+    {'amount','balance_before','balance_after'} qaytaradi."""
+    with _lock:
+        payment = _data["payments"].get(payment_id)
+        if not payment or payment["status"] != STATUS_PAID:
+            return None
+
+        user_id = payment["user_id"]
+        amount = int(payment["amount"])
+        wallet = _data["wallets"].setdefault(str(user_id), {"balance": 0})
+        before = int(wallet["balance"])
+        after = before - amount
+        wallet["balance"] = after
+
+        payment["status"] = STATUS_REVOKED
+        payment["revoked_at"] = _now_iso()
+        payment["revoked_by"] = actor_id
+        payment["revoke_reason"] = reason
+
+        _new_tx_locked(user_id, TX_REVERSAL, -amount, before, after,
+                       description="To'lov soxta deb topildi — qaytarildi",
+                       related_payment_id=payment_id)
+        _log_audit_locked("PAYMENT_REVOKED", actor_id=actor_id, payment_id=payment_id,
+                           user_id=user_id, amount=amount,
+                           details=f"balans {before} -> {after}. {reason}")
+        _save()
+    logger.warning(f"🚫 To'lov QAYTARILDI (soxta): payment_id={payment_id}, user_id={user_id}, "
+                   f"-{amount}, balans {before}->{after}, admin={actor_id}.")
+    return {"amount": amount, "balance_before": before, "balance_after": after}

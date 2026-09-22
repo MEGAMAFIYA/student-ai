@@ -2213,10 +2213,15 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if ok:
             from handlers import wallet_ui
             payment = wallet.get_payment(payment_id)
-            if payment:
+            if payment and sub_action in ("approve", "reject"):
                 await wallet_ui.notify_user_payment_decision(
                     context.bot, payment, approved=(sub_action == "approve"),
                     reason="" if sub_action == "approve" else "Admin tomonidan rad etildi.",
+                )
+            elif payment and sub_action == "revoke":
+                new_balance = wallet.get_balance(payment["user_id"])
+                await wallet_ui.notify_user_payment_revoked(
+                    context.bot, payment, new_balance, reason="Admin tomonidan soxta deb topildi.",
                 )
         await _safe_edit_query(
             query, f"{message}\n\n" + pay_ui.payment_detail_text(payment_id),

@@ -1056,38 +1056,28 @@ _load_runtime_overrides()
 
 
 # ============================================================
-# 💳 TO'LOV TIZIMI — Kapitalbank sozlamalari (FAQAT konfiguratsiya interfeysi)
+# 💳 TO'LOV TIZIMI — chek orqali to'ldirish sozlamalari
 # ============================================================
-# MUHIM: bu yerda Kapitalbank'ning haqiqiy API endpoint'lari, so'rov/javob
-# formati yoki avtorizatsiya sxemasi HECH QACHON o'ylab topilmagan — faqat
-# .env orqali beriladigan SOZLAMA NOMLARI shu yerda e'lon qilingan. Haqiqiy
-# qiymatlar (agar mavjud bo'lsa) rasmiy Kapitalbank hujjatlaridan olinishi
-# kerak (payment_providers.py'dagi KapitalbankPaymentProvider va
-# KapitalbankTransactionVerifier'ga qarang — ular shu sozlamalar orqali
-# ishlaydi, lekin haqiqiy HTTP chaqiruvlari hali TODO sifatida qoldirilgan).
-#
-# Kerakli environment variables (hali BIRORTASI ham majburiy emas — bo'sh
-# bo'lsa, adapter "sozlanmagan" holatda ishlaydi va har doim manual_review'ga
-# yo'naltiradi):
-#   KAPITALBANK_MERCHANT_ID       — savdo nuqtasi/merchant identifikatori
-#   KAPITALBANK_TERMINAL_ID       — terminal identifikatori (agar kerak bo'lsa)
-#   KAPITALBANK_API_BASE_URL      — API bazaviy manzili (masalan https://...)
-#   KAPITALBANK_API_KEY           — API kalit/token
-#   KAPITALBANK_API_SECRET        — (agar imzo/HMAC kerak bo'lsa)
-#   KAPITALBANK_WEBHOOK_SECRET    — webhook imzosini tekshirish uchun maxfiy kalit
-KAPITALBANK_MERCHANT_ID = os.getenv("KAPITALBANK_MERCHANT_ID", "")
-KAPITALBANK_TERMINAL_ID = os.getenv("KAPITALBANK_TERMINAL_ID", "")
-KAPITALBANK_API_BASE_URL = os.getenv("KAPITALBANK_API_BASE_URL", "")
-KAPITALBANK_API_KEY = os.getenv("KAPITALBANK_API_KEY", "")
-KAPITALBANK_API_SECRET = os.getenv("KAPITALBANK_API_SECRET", "")
-KAPITALBANK_WEBHOOK_SECRET = os.getenv("KAPITALBANK_WEBHOOK_SECRET", "")
-
-# To'lov (bank/paynet) rekvizitlari — foydalanuvchiga "🟡 Bank/Paynet orqali
-# o'tkazma" tanlaganda ko'rsatiladi. .env orqali sozlanadi (kod ichida
-# to'qib chiqarilmagan haqiqiy hisob raqami/karta bo'lishi kerak).
+# To'lov (bank/paynet) rekvizitlari — foydalanuvchiga "chek yuboring"
+# bosqichida ko'rsatiladi VA bot chekni tekshirganda shu bilan solishtiradi
+# (receipt_check.py). .env orqali sozlanadi (kod ichida haqiqiy hisob
+# raqami/ism yozilmagan — bo'sh bo'lsa bot karta/ism tekshiruvini
+# o'tkazib yuboradi va to'g'ridan-to'g'ri admin ko'rib chiqishiga tushadi).
 PAYMENT_CARD_NUMBER = os.getenv("PAYMENT_CARD_NUMBER", "")
 PAYMENT_CARD_HOLDER = os.getenv("PAYMENT_CARD_HOLDER", "")
 PAYMENT_RECEIVER_NOTE = os.getenv("PAYMENT_RECEIVER_NOTE", "")
+
+# 🤖 Bot chekni tekshirib (karta raqami + ism + summa) HAMMASI to'g'ri deb
+# topsa, to'lov "auto_hold" holatiga o'tadi va admin xabar oladi (tugmalar
+# bilan). Admin shu vaqt ICHIDA javob bermasa, bot to'lovni O'ZI qabul
+# qiladi (pul darhol emas, aynan shu muddatdan keyin tushadi). Admin istalgan
+# vaqt — bu muddatdan OLDIN ham — "Tasdiqlash" bossa, pul DARHOL tushadi.
+PAYMENT_AUTO_CONFIRM_SECONDS = int(os.getenv("PAYMENT_AUTO_CONFIRM_SECONDS", str(60 * 60)))  # standart: 1 soat
+
+# 🧾 Chekni AI (vision) o'qiganda shu darajadan PASTROQ ishonchlilik (confidence)
+# bo'lsa — bot mos kelsa ham AVTOMATIK QABUL QILMAYDI (to'g'ridan-to'g'ri
+# manual_review'ga yuboriladi, chunki AI o'zi ham chekni yaxshi o'qimagan).
+PAYMENT_MIN_CONFIDENCE = float(os.getenv("PAYMENT_MIN_CONFIDENCE", "0.6"))
 
 # ============================================================
 # 💎 Pro obuna (👤 /my — "Mening kabinetim")

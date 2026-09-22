@@ -20,8 +20,10 @@ import config  # noqa: E402
 import wallet  # noqa: E402
 
 # handlers.wallet_ui og'ir bog'liqliklarga ega — faqat foydalanuvchiga xabar
-# yuborish funksiyasini soxta modul bilan almashtiramiz.
+# yuborish funksiyalarini soxta modul bilan almashtiramiz.
 USER_NOTICES = []
+REVOKE_NOTICES = []
+AUTO_CONFIRM_NOTICES = []
 _fake_ui = types.ModuleType("handlers.wallet_ui")
 
 
@@ -29,7 +31,17 @@ async def _fake_notify_user(bot, payment, approved, reason=""):
     USER_NOTICES.append((payment["user_id"], approved, reason))
 
 
+async def _fake_notify_revoked(bot, payment, new_balance, reason=""):
+    REVOKE_NOTICES.append((payment["user_id"], new_balance, reason))
+
+
+async def _fake_notify_auto_confirmed(bot, payment):
+    AUTO_CONFIRM_NOTICES.append(payment["user_id"])
+
+
 _fake_ui.notify_user_payment_decision = _fake_notify_user
+_fake_ui.notify_user_payment_revoked = _fake_notify_revoked
+_fake_ui.notify_user_payment_auto_confirmed = _fake_notify_auto_confirmed
 sys.modules["handlers.wallet_ui"] = _fake_ui
 
 from handlers import payment_notify as pn  # noqa: E402
@@ -106,6 +118,8 @@ class PaymentNotifyTests(unittest.TestCase):
     def setUp(self):
         _reset_wallet_state()
         USER_NOTICES.clear()
+        REVOKE_NOTICES.clear()
+        AUTO_CONFIRM_NOTICES.clear()
         self._old_admins = config.ADMIN_IDS
         config.ADMIN_IDS = {111, 222}
 
@@ -167,7 +181,7 @@ class PaymentNotifyTests(unittest.TestCase):
         self.assertEqual(bot.sent, [])
 
     def test_confirmed_info_has_no_buttons_and_resolves_user_via_get_chat(self):
-        p = _payment(method=wallet.METHOD_ECOMMERCE)
+        p = _payment(method=wallet.METHOD_BANK_RECEIPT)
         wallet.confirm_payment(p["payment_id"], actor_id="webhook", source="webhook")
         bot = FakeBot(chats={555: U(555, "mittivoy")})
         run(pn.notify_admins_payment_confirmed(bot, wallet.get_payment(p["payment_id"]), "Kapitalbank onlayn to'lov"))
@@ -241,6 +255,63 @@ class PaymentNotifyTests(unittest.TestCase):
         q = FakeQuery("payn:hack:pay_x")
         run(pn.admin_payment_decision_callback(FakeUpdate(q, U(111)), Ctx(FakeBot())))
         self.assertTrue(q.answers[-1][1])
+
+    # ---------- 🚫 "Soxta deb qaytarish" (revoke) ----------
+
+    def test_revoke_button_debits_balance_and_notifies_user(self):
+        p = _payment()
+        wallet.confirm_payment(p["payment_id"], actor_id="bot_auto", source="test")
+        self.assertEqual(wallet.get_balance(555), 10000)
+        wallet.debit_balance(555, 8000, "test_spend")  # foydalanuvchi qisman ishlatib bo'lgan
+
+        q = self._press("revoke", p["payment_id"], U(111, full_name="Admin 1"))
+
+        self.assertEqual(wallet.get_payment(p["payment_id"])["status"], wallet.STATUS_REVOKED)
+        self.assertEqual(wallet.get_balance(555), -8000)  # qarz
+        self.assertIn("SOXTA DEB QAYTARILDI", q.edits[-1][0])
+        self.assertEqual(REVOKE_NOTICES[-1][0], 555)
+        self.assertEqual(REVOKE_NOTICES[-1][1], -8000)
+
+    def test_revoke_button_refused_on_unpaid_payment(self):
+        p = _payment()  # hali 'paid' emas (manual_review)
+        q = self._press("revoke", p["payment_id"], U(111))
+        self.assertTrue(q.answers[-1][1])  # alert — ruxsat berilmadi
+        self.assertEqual(wallet.get_payment(p["payment_id"])["status"], wallet.STATUS_MANUAL_REVIEW)
+        self.assertEqual(REVOKE_NOTICES, [])
+
+    def test_revoke_button_idempotent(self):
+        p = _payment()
+        wallet.confirm_payment(p["payment_id"], actor_id="bot_auto", source="test")
+        self._press("revoke", p["payment_id"], U(111))
+        self.assertEqual(len(REVOKE_NOTICES), 1)
+        q2 = self._press("revoke", p["payment_id"], U(222))
+        self.assertTrue(q2.answers[-1][1])  # ikkinchi marta — alert, o'zgarish yo'q
+        self.assertEqual(len(REVOKE_NOTICES), 1)
+
+    def test_non_admin_cannot_revoke(self):
+        p = _payment()
+        wallet.confirm_payment(p["payment_id"], actor_id="bot_auto", source="test")
+        q = self._press("revoke", p["payment_id"], U(999, full_name="Begona"))
+        self.assertTrue(q.answers[-1][1])
+        self.assertEqual(wallet.get_payment(p["payment_id"])["status"], wallet.STATUS_PAID)
+        self.assertEqual(REVOKE_NOTICES, [])
+
+    # ---------- 🤖 auto_hold -> bot avtomatik qabul qildi ----------
+
+    def test_notify_admins_payment_auto_confirmed_has_revoke_button(self):
+        p = _payment(method=wallet.METHOD_BANK_RECEIPT)
+        wallet.confirm_payment(p["payment_id"], actor_id="bot_auto", source="auto_after_hold")
+        payment = wallet.get_payment(p["payment_id"])
+        bot = FakeBot()
+        delivered = run(pn.notify_admins_payment_auto_confirmed(bot, payment, user=U(555, "x")))
+        self.assertEqual(delivered, 2)
+        kind, chat_id, text, kw = bot.sent[0]
+        self.assertEqual(kind, "message")
+        self.assertIn("avtomatik", text.lower())
+        markup = kw["reply_markup"]
+        labels = [b.text for b in _buttons(markup)]
+        self.assertEqual(labels, ["🚫 Soxta deb qaytarish"])
+        self.assertEqual(_buttons(markup)[0].callback_data, f"payn:revoke:{p['payment_id']}")
 
 
 if __name__ == "__main__":

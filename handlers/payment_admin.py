@@ -19,7 +19,6 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 import config
 import wallet
-import payment_providers
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +118,9 @@ def payment_detail_keyboard(payment_id: str, tab_key: str = "pending") -> Inline
             InlineKeyboardButton("❌ Rad etish", callback_data=f"dev:payact:reject:{payment_id}"),
         ])
         rows.append([InlineKeyboardButton("⚠️ Shubhali deb belgilash", callback_data=f"dev:payact:suspicious:{payment_id}")])
+    elif p and p["status"] == wallet.STATUS_PAID:
+        rows.append([InlineKeyboardButton("🚫 Soxta deb qaytarish", callback_data=f"dev:payact:revoke:{payment_id}")])
+    if p:
         receipt = (p.get("receipt") or {})
         if receipt.get("file_id"):
             rows.append([InlineKeyboardButton("🖼 Chekni ko'rish", callback_data=f"dev:payphoto:{payment_id}")])
@@ -127,7 +129,7 @@ def payment_detail_keyboard(payment_id: str, tab_key: str = "pending") -> Inline
 
 
 def apply_payment_action(payment_id: str, action: str, actor_id: int) -> tuple[bool, str]:
-    """action: 'approve' | 'reject' | 'suspicious'. Qaytaradi: (ok, xabar)."""
+    """action: 'approve' | 'reject' | 'suspicious' | 'revoke'. Qaytaradi: (ok, xabar)."""
     if action == "approve":
         ok = wallet.approve_manual_payment(payment_id, actor_id=actor_id)
         return ok, ("✅ Tasdiqlandi." if ok else "⚠️ Tasdiqlab bo'lmadi (allaqachon tasdiqlangan yoki rad etilgan bo'lishi mumkin).")
@@ -137,6 +139,11 @@ def apply_payment_action(payment_id: str, action: str, actor_id: int) -> tuple[b
     if action == "suspicious":
         ok = wallet.mark_suspicious(payment_id, actor_id=actor_id, reason="Admin tomonidan shubhali deb belgilandi.")
         return ok, ("⚠️ Shubhali deb belgilandi." if ok else "⚠️ Belgilab bo'lmadi.")
+    if action == "revoke":
+        result = wallet.revoke_payment(payment_id, actor_id=actor_id, reason="Admin tomonidan soxta deb topildi.")
+        if not result:
+            return False, "⚠️ Qaytarib bo'lmadi (to'lov 'tasdiqlangan' holatida emas)."
+        return True, f"🚫 Qaytarildi. Yangi balans: {_fmt_sum(result['balance_after'])}."
     return False, "Noma'lum amal."
 
 
@@ -156,8 +163,11 @@ def financial_stats_text() -> str:
         f"🔒 Band qilingan (reserved) balanslar: {_fmt_sum(s['reserved_balance'])}\n"
         f"🕐 Kutilayotgan to'lovlar: {s['pending_payments']} ta\n"
         f"🧾 Qo'lda ko'rib chiqish (manual review): {s['manual_reviews']} ta\n"
+        f"🤖 Bot tasdiqladi, admin javobi kutilmoqda (auto_hold): {s['auto_hold_payments']} ta\n"
         f"↩️ Qaytarilgan/bekor qilingan operatsiyalar: {s['failed_refunded_ops']} ta\n"
-        f"❌ Muvaffaqiyatsiz/qaytarilgan: {_fmt_sum(s['total_refunded'])}\n\n"
+        f"❌ Muvaffaqiyatsiz/qaytarilgan: {_fmt_sum(s['total_refunded'])}\n"
+        f"🚫 Soxta deb qaytarilgan to'lovlar: {s['revoked_payments']} ta ({_fmt_sum(s['total_revoked'])})\n"
+        f"⚠️ Qarzdor foydalanuvchilar (balans manfiy): {s['debt_users']} ta\n\n"
         "<i>Raqamlar real vaqtda hisoblanadi (eskirgan reservation'lar avtomatik "
         "tozalangandan keyin).</i>"
     )
@@ -276,23 +286,27 @@ def price_detail_keyboard(feature_id: str) -> InlineKeyboardMarkup:
 # ============================================================
 
 def payment_settings_text() -> str:
-    ecommerce = payment_providers.get_ecommerce_provider()
-    verifier = payment_providers.get_bank_verifier()
-
     def _status(ok: bool) -> str:
         return "✅ sozlangan" if ok else "❌ sozlanmagan"
 
-    requisites_ok = bool(config.PAYMENT_CARD_NUMBER)
+    card_ok = bool(config.PAYMENT_CARD_NUMBER)
+    holder_ok = bool(config.PAYMENT_CARD_HOLDER)
     return (
         "💳 <b>To'lov sozlamalari</b>\n\n"
-        f"🟢 Kapitalbank E-commerce: {_status(ecommerce.is_configured())}\n"
-        f"🟡 Kapitalbank tranzaksiya tekshiruvi: {_status(verifier.is_configured())}\n"
-        f"🏦 Bank/Paynet rekvizitlari (karta raqami): {_status(requisites_ok)}\n\n"
+        f"💳 Karta raqami (PAYMENT_CARD_NUMBER): {_status(card_ok)}\n"
+        f"👤 Karta egasi ismi (PAYMENT_CARD_HOLDER): {_status(holder_ok)}\n"
+        f"⏱ Avtomatik qabul qilish muddati: {config.PAYMENT_AUTO_CONFIRM_SECONDS // 60} daqiqa\n"
+        f"🎯 Chekni o'qish uchun minimal ishonchlilik: {config.PAYMENT_MIN_CONFIDENCE}\n\n"
+        "🤖 <b>Bot chek tekshiruvi:</b> foydalanuvchi chek yuborganda, bot chekdagi "
+        "karta raqami, qabul qiluvchi ismi va summani yuqoridagi rekvizitlar bilan "
+        "solishtiradi (receipt_check.py). Hammasi mos kelsa — to'lov adminga "
+        "yuboriladi va admin javob bermasa yuqoridagi muddatdan keyin AVTOMATIK "
+        "qabul qilinadi. Karta/ism sozlanmagan bo'lsa, bot shu qismni tekshirmay "
+        "o'tkazib yuboradi (faqat summa solishtiriladi).\n\n"
         "Bu qiymatlar FAQAT Environment Variables (.env yoki Render Environment) "
         "orqali sozlanadi — xavfsizlik uchun shu yerdan o'zgartirib bo'lmaydi.\n\n"
-        "Kerakli o'zgaruvchilar: KAPITALBANK_MERCHANT_ID, KAPITALBANK_API_BASE_URL, "
-        "KAPITALBANK_API_KEY, KAPITALBANK_API_SECRET, KAPITALBANK_WEBHOOK_SECRET, "
-        "PAYMENT_CARD_NUMBER, PAYMENT_CARD_HOLDER, PAYMENT_RECEIVER_NOTE."
+        "Kerakli o'zgaruvchilar: PAYMENT_CARD_NUMBER, PAYMENT_CARD_HOLDER, "
+        "PAYMENT_RECEIVER_NOTE, PAYMENT_AUTO_CONFIRM_SECONDS, PAYMENT_MIN_CONFIDENCE."
     )
 
 

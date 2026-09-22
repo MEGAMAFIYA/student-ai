@@ -67,7 +67,6 @@ config.persist_read = _fake_persist_read
 config.persist_write = _fake_persist_write
 
 import wallet  # noqa: E402
-import payment_providers  # noqa: E402
 
 
 def _reset_wallet_state():
@@ -185,14 +184,14 @@ class PaymentConfirmationTests(unittest.TestCase):
         _reset_wallet_state()
 
     def test_successful_payment_credits_balance_once(self):
-        payment = wallet.create_payment(1, 10000, provider="kapitalbank", method=wallet.METHOD_ECOMMERCE)
+        payment = wallet.create_payment(1, 10000, provider="kapitalbank", method=wallet.METHOD_BANK_RECEIPT)
         ok = wallet.confirm_payment(payment["payment_id"], actor_id="webhook", source="webhook")
         self.assertTrue(ok)
         self.assertEqual(wallet.get_balance(1), 10000)
         self.assertEqual(wallet.get_payment(payment["payment_id"])["status"], wallet.STATUS_PAID)
 
     def test_duplicate_webhook_does_not_double_credit(self):
-        payment = wallet.create_payment(1, 10000, provider="kapitalbank", method=wallet.METHOD_ECOMMERCE)
+        payment = wallet.create_payment(1, 10000, provider="kapitalbank", method=wallet.METHOD_BANK_RECEIPT)
         first = wallet.confirm_payment(payment["payment_id"], source="webhook")
         second = wallet.confirm_payment(payment["payment_id"], source="webhook")  # xuddi shu webhook qayta keldi
         third = wallet.confirm_payment(payment["payment_id"], source="webhook")
@@ -202,14 +201,14 @@ class PaymentConfirmationTests(unittest.TestCase):
         self.assertEqual(wallet.get_balance(1), 10000)  # FAQAT bir marta kredit qilingan
 
     def test_failed_payment_no_credit(self):
-        payment = wallet.create_payment(1, 10000, provider="kapitalbank", method=wallet.METHOD_ECOMMERCE)
+        payment = wallet.create_payment(1, 10000, provider="kapitalbank", method=wallet.METHOD_BANK_RECEIPT)
         wallet.set_payment_status(payment["payment_id"], wallet.STATUS_FAILED)
         ok = wallet.confirm_payment(payment["payment_id"])
         self.assertFalse(ok)
         self.assertEqual(wallet.get_balance(1), 0)
 
     def test_cancelled_payment_no_credit(self):
-        payment = wallet.create_payment(1, 10000, provider="kapitalbank", method=wallet.METHOD_ECOMMERCE)
+        payment = wallet.create_payment(1, 10000, provider="kapitalbank", method=wallet.METHOD_BANK_RECEIPT)
         wallet.set_payment_status(payment["payment_id"], wallet.STATUS_CANCELLED)
         ok = wallet.confirm_payment(payment["payment_id"])
         self.assertFalse(ok)
@@ -246,8 +245,8 @@ class DuplicateProtectionTests(unittest.TestCase):
         _reset_wallet_state()
 
     def test_duplicate_provider_transaction_id_rejected(self):
-        p1 = wallet.create_payment(1, 10000, provider="kapitalbank", method=wallet.METHOD_ECOMMERCE)
-        p2 = wallet.create_payment(2, 10000, provider="kapitalbank", method=wallet.METHOD_ECOMMERCE)
+        p1 = wallet.create_payment(1, 10000, provider="kapitalbank", method=wallet.METHOD_BANK_RECEIPT)
+        p2 = wallet.create_payment(2, 10000, provider="kapitalbank", method=wallet.METHOD_BANK_RECEIPT)
 
         wallet.register_provider_transaction(p1["payment_id"], "kapitalbank", "TXN123")
         with self.assertRaises(wallet.DuplicateTransactionError) as ctx:
@@ -279,7 +278,7 @@ class ConcurrencyTests(unittest.TestCase):
         _reset_wallet_state()
 
     def test_concurrent_confirm_same_payment_credits_once(self):
-        payment = wallet.create_payment(1, 10000, provider="kapitalbank", method=wallet.METHOD_ECOMMERCE)
+        payment = wallet.create_payment(1, 10000, provider="kapitalbank", method=wallet.METHOD_BANK_RECEIPT)
         results = []
 
         def worker():
@@ -338,39 +337,84 @@ class ConcurrencyTests(unittest.TestCase):
         self.assertEqual(wallet.get_balance(1), 0)
 
 
-class PaymentProviderTests(unittest.TestCase):
-    """Kapitalbank adapterlari SOZLANMAGAN holatda xavfsiz ishlashini
-    tekshiradi (real API mavjud bo'lmagani uchun har doim shunday bo'lishi
-    kerak, hozircha credentials berilmagan)."""
+class AutoHoldAndRevokeTests(unittest.TestCase):
+    """🤖 'auto_hold' (bot tekshirdi, admin kutilmoqda) va 🚫 revoke_payment
+    (soxta deb qaytarish, qarz holati) senariylarini tekshiradi."""
 
-    def test_ecommerce_provider_reports_not_configured(self):
-        provider = payment_providers.KapitalbankPaymentProvider()
-        self.assertFalse(provider.is_configured())
+    def setUp(self):
+        _reset_wallet_state()
 
-    def test_create_order_fails_gracefully_when_not_configured(self):
-        provider = payment_providers.KapitalbankPaymentProvider()
+    def test_auto_hold_then_due_auto_confirm_credits_balance_once(self):
+        payment = wallet.create_payment(1, 10000, provider="manual", method=wallet.METHOD_BANK_RECEIPT)
+        due = wallet.mark_auto_hold(payment["payment_id"], delay_seconds=0)
+        self.assertIsNotNone(due)
+        self.assertEqual(wallet.get_payment(payment["payment_id"])["status"], wallet.STATUS_AUTO_HOLD)
+        self.assertEqual(wallet.get_balance(1), 0)
 
-        async def _run():
-            return await provider.create_order("pay_test123", 10000)
+        due_ids = wallet.get_due_auto_payments()
+        self.assertIn(payment["payment_id"], due_ids)
 
-        result = asyncio.run(_run())
-        self.assertFalse(result.ok)
-        self.assertEqual(result.error, "not_configured")
-        self.assertIsNotNone(result.user_message)
+        ok = wallet.auto_confirm_payment(payment["payment_id"])
+        self.assertTrue(ok)
+        self.assertEqual(wallet.get_balance(1), 10000)
+        self.assertEqual(wallet.get_payment(payment["payment_id"])["status"], wallet.STATUS_PAID)
+        self.assertTrue(wallet.get_payment(payment["payment_id"])["auto_confirmed"])
 
-    def test_verifier_reports_not_configured(self):
-        verifier = payment_providers.KapitalbankTransactionVerifier()
+        # Ikkinchi marta chaqirilsa — HECH NARSA qilmasin (idempotent).
+        ok2 = wallet.auto_confirm_payment(payment["payment_id"])
+        self.assertFalse(ok2)
+        self.assertEqual(wallet.get_balance(1), 10000)
 
-        async def _run():
-            return await verifier.verify_transaction({"amount": 10000}, expected_amount=10000)
+    def test_admin_approve_before_due_prevents_double_credit(self):
+        payment = wallet.create_payment(1, 10000, provider="manual", method=wallet.METHOD_BANK_RECEIPT)
+        wallet.mark_auto_hold(payment["payment_id"], delay_seconds=3600)
+        # Admin muddatdan OLDIN tasdiqlaydi -> pul DARHOL tushadi.
+        ok = wallet.approve_manual_payment(payment["payment_id"], actor_id=999)
+        self.assertTrue(ok)
+        self.assertEqual(wallet.get_balance(1), 10000)
+        # Fon vazifasi (muddat "kelganda") xuddi shu to'lovni yana tasdiqlamoqchi
+        # bo'lsa ham — status endi AUTO_HOLD emas (PAID), demak hech narsa bo'lmaydi.
+        ok2 = wallet.auto_confirm_payment(payment["payment_id"])
+        self.assertFalse(ok2)
+        self.assertEqual(wallet.get_balance(1), 10000)
 
-        result = asyncio.run(_run())
-        self.assertFalse(result.ok)
-        self.assertEqual(result.reason, "not_configured")
+    def test_admin_reject_before_due_prevents_auto_confirm(self):
+        payment = wallet.create_payment(1, 10000, provider="manual", method=wallet.METHOD_BANK_RECEIPT)
+        wallet.mark_auto_hold(payment["payment_id"], delay_seconds=3600)
+        self.assertTrue(wallet.reject_payment(payment["payment_id"], actor_id=999))
+        ok = wallet.auto_confirm_payment(payment["payment_id"])
+        self.assertFalse(ok)
+        self.assertEqual(wallet.get_balance(1), 0)
 
-    def test_webhook_signature_rejected_without_secret(self):
-        provider = payment_providers.KapitalbankPaymentProvider()
-        self.assertFalse(provider.verify_webhook_signature({}, b"{}"))
+    def test_revoke_payment_debits_balance_and_allows_negative(self):
+        payment = wallet.create_payment(1, 10000, provider="manual", method=wallet.METHOD_BANK_RECEIPT)
+        self.assertTrue(wallet.confirm_payment(payment["payment_id"], actor_id="admin_1"))
+        self.assertEqual(wallet.get_balance(1), 10000)
+
+        # Foydalanuvchi pulning bir qismini ishlatib bo'lgan (masalan 8000).
+        wallet.debit_balance(1, 8000, "feature_charge")
+        self.assertEqual(wallet.get_balance(1), 2000)
+
+        # Admin to'lovni SOXTA deb topib qaytaradi -> butun 10000 ayriladi -> balans -8000 (qarz).
+        result = wallet.revoke_payment(payment["payment_id"], actor_id="admin_1", reason="soxta chek")
+        self.assertIsNotNone(result)
+        self.assertEqual(result["amount"], 10000)
+        self.assertEqual(result["balance_before"], 2000)
+        self.assertEqual(result["balance_after"], -8000)
+        self.assertEqual(wallet.get_balance(1), -8000)
+        self.assertEqual(wallet.get_payment(payment["payment_id"])["status"], wallet.STATUS_REVOKED)
+
+        # Idempotent: ikkinchi marta qaytarib bo'lmaydi.
+        result2 = wallet.revoke_payment(payment["payment_id"], actor_id="admin_1")
+        self.assertIsNone(result2)
+        self.assertEqual(wallet.get_balance(1), -8000)
+
+    def test_revoke_only_applies_to_paid_payments(self):
+        payment = wallet.create_payment(1, 10000, provider="manual", method=wallet.METHOD_BANK_RECEIPT)
+        # Hali 'paid' emas (pending) — qaytarib bo'lmaydi.
+        result = wallet.revoke_payment(payment["payment_id"], actor_id="admin_1")
+        self.assertIsNone(result)
+        self.assertEqual(wallet.get_balance(1), 0)
 
 
 class ReservationBasicTests(unittest.TestCase):
