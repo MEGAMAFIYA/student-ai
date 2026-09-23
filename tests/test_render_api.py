@@ -70,7 +70,7 @@ class RenderApiAsyncTests(unittest.TestCase):
         async def run():
             with patch.object(render_api, "_request", side_effect=fake_request):
                 return await render_api.list_logs_for_service(
-                    service_id="srv-test", owner_id="tea-test", levels=None, limit=100, hours=2
+                    api_key="rnd_test", service_id="srv-test", owner_id="tea-test", levels=None, limit=100, hours=2
                 )
 
         logs = asyncio.run(run())

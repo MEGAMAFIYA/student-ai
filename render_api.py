@@ -34,16 +34,16 @@ class RenderAPIError(RuntimeError):
         super().__init__(message)
 
 
-def _require_key() -> str:
-    key = config.RENDER_API_KEY
+def _require_key(api_key: str) -> str:
+    key = (api_key or "").strip()
     if not key:
-        raise RenderAPIError(401, "RENDER_API_KEY sozlanmagan.")
+        raise RenderAPIError(401, "Render API kaliti berilmagan.")
     return key
 
 
-def _headers() -> dict[str, str]:
+def _headers(api_key: str) -> dict[str, str]:
     return {
-        "Authorization": f"Bearer {_require_key()}",
+        "Authorization": f"Bearer {_require_key(api_key)}",
         "Accept": "application/json",
         "Content-Type": "application/json",
         "User-Agent": "Student-AI-Render-Panel/1.0",
@@ -88,6 +88,7 @@ async def _request(
     method: str,
     path: str,
     *,
+    api_key: str,
     params: dict[str, Any] | None = None,
     json: dict[str, Any] | list[dict[str, Any]] | None = None,
 ) -> Any:
@@ -96,7 +97,7 @@ async def _request(
     for attempt in range(3):
         try:
             async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-                response = await client.request(method, url, headers=_headers(), params=params, json=json)
+                response = await client.request(method, url, headers=_headers(api_key), params=params, json=json)
             if response.status_code in _RETRYABLE and attempt < 2:
                 retry_after = response.headers.get("Retry-After")
                 delay = float(retry_after) if retry_after and retry_after.replace(".", "", 1).isdigit() else (1.0 * (2**attempt))
@@ -135,12 +136,12 @@ async def _sleep(seconds: float) -> None:
     await asyncio.sleep(min(seconds, 5.0))
 
 
-async def list_workspaces(limit: int = 100) -> list[dict[str, Any]]:
-    payload = await _request("GET", "/owners", params={"limit": min(max(limit, 1), 100)})
+async def list_workspaces(api_key: str, limit: int = 100) -> list[dict[str, Any]]:
+    payload = await _request("GET", "/owners", api_key=api_key, params={"limit": min(max(limit, 1), 100)})
     return _unwrap_items(payload, ("owner", "workspace"))
 
 
-async def list_services(owner_id: str = "", limit: int = 100) -> list[dict[str, Any]]:
+async def list_services(api_key: str, owner_id: str = "", limit: int = 100) -> list[dict[str, Any]]:
     params: dict[str, Any] = {"limit": min(max(limit, 1), 100), "includePreviews": "false"}
     if owner_id:
         params["ownerId"] = owner_id
@@ -148,69 +149,69 @@ async def list_services(owner_id: str = "", limit: int = 100) -> list[dict[str, 
         # API key may have access to several workspaces; fetching all is more
         # useful than guessing one workspace.
         pass
-    payload = await _request("GET", "/services", params=params)
+    payload = await _request("GET", "/services", api_key=api_key, params=params)
     return _unwrap_items(payload, ("service",))
 
 
-async def get_service(service_id: str) -> dict[str, Any]:
-    return dict(await _request("GET", f"/services/{service_id}"))
+async def get_service(api_key: str, service_id: str) -> dict[str, Any]:
+    return dict(await _request("GET", f"/services/{service_id}", api_key=api_key))
 
 
-async def trigger_deploy(service_id: str, *, clear_cache: bool = False, commit_id: str = "") -> dict[str, Any]:
+async def trigger_deploy(api_key: str, service_id: str, *, clear_cache: bool = False, commit_id: str = "") -> dict[str, Any]:
     body: dict[str, Any] = {"clearCache": "clear" if clear_cache else "do_not_clear"}
     if commit_id:
         body["commitId"] = commit_id
-    return dict(await _request("POST", f"/services/{service_id}/deploys", json=body))
+    return dict(await _request("POST", f"/services/{service_id}/deploys", api_key=api_key, json=body))
 
 
-async def restart_service(service_id: str) -> dict[str, Any]:
-    return dict(await _request("POST", f"/services/{service_id}/restart"))
+async def restart_service(api_key: str, service_id: str) -> dict[str, Any]:
+    return dict(await _request("POST", f"/services/{service_id}/restart", api_key=api_key))
 
 
-async def suspend_service(service_id: str) -> dict[str, Any]:
-    return dict(await _request("POST", f"/services/{service_id}/suspend"))
+async def suspend_service(api_key: str, service_id: str) -> dict[str, Any]:
+    return dict(await _request("POST", f"/services/{service_id}/suspend", api_key=api_key))
 
 
-async def resume_service(service_id: str) -> dict[str, Any]:
-    return dict(await _request("POST", f"/services/{service_id}/resume"))
+async def resume_service(api_key: str, service_id: str) -> dict[str, Any]:
+    return dict(await _request("POST", f"/services/{service_id}/resume", api_key=api_key))
 
 
-async def list_deploys(service_id: str, limit: int = 30) -> list[dict[str, Any]]:
-    payload = await _request("GET", f"/services/{service_id}/deploys", params={"limit": min(max(limit, 1), 100)})
+async def list_deploys(api_key: str, service_id: str, limit: int = 30) -> list[dict[str, Any]]:
+    payload = await _request("GET", f"/services/{service_id}/deploys", api_key=api_key, params={"limit": min(max(limit, 1), 100)})
     return _unwrap_items(payload, ("deploy",))
 
 
-async def get_deploy(service_id: str, deploy_id: str) -> dict[str, Any]:
-    return dict(await _request("GET", f"/services/{service_id}/deploys/{deploy_id}"))
+async def get_deploy(api_key: str, service_id: str, deploy_id: str) -> dict[str, Any]:
+    return dict(await _request("GET", f"/services/{service_id}/deploys/{deploy_id}", api_key=api_key))
 
 
-async def cancel_deploy(service_id: str, deploy_id: str) -> dict[str, Any]:
-    return dict(await _request("POST", f"/services/{service_id}/deploys/{deploy_id}/cancel"))
+async def cancel_deploy(api_key: str, service_id: str, deploy_id: str) -> dict[str, Any]:
+    return dict(await _request("POST", f"/services/{service_id}/deploys/{deploy_id}/cancel", api_key=api_key))
 
 
-async def list_env_vars(service_id: str, limit: int = 100) -> list[dict[str, Any]]:
-    payload = await _request("GET", f"/services/{service_id}/env-vars", params={"limit": min(max(limit, 1), 100)})
+async def list_env_vars(api_key: str, service_id: str, limit: int = 100) -> list[dict[str, Any]]:
+    payload = await _request("GET", f"/services/{service_id}/env-vars", api_key=api_key, params={"limit": min(max(limit, 1), 100)})
     return _unwrap_items(payload, ("envVar", "env_var"))
 
 
-async def upsert_env_var(service_id: str, key: str, value: str) -> dict[str, Any]:
+async def upsert_env_var(api_key: str, service_id: str, key: str, value: str) -> dict[str, Any]:
     if not key or any(ch in key for ch in "/?#"):
         raise ValueError("Noto'g'ri environment variable nomi.")
-    return dict(await _request("PUT", f"/services/{service_id}/env-vars/{key}", json={"value": value}))
+    return dict(await _request("PUT", f"/services/{service_id}/env-vars/{key}", api_key=api_key, json={"value": value}))
 
 
-async def delete_env_var(service_id: str, key: str) -> dict[str, Any]:
+async def delete_env_var(api_key: str, service_id: str, key: str) -> dict[str, Any]:
     if not key or any(ch in key for ch in "/?#"):
         raise ValueError("Noto'g'ri environment variable nomi.")
-    return dict(await _request("DELETE", f"/services/{service_id}/env-vars/{key}"))
+    return dict(await _request("DELETE", f"/services/{service_id}/env-vars/{key}", api_key=api_key))
 
 
-async def update_service(service_id: str, changes: dict[str, Any]) -> dict[str, Any]:
+async def update_service(api_key: str, service_id: str, changes: dict[str, Any]) -> dict[str, Any]:
     allowed = {"autoDeploy", "repo", "branch", "image", "name", "buildFilter", "rootDir"}
     body = {k: v for k, v in changes.items() if k in allowed}
     if not body:
         raise ValueError("Yangilanadigan Render service maydoni berilmagan.")
-    return dict(await _request("PATCH", f"/services/{service_id}", json=body))
+    return dict(await _request("PATCH", f"/services/{service_id}", api_key=api_key, json=body))
 
 
 def _iso_z(dt: datetime) -> str:
@@ -226,6 +227,7 @@ def _log_level_match(log: dict[str, Any], levels: list[str] | None) -> bool:
 
 async def list_logs_for_service(
     *,
+    api_key: str,
     service_id: str,
     owner_id: str,
     levels: list[str] | None = None,
@@ -264,7 +266,7 @@ async def list_logs_for_service(
         }
         if levels:
             params["level"] = levels
-        payload = await _request("GET", "/logs", params=params)
+        payload = await _request("GET", "/logs", api_key=api_key, params=params)
         page = _unwrap_items(payload, ("log",))
         if not page:
             break
@@ -392,7 +394,7 @@ def remove_temp_file(path: str) -> None:
 def human_error(exc: Exception) -> str:
     if isinstance(exc, RenderAPIError):
         if exc.status_code == 401:
-            return "API Key noto'g'ri yoki RENDER_API_KEY sozlanmagan."
+            return "API Key noto'g'ri yoki sozlanmagan (RENDER_API_KEY / RENDER_API_KEY2 / ...)."
         if exc.status_code == 403:
             return "Render API bu amal uchun ruxsat bermadi (403)."
         if exc.status_code == 404:

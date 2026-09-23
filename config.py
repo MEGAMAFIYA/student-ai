@@ -30,6 +30,17 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 # ============================================================
 # Render API key Account Settings > API Keys'dan olinadi. Hech qachon
 # kodga hardcode qilinmaydi yoki GitHub'ga commit qilinmaydi.
+#
+# Bir nechta Render hisobini ulash uchun .env (yoki Render Environment
+# Variables) ichida ketma-ket raqamlangan kalitlarni qo'ying:
+#   RENDER_API_KEY=...      (1-hisob, raqamsiz — orqaga moslik uchun)
+#   RENDER_API_KEY2=...     (2-hisob)
+#   RENDER_API_KEY3=...     (3-hisob)
+#   ...                     (xohlagancha davom ettirish mumkin)
+# Har bir kalitga mos ixtiyoriy sozlamalar ham xuddi shu tartibda raqamlanadi:
+#   RENDER_OWNER_ID / RENDER_OWNER_ID2 / RENDER_OWNER_ID3 ...
+#   RENDER_SERVICE_ID / RENDER_SERVICE_ID2 / RENDER_SERVICE_ID3 ...
+#   RENDER_ACCOUNT_NAME / RENDER_ACCOUNT_NAME2 / ... (panelda ko'rinadigan nom)
 RENDER_API_KEY = os.getenv("RENDER_API_KEY", "").strip()
 # Ixtiyoriy: tea-... workspace ID. Bo'sh bo'lsa /developer > RENDER
 # API orqali ko'rinadigan servislarning ownerId qiymatidan avtomatik aniqlaydi.
@@ -39,6 +50,54 @@ RENDER_SERVICE_ID = os.getenv("RENDER_SERVICE_ID", "").strip()
 # PDF uchun qancha vaqt ichidagi Render loglari olinadi. Render log retention
 # workspace rejasiga bog'liq; API mavjud bo'lgan davr ichidan shu oynani oladi.
 RENDER_LOG_PDF_HOURS = max(1, int(os.getenv("RENDER_LOG_PDF_HOURS", "168")))
+
+
+def _load_render_accounts() -> list[dict[str, str]]:
+    """RENDER_API_KEY, RENDER_API_KEY2, RENDER_API_KEY3, ... dan bir nechta
+    Render hisobini o'qiydi va har biri uchun mustaqil sozlamalar to'plamini
+    qaytaradi. Kalitlar tugagunga qadar (bo'sh qiymat topilguncha) davom
+    ettiriladi, shuning uchun xohlagancha hisob qo'shish mumkin.
+    """
+    accounts: list[dict[str, str]] = []
+
+    if RENDER_API_KEY:
+        accounts.append({
+            "id": "1",
+            "label": os.getenv("RENDER_ACCOUNT_NAME", "").strip() or "Render #1",
+            "key": RENDER_API_KEY,
+            "owner_id": RENDER_OWNER_ID,
+            "service_id": RENDER_SERVICE_ID,
+        })
+
+    n = 2
+    while True:
+        key = os.getenv(f"RENDER_API_KEY{n}", "").strip()
+        if not key:
+            break
+        accounts.append({
+            "id": str(n),
+            "label": os.getenv(f"RENDER_ACCOUNT_NAME{n}", "").strip() or f"Render #{n}",
+            "key": key,
+            "owner_id": os.getenv(f"RENDER_OWNER_ID{n}", "").strip(),
+            "service_id": os.getenv(f"RENDER_SERVICE_ID{n}", "").strip(),
+        })
+        n += 1
+
+    return accounts
+
+
+# Ulangan barcha Render hisoblari ro'yxati (har biri {id, label, key, owner_id,
+# service_id}). Bo'sh bo'lishi ham mumkin — /developer > RENDER shuni tekshiradi.
+RENDER_ACCOUNTS: list[dict[str, str]] = _load_render_accounts()
+
+
+def get_render_account(account_id: str) -> dict[str, str] | None:
+    """Berilgan id ('1', '2', ...) bo'yicha Render hisobini qaytaradi."""
+    account_id = str(account_id)
+    for account in RENDER_ACCOUNTS:
+        if account["id"] == account_id:
+            return account
+    return None
 
 
 # /developer buyrug'iga faqat shu Telegram user_id'larga ruxsat beriladi.

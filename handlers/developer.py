@@ -965,7 +965,7 @@ def _render_service_name(service: dict) -> str:
     return str(name)
 
 
-def _render_service_keyboard(services: list[dict]) -> InlineKeyboardMarkup:
+def _render_service_keyboard(services: list[dict], multi_account: bool = False) -> InlineKeyboardMarkup:
     rows = []
     for service in services[:30]:
         sid = str(service.get("id", ""))
@@ -973,22 +973,28 @@ def _render_service_keyboard(services: list[dict]) -> InlineKeyboardMarkup:
             continue
         status = service.get("suspended") or service.get("status")
         label = f"{_render_status_icon(status)} {_render_service_name(service)}"
+        if multi_account:
+            acc_label = service.get("_render_account_label")
+            if acc_label:
+                label = f"{label} · {acc_label}"
         rows.append([InlineKeyboardButton(label[:60], callback_data=f"dev:rsvc:{sid}")])
     rows.append([InlineKeyboardButton("🔄 Yangilash", callback_data="dev:render")])
     rows.append([InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:menu")])
     return InlineKeyboardMarkup(rows)
 
 
-def _render_menu_text(services: list[dict], owner_id: str) -> str:
+def _render_menu_text(services: list[dict], accounts: list[dict]) -> str:
     if not services:
+        workspaces = ", ".join(_esc(a.get("owner_id") or "avtomatik") for a in accounts) or "avtomatik"
         return (
             "☁️ <b>RENDER</b>\n\n"
-            "Servis topilmadi. Render API kaliti yoki workspace sozlamasini tekshiring.\n\n"
-            f"Workspace: <code>{_esc(owner_id or 'avtomatik')}</code>"
+            "Servis topilmadi. Render API kalit(lar)i yoki workspace sozlamasini tekshiring.\n\n"
+            f"Ulangan hisoblar: <b>{len(accounts)}</b>\n"
+            f"Workspace(lar): <code>{workspaces}</code>"
         )
     lines = [
         "☁️ <b>RENDER boshqaruv paneli</b>",
-        f"🏢 Workspace: <code>{_esc(owner_id or 'avtomatik')}</code>",
+        f"👤 Ulangan hisoblar: <b>{len(accounts)}</b>",
         f"📦 Servislar: <b>{len(services)}</b>",
         "",
         "Render API orqali servis, deploy va loglarni boshqarishingiz mumkin.",
@@ -1007,8 +1013,11 @@ def _render_service_text(service: dict) -> str:
     url = service.get("serviceDetails", {}).get("url") if isinstance(service.get("serviceDetails"), dict) else None
     if not url:
         url = service.get("url") or "—"
+    acc_label = service.get("_render_account_label")
+    acc_line = f"👤 Hisob: <code>{_esc(acc_label)}</code>\n" if acc_label else ""
     return (
         f"☁️ <b>{_esc(_render_service_name(service))}</b>\n\n"
+        f"{acc_line}"
         f"🆔 ID: <code>{_esc(sid)}</code>\n"
         f"📦 Turi: <code>{_esc(service_type)}</code>\n"
         f"📡 Holat: {_render_status_icon(str(status))} <code>{_esc(status)}</code>\n"
@@ -1148,10 +1157,10 @@ def _render_logs_text(service: dict, logs: list[dict], category: str) -> str:
     return "\n\n".join(lines)[:3950]
 
 
-async def _latest_render_deploy_start(service_id: str):
+async def _latest_render_deploy_start(api_key: str, service_id: str):
     """Eng so'nggi deploy vaqtini topadi; Render log oynasi shu vaqtdan boshlanadi."""
     try:
-        deploys = await render_api.list_deploys(service_id, limit=20)
+        deploys = await render_api.list_deploys(api_key, service_id, limit=20)
     except Exception as exc:
         logger.warning(
             "☁️ Eng so'nggi deployni aniqlab bo'lmadi: %s: %s",
@@ -1202,6 +1211,31 @@ async def _render_api_error(query, exc: Exception, back_callback: str = "dev:ren
         reply_markup=_back_keyboard(back_callback),
         parse_mode="HTML",
     )
+
+
+def _render_account_for_service(context, service_id: str) -> dict[str, str] | None:
+    """RENDER menyusida ro'yxatlanganda saqlangan xaritadan (service_id ->
+    hisob) shu servisga tegishli Render hisobini topadi. Bir nechta
+    RENDER_API_KEY* ulangan bo'lsa, har bir servis o'zi topilgan hisob
+    kaliti bilan boshqariladi — noto'g'ri kalit bilan so'rov yuborilmasligi
+    uchun shart.
+    """
+    accounts_map: dict[str, str] = context.user_data.get("render_service_accounts") or {}
+    account_id = accounts_map.get(str(service_id))
+    if account_id:
+        account = config.get_render_account(account_id)
+        if account:
+            return account
+    # Zaxira variant: xarita topilmasa (masalan bot qayta ishga tushgan bo'lsa),
+    # birinchi ulangan hisobga qaytadi.
+    return config.RENDER_ACCOUNTS[0] if config.RENDER_ACCOUNTS else None
+
+
+def _render_api_key_for_service(context, service_id: str) -> str:
+    account = _render_account_for_service(context, service_id)
+    if not account:
+        raise render_api.RenderAPIError(401, "Render API kaliti sozlanmagan (RENDER_API_KEY).")
+    return account["key"]
 
 
 
@@ -1842,27 +1876,46 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ---------- ☁️ RENDER ----------
     if action == "render":
-        if not config.RENDER_API_KEY:
+        accounts = config.RENDER_ACCOUNTS
+        if not accounts:
             await _safe_edit_query(
                 query,
-                "☁️ <b>RENDER</b>\n\n❌ <code>RENDER_API_KEY</code> sozlanmagan.\n\n"
+                "☁️ <b>RENDER</b>\n\n❌ Hech qanday Render API kaliti sozlanmagan.\n\n"
                 "Render Dashboard → Account Settings → API Keys orqali API Key yarating "
-                "va Render Environment Variables'ga <code>RENDER_API_KEY</code> nomi bilan qo'ying.",
+                "va Render Environment Variables'ga <code>RENDER_API_KEY</code> nomi bilan qo'ying.\n\n"
+                "Yana bir nechta hisob ulash uchun <code>RENDER_API_KEY2</code>, "
+                "<code>RENDER_API_KEY3</code>, ... kabi ketma-ket raqamlangan nomlar bilan "
+                "qo'shimcha kalitlar qo'shishingiz mumkin.",
                 reply_markup=_back_keyboard("dev:menu"), parse_mode="HTML",
             )
             return DEV_MENU
         await _safe_edit_query(query, "☁️ Render servislar olinmoqda...", parse_mode="HTML")
         try:
-            owner_id = config.RENDER_OWNER_ID
-            services = await render_api.list_services(owner_id=owner_id)
-            if config.RENDER_SERVICE_ID:
-                services.sort(key=lambda item: str(item.get("id", "")) != config.RENDER_SERVICE_ID)
-            if not owner_id and services:
-                owner_id = str(services[0].get("ownerId") or services[0].get("owner_id") or "")
-            context.user_data["render_owner_id"] = owner_id
+            services: list[dict] = []
+            accounts_map: dict[str, str] = {}
+            errors: list[str] = []
+            for account in accounts:
+                try:
+                    acc_services = await render_api.list_services(account["key"], owner_id=account.get("owner_id", ""))
+                except Exception as exc:
+                    errors.append(f"{account['label']}: {render_api.human_error(exc)}")
+                    continue
+                for svc in acc_services:
+                    svc["_render_account_label"] = account["label"]
+                    sid = str(svc.get("id", ""))
+                    if sid:
+                        accounts_map[sid] = account["id"]
+                    services.append(svc)
+            context.user_data["render_service_accounts"] = accounts_map
+            default_ids = {a["service_id"] for a in accounts if a.get("service_id")}
+            if default_ids:
+                services.sort(key=lambda item: str(item.get("id", "")) not in default_ids)
+            menu_text = _render_menu_text(services, accounts)
+            if errors:
+                menu_text += "\n\n⚠️ " + "\n⚠️ ".join(_esc(e) for e in errors)
             await _safe_edit_query(
-                query, _render_menu_text(services, owner_id),
-                reply_markup=_render_service_keyboard(services), parse_mode="HTML",
+                query, menu_text,
+                reply_markup=_render_service_keyboard(services, multi_account=len(accounts) > 1), parse_mode="HTML",
             )
         except Exception as exc:
             await _render_api_error(query, exc)
@@ -1872,7 +1925,11 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         service_id = parts[2]
         await _safe_edit_query(query, "☁️ Servis ma'lumotlari olinmoqda...", parse_mode="HTML")
         try:
-            service = await render_api.get_service(service_id)
+            account = _render_account_for_service(context, service_id)
+            api_key = _render_api_key_for_service(context, service_id)
+            service = await render_api.get_service(api_key, service_id)
+            if account:
+                service["_render_account_label"] = account["label"]
             context.user_data["render_service"] = service
             await _safe_edit_query(
                 query, _render_service_text(service),
@@ -1886,7 +1943,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         service_id = parts[2]
         await _safe_edit_query(query, "🚀 Deploy ishga tushirilmoqda...", parse_mode="HTML")
         try:
-            deploy = await render_api.trigger_deploy(service_id)
+            api_key = _render_api_key_for_service(context, service_id)
+            deploy = await render_api.trigger_deploy(api_key, service_id)
             status = deploy.get("status") or "queued"
             await _safe_edit_query(
                 query,
@@ -1906,7 +1964,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         service_id = parts[2]
         await _safe_edit_query(query, "🧹🚀 Cache tozalanib deploy qilinmoqda...", parse_mode="HTML")
         try:
-            deploy = await render_api.trigger_deploy(service_id, clear_cache=True)
+            api_key = _render_api_key_for_service(context, service_id)
+            deploy = await render_api.trigger_deploy(api_key, service_id, clear_cache=True)
             await _safe_edit_query(
                 query,
                 "✅ <b>Cache tozalangan deploy ishga tushdi.</b>\n\n"
@@ -1922,7 +1981,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         service_id, deploy_id = parts[2], parts[3]
         await _safe_edit_query(query, "🛑 Deploy bekor qilinmoqda...", parse_mode="HTML")
         try:
-            await render_api.cancel_deploy(service_id, deploy_id)
+            api_key = _render_api_key_for_service(context, service_id)
+            await render_api.cancel_deploy(api_key, service_id, deploy_id)
             await _safe_edit_query(
                 query, f"✅ <b>Deploy bekor qilindi.</b>\n\nID: <code>{_esc(deploy_id)}</code>",
                 reply_markup=_back_keyboard(f"dev:rdeploys:{service_id}"), parse_mode="HTML",
@@ -1935,7 +1995,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         service_id = parts[2]
         await _safe_edit_query(query, "🔄 Servis restart qilinmoqda...", parse_mode="HTML")
         try:
-            await render_api.restart_service(service_id)
+            api_key = _render_api_key_for_service(context, service_id)
+            await render_api.restart_service(api_key, service_id)
             await _safe_edit_query(
                 query, "✅ <b>Restart buyrug'i Render'ga yuborildi.</b>",
                 reply_markup=_back_keyboard(f"dev:rsvc:{service_id}"), parse_mode="HTML",
@@ -1948,7 +2009,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         service_id = parts[2]
         await _safe_edit_query(query, "⏸️ Servis to'xtatilmoqda...", parse_mode="HTML")
         try:
-            await render_api.suspend_service(service_id)
+            api_key = _render_api_key_for_service(context, service_id)
+            await render_api.suspend_service(api_key, service_id)
             await _safe_edit_query(query, "✅ <b>Servis suspend qilindi.</b>", reply_markup=_back_keyboard(f"dev:rsvc:{service_id}"), parse_mode="HTML")
         except Exception as exc:
             await _render_api_error(query, exc, f"dev:rsvc:{service_id}")
@@ -1958,7 +2020,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         service_id = parts[2]
         await _safe_edit_query(query, "▶️ Servis tiklanmoqda...", parse_mode="HTML")
         try:
-            await render_api.resume_service(service_id)
+            api_key = _render_api_key_for_service(context, service_id)
+            await render_api.resume_service(api_key, service_id)
             await _safe_edit_query(query, "✅ <b>Servis resume qilindi.</b>", reply_markup=_back_keyboard(f"dev:rsvc:{service_id}"), parse_mode="HTML")
         except Exception as exc:
             await _render_api_error(query, exc, f"dev:rsvc:{service_id}")
@@ -1968,8 +2031,9 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         service_id = parts[2]
         await _safe_edit_query(query, "⚙️ Render sozlamalari olinmoqda...", parse_mode="HTML")
         try:
-            service = await render_api.get_service(service_id)
-            env_vars = await render_api.list_env_vars(service_id)
+            api_key = _render_api_key_for_service(context, service_id)
+            service = await render_api.get_service(api_key, service_id)
+            env_vars = await render_api.list_env_vars(api_key, service_id)
             await _safe_edit_query(
                 query, _render_settings_text(service, env_vars),
                 reply_markup=_render_settings_keyboard(service), parse_mode="HTML",
@@ -1980,7 +2044,12 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if action == "renvadd":
         service_id = parts[2]
-        context.user_data["dev_action"] = {"type": "render_env_upsert", "service_id": service_id}
+        account = _render_account_for_service(context, service_id)
+        context.user_data["dev_action"] = {
+            "type": "render_env_upsert",
+            "service_id": service_id,
+            "account_id": account["id"] if account else "",
+        }
         await _safe_edit_query(
             query,
             "🔐 <b>Environment variable qo'shish/o'zgartirish</b>\n\n"
@@ -1993,7 +2062,12 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if action == "renvdel":
         service_id = parts[2]
-        context.user_data["dev_action"] = {"type": "render_env_delete", "service_id": service_id}
+        account = _render_account_for_service(context, service_id)
+        context.user_data["dev_action"] = {
+            "type": "render_env_delete",
+            "service_id": service_id,
+            "account_id": account["id"] if account else "",
+        }
         await _safe_edit_query(
             query,
             "🗑 <b>Environment variable o'chirish</b>\n\n"
@@ -2007,9 +2081,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         service_id, value = parts[2], parts[3]
         await _safe_edit_query(query, "⚙️ Auto Deploy sozlanmoqda...", parse_mode="HTML")
         try:
-            await render_api.update_service(service_id, {"autoDeploy": value})
-            service = await render_api.get_service(service_id)
-            env_vars = await render_api.list_env_vars(service_id)
+            api_key = _render_api_key_for_service(context, service_id)
+            await render_api.update_service(api_key, service_id, {"autoDeploy": value})
+            service = await render_api.get_service(api_key, service_id)
+            env_vars = await render_api.list_env_vars(api_key, service_id)
             await _safe_edit_query(
                 query, "✅ <b>Auto Deploy yangilandi.</b>\n\n" + _render_settings_text(service, env_vars),
                 reply_markup=_render_settings_keyboard(service), parse_mode="HTML",
@@ -2022,8 +2097,9 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         service_id = parts[2]
         await _safe_edit_query(query, "📋 Deploylar olinmoqda...", parse_mode="HTML")
         try:
-            service = await render_api.get_service(service_id)
-            deploys = await render_api.list_deploys(service_id, limit=30)
+            api_key = _render_api_key_for_service(context, service_id)
+            service = await render_api.get_service(api_key, service_id)
+            deploys = await render_api.list_deploys(api_key, service_id, limit=30)
             await _safe_edit_query(
                 query, _render_deploys_text(service, deploys),
                 reply_markup=_render_deploy_keyboard(service_id, deploys), parse_mode="HTML",
@@ -2039,12 +2115,15 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             category = "all"
         await _safe_edit_query(query, f"☁️ {_RENDER_LEVEL_LABELS[category]} olinmoqda...", parse_mode="HTML")
         try:
-            service = await render_api.get_service(service_id)
-            latest_deploy_raw = await _latest_render_deploy_start(service_id)
+            api_key = _render_api_key_for_service(context, service_id)
+            account = _render_account_for_service(context, service_id)
+            service = await render_api.get_service(api_key, service_id)
+            latest_deploy_raw = await _latest_render_deploy_start(api_key, service_id)
             latest_deploy = render_api._parse_dt(latest_deploy_raw) if latest_deploy_raw else None
             logs = await render_api.list_logs_for_service(
+                api_key=api_key,
                 service_id=service_id,
-                owner_id=str(service.get("ownerId") or service.get("owner_id") or config.RENDER_OWNER_ID or ""),
+                owner_id=str(service.get("ownerId") or service.get("owner_id") or (account.get("owner_id") if account else "") or ""),
                 levels=_RENDER_LEVEL_FILTERS[category],
                 limit=100,
                 start_time=latest_deploy,
@@ -2061,12 +2140,14 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         service_id = parts[2]
         await _safe_edit_query(query, "📄 <b>PDF tayyorlanmoqda...</b>\nRender'dan mavjud loglar olinmoqda, biroz kuting.", parse_mode="HTML")
         try:
-            service = await render_api.get_service(service_id)
-            owner_id = str(service.get("ownerId") or service.get("owner_id") or config.RENDER_OWNER_ID or "")
-            latest_deploy_raw = await _latest_render_deploy_start(service_id)
+            api_key = _render_api_key_for_service(context, service_id)
+            account = _render_account_for_service(context, service_id)
+            service = await render_api.get_service(api_key, service_id)
+            owner_id = str(service.get("ownerId") or service.get("owner_id") or (account.get("owner_id") if account else "") or "")
+            latest_deploy_raw = await _latest_render_deploy_start(api_key, service_id)
             latest_deploy = render_api._parse_dt(latest_deploy_raw) if latest_deploy_raw else None
             logs = await render_api.list_logs_for_service(
-                service_id=service_id, owner_id=owner_id, levels=None, limit=5000,
+                api_key=api_key, service_id=service_id, owner_id=owner_id, levels=None, limit=5000,
                 hours=config.RENDER_LOG_PDF_HOURS, start_time=latest_deploy,
             )
             pdf_path = render_api.create_logs_pdf(service, logs)
@@ -2448,7 +2529,10 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ KEY nomi noto'g'ri. Faqat harf, raqam va _ ishlating; raqam bilan boshlamang.")
             return DEV_WAIT_TEXT
         try:
-            await render_api.upsert_env_var(service_id, key, value)
+            account = config.get_render_account(action.get("account_id", "")) or _render_account_for_service(context, service_id)
+            if not account:
+                raise render_api.RenderAPIError(401, "Render API kaliti sozlanmagan (RENDER_API_KEY).")
+            await render_api.upsert_env_var(account["key"], service_id, key, value)
             await update.message.reply_text(
                 f"✅ <code>{_esc(key)}</code> Render Environment Variables'ga saqlandi.\n"
                 "Qiymat xavfsizlik sababli ko'rsatilmaydi. Deploy qilish uchun RENDER → 🚀 Deploy ni bosing.",
@@ -2467,7 +2551,10 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ KEY nomi noto'g'ri.")
             return DEV_WAIT_TEXT
         try:
-            await render_api.delete_env_var(service_id, key)
+            account = config.get_render_account(action.get("account_id", "")) or _render_account_for_service(context, service_id)
+            if not account:
+                raise render_api.RenderAPIError(401, "Render API kaliti sozlanmagan (RENDER_API_KEY).")
+            await render_api.delete_env_var(account["key"], service_id, key)
             await update.message.reply_text(f"✅ <code>{_esc(key)}</code> o'chirildi. Deploy qilish kerak bo'lishi mumkin.", parse_mode="HTML")
         except Exception as exc:
             await update.message.reply_text("❌ " + _esc(render_api.human_error(exc)), parse_mode="HTML")
