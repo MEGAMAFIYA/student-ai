@@ -282,6 +282,16 @@ async def list_logs_for_service(
             break
         start, end = new_start, new_end
 
+    def _log_sort_key(log: dict[str, Any]):
+        ts = log.get("timestamp") or log.get("time") or log.get("createdAt") or log.get("created_at")
+        parsed = _parse_dt(ts)
+        return parsed or datetime.min.replace(tzinfo=timezone.utc)
+
+    # Render'ning "backward" sahifalash tartibi API javobi shakliga qarab
+    # o'zgarishi mumkin, shuning uchun eng so'nggi log doim yuqorida
+    # chiqishi uchun natijani vaqt bo'yicha aniq kamayish tartibida saralaymiz.
+    collected.sort(key=_log_sort_key, reverse=True)
+
     return collected[:wanted]
 
 
