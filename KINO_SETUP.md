@@ -68,3 +68,21 @@ kinolar ochilmaydi (Bot API zaxirasi faqat ≤20 MB).
 Admin buyruqlari:
 - `/kino_check` — MTProto sessiyasi kanalni va kinolarni ocha olishini tekshiradi.
 - `/kino_migration` — eski kinolarni MTProto manbasiga ulash (avval ro'yxatga olinmagan edi).
+
+### Qo'shimcha (2-bosqich tuzatishlar)
+
+| O'zgaruvchi | Default | Ma'nosi |
+|---|---|---|
+| `KINO_STREAM_MAX_RESPONSE_BYTES` | 8388608 | Bitta Range javobi shundan oshmaydi (qolganini brauzer keyingi so'rov bilan oladi). Seek qilinganda eski ulanishlar tez bo'shaydi. |
+| `KINO_MAX_ROOMS` | 500 | Xotiradagi xonalar chegarasi. |
+| `KINO_UNUSED_ROOM_TTL_SEC` | 1800 | Hech kim kirmagan (inline natija uchun yaratilgan) xona shuncha vaqtdan keyin o'chadi. |
+
+- Xonalar xotirada saqlanadi. Server qayta ishga tushsa, mijoz xonani o'sha ID va kino bilan **o'zi tiklaydi**
+  (havola endi `startapp=room_<xona>_<kino>` ko'rinishida; eski `room_<xona>` havolalar ham ishlaydi, lekin
+  ular faqat xona hali tirik bo'lsa).
+- Kino formati: **H.264 video + AAC audio bilan MP4**. MKV/AVI yuklashda rad etiladi, MOV/WebM/3GP ogohlantirish bilan
+  qabul qilinadi. Konvertatsiya: `ffmpeg -i kirish.mkv -c:v libx264 -c:a aac -movflags +faststart chiqish.mp4`
+  (`+faststart` sekin tarmoqda tez boshlanishi uchun muhim).
+- Stream tokenlari kalit hosilasi o'zgargani sababli deploydan keyin eskilari yaroqsiz bo'ladi; ochiq sahifalar
+  yangisini avtomatik oladi.
+

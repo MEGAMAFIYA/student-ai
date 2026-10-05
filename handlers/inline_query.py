@@ -425,6 +425,13 @@ async def on_inline_query(
                     ]]),
                 )
             )
+        if not results:
+            # Barcha xonalar yaratilmadi (faol xonalar limiti) — bo'sh ro'yxat o'rniga sababini ko'rsatamiz.
+            await _answer_instruction(
+                update, "🎬 Xonalar band",
+                "Hozir faol xonalar juda ko'p. Birozdan keyin qayta urinib ko'ring.", query=query,
+            )
+            return
         await update.inline_query.answer(results, cache_time=3, is_personal=True)
         _log_inline(user, query, "queued", f"/kino katalog natijalari={len(results)}")
         return

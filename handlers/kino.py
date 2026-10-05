@@ -29,6 +29,31 @@ def _is_admin(user_id: int) -> bool:
     return int(user_id) in config.ADMIN_IDS
 
 
+# Brauzer (Mini App) va Android VideoView faqat H.264/AAC MP4 ni ishonchli ijro etadi.
+# MKV/AVI kabi formatlar katalogga qo'shilsa-yu, hech qaerda ochilmasdi.
+_OK_EXT = {".mp4", ".m4v"}
+_OK_MIME = {"video/mp4", "video/x-m4v"}
+_RISKY_EXT = {".mov", ".webm", ".3gp"}
+_RISKY_MIME = {"video/quicktime", "video/webm", "video/3gpp"}
+_CONVERT_HINT = (
+    "Kompyuterda o'tkazish uchun:\n"
+    "ffmpeg -i kirish.mkv -c:v libx264 -c:a aac -movflags +faststart chiqish.mp4"
+)
+
+
+def _classify_video(media) -> str:
+    """'ok' | 'risky' | 'bad' — fayl brauzer/Androidda ijro etilish ehtimoli bo'yicha."""
+    ext = os.path.splitext((getattr(media, "file_name", "") or "").lower())[1]
+    mime = (getattr(media, "mime_type", "") or "").lower()
+    if ext in _OK_EXT or mime in _OK_MIME:
+        return "ok"
+    if ext in _RISKY_EXT or mime in _RISKY_MIME:
+        return "risky"
+    if not ext and not mime:
+        return "ok"     # Telegram'ning o'zi siqqan video (mime yo'q) — odatda MP4
+    return "bad"
+
+
 def _menu_markup() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("➕ Kino yuklash", callback_data="kino:upload")],
@@ -59,7 +84,7 @@ async def kino_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         context.user_data.pop("kino_pending", None)
         await q.edit_message_text(
             "🎬 Kino yuklash\n\n"
-            "1️⃣ Video yoki video faylni shu yerga yuboring.\n"
+            "1️⃣ Video yoki video faylni shu yerga yuboring (H.264/AAC MP4 tavsiya etiladi; MKV/AVI ochilmaydi).\n"
             "2️⃣ Keyin kino nomini so'rayman.\n\n"
             "📡 Media Telegramdan MTProto orqali oqimlanadi; fayl Render/R2 ga saqlanmaydi."
         )
@@ -84,6 +109,14 @@ async def kino_receive_video(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return KINO_WAIT_VIDEO
     if msg.document and not (msg.document.mime_type or "").lower().startswith("video/"):
         await msg.reply_text("❌ Video fayl yuboring.")
+        return KINO_WAIT_VIDEO
+    quality = _classify_video(source_media)
+    if quality == "bad":
+        kind = source_media.mime_type or os.path.splitext(source_media.file_name or "")[1] or "noma'lum"
+        await msg.reply_text(
+            f"❌ Bu format ({kind}) brauzer va Android ilovasida ochilmaydi.\n"
+            "Kino H.264 video + AAC audio bilan MP4 bo'lishi kerak.\n\n" + _CONVERT_HINT
+        )
         return KINO_WAIT_VIDEO
 
     # Kino avval maxsus kanalga ko'chiriladi. Keyingi katalog va MTProto
@@ -113,10 +146,15 @@ async def kino_receive_video(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "size": source_media.file_size or 0,
     }
     suggested = os.path.splitext(source_media.file_name or "")[0] if source_media.file_name else ""
-    await msg.reply_text(
-        "✅ Video kino kanaliga saqlandi.\n\n"
-        + ("📝 Endi kino nomini yuboring." + (f"\n\nMasalan: `{suggested}`" if suggested else ""))
-    )
+    text = "✅ Video kino kanaliga saqlandi.\n\n📝 Endi kino nomini yuboring."
+    if suggested:
+        text += f"\n\nMasalan: <code>{html.escape(suggested)}</code>"
+    if quality == "risky":
+        text += (
+            "\n\n⚠️ Bu format (MOV/WebM/3GP) ba'zi qurilmalarda ochilmasligi mumkin. "
+            "Ishonchli ijro uchun H.264/AAC MP4 tavsiya etiladi.\n" + _CONVERT_HINT
+        )
+    await msg.reply_text(text, parse_mode="HTML")
     return KINO_WAIT_TITLE
 
 async def kino_receive_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -331,9 +369,9 @@ async def kino_open_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
     await q.answer()
     # Admin katalogidan ham foydalanuvchi Mini App orqali ko'rishi mumkin.
-    room_id = movie_watch.create_room(movie_id, q.from_user.id)
+    room_id = movie_watch.find_or_create_room(movie_id, q.from_user.id)
     if not room_id:
-        await q.answer("Xona yaratib bo'lmadi.", show_alert=True)
+        await q.answer("Xona yaratib bo'lmadi (faol xonalar ko'p bo'lishi mumkin).", show_alert=True)
         return
     url = movie_watch.room_url(movie_id, room_id)
     await q.edit_message_text(

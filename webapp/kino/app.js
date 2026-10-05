@@ -7,8 +7,13 @@
   const qs = new URLSearchParams(location.search);
   let room = qs.get("room") || "";
   const startParam = tg?.initDataUnsafe?.start_param || qs.get("startapp") || "";
-  if (!room && startParam.startsWith("room_")) room = startParam.slice(5);
-  const movieId = qs.get("movie") || "";
+  let movieId = qs.get("movie") || "";
+  if (!room && startParam.startsWith("room_")) {
+    // `room_<xona>_<kino>`: kino ID server qayta ishga tushganda xonani tiklash uchun kerak.
+    const [rid, mid] = startParam.slice(5).split("_");
+    room = rid;
+    if (mid && !movieId) movieId = mid;
+  }
   const initData = tg?.initData || (() => {
     // Router (webapp/index.html) Main Mini App'dan o'tishda initData nusxasini saqlaydi.
     try { return sessionStorage.getItem("student_ai_tg_init_data") || ""; } catch (_) { return ""; }
@@ -35,7 +40,10 @@
   let resumeAfterLoad = null;   // stream tiklanganda joriy pozitsiyani qaytarish uchun
   let authLost = false;
   let roomGone = false;
-  const timers = [];
+  const loops = {};              // polling taymerlari (nomi -> timeout id)
+  let restoring = false;
+  let signalBoostUntil = 0;
+  let lastDriftFixAt = 0;
   let connectionLost = false;
   let clockOffsetMs = 0;
   let reconnectTimer = null;
@@ -82,17 +90,82 @@
 
   // Sessiya (initData) yoki xona yo'qolganda foydalanuvchi sababni ko'rishi kerak;
   // aks holda polling jimgina uzilib, video "qotib" qolgandek ko'rinadi.
-  function onApiError(e) {
-    const code = e && e.code;
-    if (code !== "auth" && code !== "room") return;
+  function stopLoops() {
+    Object.keys(loops).forEach((k) => { clearTimeout(loops[k]); delete loops[k]; });
+  }
+  function giveUp(code) {
     if (authLost || roomGone) return;
     if (code === "auth") authLost = true; else roomGone = true;
-    timers.splice(0).forEach(clearInterval);
+    stopLoops();
     setStatus(code === "auth"
       ? "⚠️ Sessiya muddati tugadi. Mini App'ni yopib, Telegramdan qayta oching. Video buferdagi qismigacha davom etadi."
-      : "⚠️ Kino xonasi yopilgan (muddati o‘tgan yoki server qayta ishga tushgan). Yangi xona oching.");
+      : "⚠️ Kino xonasi yopilgan va tiklab bo'lmadi. Havolani qayta oching yoki yangi xona yarating.");
     setTimeout(() => setStatus(""), 9000);
   }
+  function onApiError(e) {
+    const code = e && e.code;
+    if (code === "auth") return giveUp("auth");
+    if (code === "room" || code === "member") {
+      // Server qayta ishga tushgan bo'lishi mumkin (xonalar xotirada). Avval tiklashga urinamiz.
+      restoreRoom().then((ok) => { if (!ok) giveUp("room"); });
+    }
+  }
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // Xonani shu ID va kino bilan qayta tiklaydi, so'ng O'Z holatimizni (haqiqiy pozitsiya)
+  // serverga yozadi: yangi xona bo'sh (0:00, pauza) bo'ladi, uni qo'llab qo'ysak hamma boshiga qaytardi.
+  async function restoreRoom() {
+    if (restoring || authLost || !room) return restoring;
+    const mid = currentMovieId || movieId;
+    if (!mid) return false;
+    restoring = true;
+    try {
+      setStatus("🔄 Xona tiklanmoqda...");
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const d = await api("/api/kino/join", null, { room, movie: mid });
+          me = d.user_id ?? me;
+          participants = d.participants || participants;
+          await applyMovie(d);
+          lastVersion = Number(d.state?.version ?? 0);
+          stateReady = true;
+          const s = await api("/api/kino/state", {
+            room, playing: !video.paused, position: Number(video.currentTime || 0),
+          });
+          lastVersion = Math.max(lastVersion, Number(s.version ?? lastVersion));
+          setStatus("");
+          return true;
+        } catch (e) {
+          if (e.code === "auth") { giveUp("auth"); return false; }
+          await sleep(1200 * (attempt + 1));
+        }
+      }
+      return false;
+    } finally {
+      restoring = false;
+    }
+  }
+
+  // Polling: avval ~6 so'rov/s edi (900ms + 700ms + 300ms). Endi holatga qarab moslashadi.
+  function startLoop(name, fn, intervalFn) {
+    const tick = async () => {
+      if (authLost || roomGone) return;
+      try { await fn(); } catch (_) {}
+      if (authLost || roomGone) return;
+      loops[name] = setTimeout(tick, intervalFn());
+    };
+    loops[name] = setTimeout(tick, 0);
+  }
+  const slow = (ms) => (document.hidden || connectionLost ? Math.max(ms, 3000) : ms);
+  const stateInterval = () => slow(900);
+  const chatInterval = () => slow(1500);
+  const signalInterval = () => {
+    // Kelishuv (offer/answer/ICE) paytida tez, ulanib bo'lgach sekin; yolg'iz bo'lsa juda sekin.
+    if (participants.length < 2) return slow(2500);
+    const negotiating = Date.now() < signalBoostUntil || !peer || peer.connectionState !== "connected" || makingOffer;
+    return slow(negotiating ? 300 : 1200);
+  };
+  const boostSignals = (ms = 8000) => { signalBoostUntil = Date.now() + ms; };
 
   function setStatus(text) {
     const el = $("waiting");
@@ -112,7 +185,7 @@
         history.replaceState(null, "", `?movie=${encodeURIComponent(movieId)}&room=${encodeURIComponent(room)}`);
       }
 
-      const d = await api("/api/kino/join", null, { room });
+      const d = await api("/api/kino/join", null, { room, movie: movieId });
       me = d.user_id;
       participants = d.participants || [];
       shareUrl = d.share_url || location.href;
@@ -125,12 +198,12 @@
 
       // Har bir timer alohida guard bilan ishlaydi: sekin tarmoqda bir xil
       // polling funksiyasi ustma-ust ishlamaydi.
-      timers.push(setInterval(pollState, 900));
-      timers.push(setInterval(pollChat, 700));
-      timers.push(setInterval(pollSignals, 300));
       await pollChat();
       await pollSignals();
       await pollState();
+      startLoop("state", pollState, stateInterval);
+      startLoop("chat", pollChat, chatInterval);
+      startLoop("signals", pollSignals, signalInterval);
     } catch (e) {
       console.error("KINO boot", e);
       setStatus("❌ " + e.message);
@@ -243,6 +316,19 @@
       .join("");
   }
 
+  // Ijro paytida buferlash yoki tarmoq sababli ortda qolgan (yoki oldinga ketgan) odamni
+  // xona vaqtiga qaytaradi. Faqat holat o'zgarmagan pollda, sezilarli farqda (>3s), video
+  // bufer kutmayotgan paytda va kamida 6s oralig'ida; ijro/pauza holatiga tegmaydi.
+  function correctDrift(d) {
+    if (!d.playing || video.paused || video.seeking || video.readyState < 3) return;
+    if (Date.now() - lastDriftFixAt < 6000) return;
+    const desired = desiredPosition(d);
+    if (Math.abs((video.currentTime || 0) - desired) > 3) {
+      lastDriftFixAt = Date.now();
+      quietSeek(desired);
+    }
+  }
+
   async function pollState() {
     if (statePolling || !room || authLost || roomGone) return;
     statePolling = true;
@@ -259,7 +345,10 @@
       const firstSync = !stateReady;
       // Versiya o'zgarmagan bo'lsa pleyerga tegmaymiz. Bu offline'dan qaytganda
       // buferdagi videoni orqaga qaytarib yubormaslik uchun muhim.
-      if (!firstSync && version <= lastVersion) return;
+      if (!firstSync && version <= lastVersion) {
+        correctDrift(d);
+        return;
+      }
       lastVersion = Math.max(lastVersion, version);
       stateReady = true;
 
@@ -282,6 +371,10 @@
     connectionLost = true;
     setStatus("📡 Internet uzildi — video mavjud buffer bilan davom etadi.");
     setTimeout(() => { if (connectionLost) setStatus(""); }, 2500);
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && !authLost && !roomGone) pollState();
   });
 
   window.addEventListener("online", async () => {
@@ -605,6 +698,7 @@
     const now = Date.now();
     if (!peer || !peerTarget || makingOffer || now - lastIceRestartAt < 5000) return;
     clearTimeout(reconnectTimer);
+    boostSignals();
     reconnectTimer = setTimeout(async () => {
       if (!peer || !peerTarget || makingOffer) return;
       if (!["failed", "disconnected", "checking"].includes(peer.connectionState) &&
@@ -779,9 +873,23 @@
       const enable=!track.enabled; track.enabled=enable; ensurePeer();
       const pc=peer;
       if(pc){
-        let sender=pc.getTransceivers().find(t=>t.receiver?.track?.kind===kind)?.sender;
-        if(sender){ await sender.replaceTrack(enable?track:null); if(enable) await tuneVideoSender(sender,"high"); }
-        else if(enable){ const s=pc.addTrack(track,localStream); await tuneVideoSender(s,"high"); }
+        const tr=pc.getTransceivers().find(t=>t.receiver?.track?.kind===kind);
+        if(tr?.sender){
+          if(enable){
+            // Masofadagi offer'dan yaratilgan transceiver "recvonly" bo'ladi: replaceTrack bitta
+            // o'zi yuborishni boshlamaydi. Yo'nalishni sendrecv qilamiz (bu qayta kelishuvni
+            // — negotiationneeded — ishga tushiradi), so'ng trackni qo'yamiz.
+            if(tr.direction==="recvonly"||tr.direction==="inactive") tr.direction="sendrecv";
+            await tr.sender.replaceTrack(track);
+            if(kind==="video") await tuneVideoSender(tr.sender,"high");
+          } else {
+            await tr.sender.replaceTrack(null);
+          }
+        } else if(enable){
+          const s=pc.addTrack(track,localStream);
+          if(kind==="video") await tuneVideoSender(s,"high");
+        }
+        boostSignals();   // yangi offer/answer tez almashinsin
       }
       if(kind==="audio") $("mic").textContent=enable?"🔊 Mikrofon ON":"🔇 Mikrofon";
       else{

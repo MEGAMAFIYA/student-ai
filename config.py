@@ -286,6 +286,12 @@ KINO_STREAM_TOKEN_SECRET = os.getenv("KINO_STREAM_TOKEN_SECRET", "")
 KINO_STREAM_CHUNK_SIZE = max(64 * 1024, int(os.getenv("KINO_STREAM_CHUNK_SIZE", str(1024 * 1024))))
 KINO_STREAM_MAX_CONCURRENT = max(1, int(os.getenv("KINO_STREAM_MAX_CONCURRENT", "4")))
 KINO_STREAM_TIMEOUT_SEC = max(5, int(os.getenv("KINO_STREAM_TIMEOUT_SEC", "35")))
+# Bitta Range javobi shuncha baytdan oshmaydi: brauzer qolganini keyingi so'rov bilan oladi.
+# Bu bitta ulanish butun filmni ushlab turishini (va umumiy oqim limitini band qilishini) oldini oladi.
+KINO_STREAM_MAX_RESPONSE_BYTES = max(256 * 1024, int(os.getenv("KINO_STREAM_MAX_RESPONSE_BYTES", str(8 * 1024 * 1024))))
+# Xotiradagi xonalar soni cheklovi va hech kim kirmagan xonalar uchun qisqa umr (inline natijalar uchun).
+KINO_MAX_ROOMS = max(10, int(os.getenv("KINO_MAX_ROOMS", "500")))
+KINO_UNUSED_ROOM_TTL_SEC = max(60, int(os.getenv("KINO_UNUSED_ROOM_TTL_SEC", str(30 * 60))))
 
 TG_SEARCH_ENABLED = bool(TG_API_ID and TG_API_HASH and TG_SESSION and TG_SEARCH_CHANNELS)
 

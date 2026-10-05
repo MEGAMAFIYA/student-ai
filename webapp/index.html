@@ -35,7 +35,11 @@
     } catch (_) {}
 
     if (start && start.startsWith("room_")) {
-      location.replace("/miniapp/kino/?room=" + encodeURIComponent(start.slice(5)));
+      // `room_<xona>` (eski havolalar) yoki `room_<xona>_<kino>` (yangi: server qayta
+      // ishga tushsa xona kino ID bo'yicha tiklanadi).
+      const [rid, mid] = start.slice(5).split("_");
+      location.replace("/miniapp/kino/?room=" + encodeURIComponent(rid) +
+                       (mid ? "&movie=" + encodeURIComponent(mid) : ""));
       return;
     }
     if (start && start.startsWith("game_")) {
