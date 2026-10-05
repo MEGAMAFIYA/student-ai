@@ -555,27 +555,25 @@ def _serve_mtproto_range(handler, movie: dict, start: int, end: int, content_typ
     size = int(movie.get("size") or 0)
     if not chat_id or not message_id or size <= 0:
         raise RuntimeError("MTProto metadata to'liq emas.")
-    # First chunk is fetched before headers so a primary failure can cleanly
-    # switch to the fallback before the HTTP response has started.
-    chunk_size = int(getattr(config, "KINO_STREAM_CHUNK_SIZE", 1024 * 1024))
     timeout = float(getattr(config, "KINO_STREAM_TIMEOUT_SEC", 35))
-    first_limit = min(chunk_size, end - start + 1)
-    first = telegram_mtproto.download_range(chat_id, message_id, start, first_limit, timeout=timeout)
-    if not first:
-        raise RuntimeError("Telegram MTProto bo'sh chunk qaytardi.")
-    _send_stream_headers(handler, status, content_type, size, start, end)
-    handler.wfile.write(first)
-    sent = len(first)
-    pos = start + sent
-    while pos <= end:
-        want = min(chunk_size, end - pos + 1)
-        chunk = telegram_mtproto.download_range(chat_id, message_id, pos, want, timeout=timeout)
-        if not chunk:
-            raise RuntimeError("Telegram MTProto oqimi erta tugadi.")
-        handler.wfile.write(chunk)
-        pos += len(chunk)
-        if len(chunk) < want:
+    expected = end - start + 1
+    # Pipeline: Telegramdan yuklash fonda oldinga ketadi, bu thread esa brauzerga yozadi.
+    # Birinchi chunk header'dan OLDIN olinadi: birlamchi yo'l yiqilsa zaxiraga toza o'tamiz.
+    stream = telegram_mtproto.stream_range(chat_id, message_id, start, expected, timeout=timeout)
+    try:
+        first = next(stream, b"")
+        if not first:
+            raise RuntimeError("Telegram MTProto bo'sh chunk qaytardi.")
+        _send_stream_headers(handler, status, content_type, size, start, end)
+        handler.wfile.write(first)
+        sent = len(first)
+        for chunk in stream:
+            handler.wfile.write(chunk)
+            sent += len(chunk)
+        if sent < expected:
             raise RuntimeError("Telegram MTProto oqimi kutilmaganda qisqardi.")
+    finally:
+        stream.close()
 
 
 def _bot_api_stream(handler, movie: dict, start: int, end: int, content_type: str, status: int = 206):

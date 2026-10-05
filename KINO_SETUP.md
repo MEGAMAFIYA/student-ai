@@ -86,3 +86,17 @@ Admin buyruqlari:
 - Stream tokenlari kalit hosilasi o'zgargani sababli deploydan keyin eskilari yaroqsiz bo'ladi; ochiq sahifalar
   yangisini avtomatik oladi.
 
+
+### Qo'shimcha (3-bosqich: lag tuzatishi — pipeline)
+
+Avval har 1 MiB chunk ketma-ket olinardi (Telegramdan olish → brauzerga yozish → keyingisi). Endi
+`telegram_mtproto.stream_range()` bitta `iter_download` bilan butun Range'ni fonda oldindan yuklaydi,
+HTTP thread esa navbatdan olib brauzerga yozadi (parallel).
+
+| O'zgaruvchi | Default | Ma'nosi |
+|---|---|---|
+| `KINO_STREAM_PREFETCH` | 4 | Oldindan yuklanadigan chunklar soni. RAM ≈ prefetch × `KINO_STREAM_CHUNK_SIZE` × faol oqimlar. |
+| `KINO_STREAM_MAX_CONCURRENT` | 8 (avval 4) | Bir vaqtdagi oqimlar. |
+| `KINO_STREAM_MAX_RESPONSE_BYTES` | 33554432 (avval 8 MiB) | Kam Range so'rovi → kam qayta ulanish. |
+
+Eslatma: Render xotirasi kichik bo'lsa `KINO_STREAM_PREFETCH=2` qiling.

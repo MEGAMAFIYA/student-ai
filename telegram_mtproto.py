@@ -321,6 +321,148 @@ def download_range(chat_id: int, message_id: int, offset: int, limit: int, timeo
     return future.result(timeout=max(1.0, float(timeout)))
 
 
+# ---------------------------------------------------------------------------
+# Pipelined streaming (kino lag fix)
+#
+# Eski usul: har 1 MiB uchun alohida `download_range()` -> Telegramdan olish va
+# brauzerga yozish NAVBATMA-NAVBAT edi, har chunkda yangi iter_download ochilardi.
+# Yangi usul: bitta iter_download butun Range bo'yicha ishlaydi va chunklarni
+# cheklangan navbatga (asyncio.Queue) oldindan yuklab turadi. HTTP thread esa
+# navbatdan olib brauzerga yozadi - ikkalasi PARALLEL ishlaydi.
+# ---------------------------------------------------------------------------
+_MIN_REQUEST = 4096
+_MAX_REQUEST = 1024 * 1024
+
+
+def _pick_request_size(value: int | None = None) -> int:
+    """Telegram talabi: 4096 ga karrali, 1 MiB dan oshmaydi."""
+    size = int(value or getattr(config, "KINO_STREAM_CHUNK_SIZE", _MAX_REQUEST))
+    size = max(_MIN_REQUEST, min(_MAX_REQUEST, size))
+    return size - (size % _MIN_REQUEST)
+
+
+async def _close_iter(it) -> None:
+    close = getattr(it, "close", None)
+    if close is None:
+        return
+    try:
+        res = close()
+        if asyncio.iscoroutine(res):
+            await res
+    except Exception:
+        pass
+
+
+async def _stream_producer(q: "asyncio.Queue", chat_id: int, message_id: int,
+                           offset: int, limit: int, req: int) -> None:
+    """Stream loop ichida ishlaydi. Chunklarni `q` ga qo'yadi (backpressure: maxsize)."""
+    sent = 0
+    refreshed = False
+    fresh = False
+    try:
+        while sent < limit:
+            message = await _get_stream_message(chat_id, message_id, fresh=fresh)
+            fresh = False
+            pos = offset + sent
+            aligned = pos - (pos % req)       # Telegram offset'i chunkka karrali bo'lishi kerak
+            skip = pos - aligned
+            chunk_count = (skip + (limit - sent) + req - 1) // req
+            it = _stream_client.iter_download(
+                message.media, offset=aligned, limit=chunk_count, request_size=req,
+            )
+            try:
+                async for chunk in it:
+                    data = bytes(chunk)
+                    if not data:
+                        break
+                    if skip:
+                        if len(data) <= skip:
+                            skip -= len(data)
+                            continue
+                        data = data[skip:]
+                        skip = 0
+                    data = data[: limit - sent]
+                    if not data:
+                        break
+                    await q.put(("data", data))
+                    sent += len(data)
+                    if sent >= limit:
+                        break
+                break                          # oqim normal tugadi
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                # file_reference eskirsa: keshni tashlab, QOLGAN joydan davom etamiz.
+                if "FileReference" in type(exc).__name__ and not refreshed:
+                    refreshed = True
+                    fresh = True
+                    _MSG_CACHE.pop((int(chat_id), int(message_id)), None)
+                    logger.info("MTProto file_reference eskirdi (stream): chat=%s message=%s", chat_id, message_id)
+                    continue
+                raise
+            finally:
+                await _close_iter(it)
+        await q.put(("end", None))
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        await q.put(("error", exc))
+
+
+async def _queue_get(q: "asyncio.Queue"):
+    return await q.get()
+
+
+def stream_range(chat_id: int, message_id: int, offset: int, limit: int,
+                 timeout: float = 30.0, prefetch: int | None = None):
+    """Blocking generator: Telegramdan [offset, offset+limit) baytlarni bo'laklab beradi.
+
+    * Yuklash fonda (stream loop) oldinga ketadi, `prefetch` ta chunkgacha.
+    * Generator yopilganda (`.close()` yoki client uzilganda) fon vazifa bekor qilinadi.
+    * Hech narsa diskka yozilmaydi; RAM'da eng ko'pi bilan prefetch * chunk_size.
+    """
+    offset = max(0, int(offset))
+    limit = int(limit)
+    if limit <= 0:
+        return
+    loop, _ = _ensure_stream_client()
+    prefetch = max(1, int(prefetch or getattr(config, "KINO_STREAM_PREFETCH", 4)))
+    req = _pick_request_size()
+    timeout = max(1.0, float(timeout))
+
+    async def _setup():
+        q = asyncio.Queue(maxsize=prefetch)
+        task = asyncio.ensure_future(
+            _stream_producer(q, int(chat_id), int(message_id), offset, limit, req)
+        )
+        return q, task
+
+    q, task = asyncio.run_coroutine_threadsafe(_setup(), loop).result(timeout=timeout)
+    got = 0
+    try:
+        while True:
+            fut = asyncio.run_coroutine_threadsafe(_queue_get(q), loop)
+            try:
+                kind, payload = fut.result(timeout=timeout)
+            except Exception:
+                fut.cancel()
+                raise
+            if kind == "data":
+                got += len(payload)
+                yield payload
+            elif kind == "end":
+                break
+            else:
+                raise payload
+        if got < limit:
+            raise RuntimeError("Telegram MTProto oqimi erta tugadi.")
+    finally:
+        try:
+            loop.call_soon_threadsafe(task.cancel)
+        except RuntimeError:
+            pass  # loop yopilgan
+
+
 async def check_connection() -> tuple[bool, str]:
     """Admin/debug uchun secretlarni oshkor qilmasdan ulanish holatini tekshiradi."""
     try:

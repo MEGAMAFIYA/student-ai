@@ -284,11 +284,13 @@ KINO_STREAM_TOKEN_SECRET = os.getenv("KINO_STREAM_TOKEN_SECRET", "")
 # Kino stream xavfsizligi/performance sozlamalari. Media fayli diskka
 # yozilmaydi; bu limitlar faqat bir vaqtdagi RAM/chunk yuklamasini boshqaradi.
 KINO_STREAM_CHUNK_SIZE = max(64 * 1024, int(os.getenv("KINO_STREAM_CHUNK_SIZE", str(1024 * 1024))))
-KINO_STREAM_MAX_CONCURRENT = max(1, int(os.getenv("KINO_STREAM_MAX_CONCURRENT", "4")))
+KINO_STREAM_MAX_CONCURRENT = max(1, int(os.getenv("KINO_STREAM_MAX_CONCURRENT", "8")))
 KINO_STREAM_TIMEOUT_SEC = max(5, int(os.getenv("KINO_STREAM_TIMEOUT_SEC", "35")))
+# Oldindan yuklanadigan chunklar soni (har biri KINO_STREAM_CHUNK_SIZE). RAM: prefetch * chunk * oqimlar.
+KINO_STREAM_PREFETCH = max(1, min(16, int(os.getenv("KINO_STREAM_PREFETCH", "4"))))
 # Bitta Range javobi shuncha baytdan oshmaydi: brauzer qolganini keyingi so'rov bilan oladi.
 # Bu bitta ulanish butun filmni ushlab turishini (va umumiy oqim limitini band qilishini) oldini oladi.
-KINO_STREAM_MAX_RESPONSE_BYTES = max(256 * 1024, int(os.getenv("KINO_STREAM_MAX_RESPONSE_BYTES", str(8 * 1024 * 1024))))
+KINO_STREAM_MAX_RESPONSE_BYTES = max(256 * 1024, int(os.getenv("KINO_STREAM_MAX_RESPONSE_BYTES", str(32 * 1024 * 1024))))
 # Xotiradagi xonalar soni cheklovi va hech kim kirmagan xonalar uchun qisqa umr (inline natijalar uchun).
 KINO_MAX_ROOMS = max(10, int(os.getenv("KINO_MAX_ROOMS", "500")))
 KINO_UNUSED_ROOM_TTL_SEC = max(60, int(os.getenv("KINO_UNUSED_ROOM_TTL_SEC", str(30 * 60))))
