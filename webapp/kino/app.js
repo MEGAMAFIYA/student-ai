@@ -9,7 +9,10 @@
   const startParam = tg?.initDataUnsafe?.start_param || qs.get("startapp") || "";
   if (!room && startParam.startsWith("room_")) room = startParam.slice(5);
   const movieId = qs.get("movie") || "";
-  const initData = tg?.initData || "";
+  const initData = tg?.initData || (() => {
+    // Router (webapp/index.html) Main Mini App'dan o'tishda initData nusxasini saqlaydi.
+    try { return sessionStorage.getItem("student_ai_tg_init_data") || ""; } catch (_) { return ""; }
+  })();
   let currentMovieId = movieId;
 
   let me = 0;
@@ -27,7 +30,12 @@
   let lastVersion = -1;
   let makingOffer = false;
   let ignoreOffer = false;
-  let suppressVideoEvents = false;
+  let lastServerState = null;   // oxirgi muvaffaqiyatli /state javobi (overlay bosilganda ishlatiladi)
+  let pendingState = null;      // metadata kelguncha kutayotgan server holati
+  let resumeAfterLoad = null;   // stream tiklanganda joriy pozitsiyani qaytarish uchun
+  let authLost = false;
+  let roomGone = false;
+  const timers = [];
   let connectionLost = false;
   let clockOffsetMs = 0;
   let reconnectTimer = null;
@@ -64,8 +72,26 @@
       cache: "no-store",
     });
     const d = await r.json();
-    if (!d.ok) throw Error(d.error || "Server xatosi");
+    if (!d.ok) {
+      const err = Error(d.error || "Server xatosi");
+      err.code = d.code || "";
+      throw err;
+    }
     return d.data;
+  }
+
+  // Sessiya (initData) yoki xona yo'qolganda foydalanuvchi sababni ko'rishi kerak;
+  // aks holda polling jimgina uzilib, video "qotib" qolgandek ko'rinadi.
+  function onApiError(e) {
+    const code = e && e.code;
+    if (code !== "auth" && code !== "room") return;
+    if (authLost || roomGone) return;
+    if (code === "auth") authLost = true; else roomGone = true;
+    timers.splice(0).forEach(clearInterval);
+    setStatus(code === "auth"
+      ? "⚠️ Sessiya muddati tugadi. Mini App'ni yopib, Telegramdan qayta oching. Video buferdagi qismigacha davom etadi."
+      : "⚠️ Kino xonasi yopilgan (muddati o‘tgan yoki server qayta ishga tushgan). Yangi xona oching.");
+    setTimeout(() => setStatus(""), 9000);
   }
 
   function setStatus(text) {
@@ -99,9 +125,9 @@
 
       // Har bir timer alohida guard bilan ishlaydi: sekin tarmoqda bir xil
       // polling funksiyasi ustma-ust ishlamaydi.
-      setInterval(pollState, 900);
-      setInterval(pollChat, 700);
-      setInterval(pollSignals, 300);
+      timers.push(setInterval(pollState, 900));
+      timers.push(setInterval(pollChat, 700));
+      timers.push(setInterval(pollSignals, 300));
       await pollChat();
       await pollSignals();
       await pollState();
@@ -111,32 +137,103 @@
     }
   }
 
-  let mediaLoadToken = 0;
-  async function applyMovie(d) {
+  // ---- Dasturiy hodisalarni foydalanuvchi harakatidan ajratish ----------------
+  // video.play()/pause()/currentTime= natijasidagi "play"/"pause"/"seeked" hodisalari
+  // ASINXRON keladi. Avvalgi `suppressVideoEvents` bayrog'i setTimeout(0) bilan darrov
+  // o'chirilgani uchun bu hodisalar serverga qaytib ketardi (masalan, keyin kirgan
+  // odamning "seeked" hodisasi butun xonani PAUSE qilardi). Endi har bir dasturiy
+  // amal o'z hodisasini aynan bir marta "yutib" yuboradi.
+  const quietUntil = { play: 0, pause: 0, seeked: 0 };
+  const markQuiet = (kind, ms) => { quietUntil[kind] = Date.now() + ms; };
+  const consumeQuiet = (kind) => {
+    if (Date.now() < quietUntil[kind]) { quietUntil[kind] = 0; return true; }
+    return false;
+  };
+  const resetQuiet = () => { quietUntil.play = quietUntil.pause = quietUntil.seeked = 0; };
+
+  function quietSeek(t) {
+    if (!Number.isFinite(t)) return;
+    if (Math.abs((video.currentTime || 0) - t) < 0.05) return;
+    markQuiet("seeked", 8000);
+    try { video.currentTime = Math.max(0, t); } catch (_) { quietUntil.seeked = 0; }
+  }
+  function quietPause() {
+    if (video.paused) return;
+    markQuiet("pause", 2500);
+    video.pause();
+  }
+  async function quietPlay() {
+    if (!video.paused) return true;
+    markQuiet("play", 2500);
+    try { await video.play(); return true; }
+    catch (_) { quietUntil.play = 0; return false; }
+  }
+
+  // Server soati bilan ishlaymiz (brauzer soati farq qilishi mumkin).
+  function updateClock(d, started, finished) {
+    if (Number.isFinite(Number(d.server_now))) {
+      const midpoint = started + (finished - started) / 2;
+      clockOffsetMs = Number(d.server_now) * 1000 - midpoint;
+    }
+  }
+  function desiredPosition(d) {
+    let desired = Number(d.position) || 0;
+    if (d.playing && Number.isFinite(Number(d.updated_at))) {
+      const nowServerSec = (Date.now() + clockOffsetMs) / 1000;
+      desired += Math.max(0, nowServerSec - Number(d.updated_at));
+    }
+    return desired;
+  }
+  async function fetchState() {
+    const started = Date.now();
+    const d = await api("/api/kino/state", null, { room });
+    updateClock(d, started, Date.now());
+    lastServerState = d;
+    return d;
+  }
+
+  async function applyMovie(d, { force = false } = {}) {
     if (!d?.movie || !d?.stream_path) return;
     const nextId = String(d.movie.id);
-    const changed = currentMovieId && currentMovieId !== nextId;
+    const changed = !!currentMovieId && currentMovieId !== nextId;
     currentMovieId = nextId;
     $("title").textContent = "🎬 " + d.movie.title;
-    // State polling may call applyMovie repeatedly. Do not recreate the video
-    // element/source unless the movie actually changed or it has no source.
-    if (!changed && video.getAttribute("data-movie-id") === nextId && video.src) return;
+    // State polling applyMovie'ni qayta-qayta chaqiradi: kino o'zgarmagan bo'lsa
+    // (yoki majburiy qayta yuklash so'ralmagan bo'lsa) video elementiga tegmaymiz.
+    if (!force && !changed && video.getAttribute("data-movie-id") === nextId && video.src) return;
 
-    const token = ++mediaLoadToken;
-    suppressVideoEvents = true;
-    try {
-      video.pause();
-      setStatus("⏳ Kino tayyorlanmoqda...");
-      // Bitta URL ishlatiladi. Primary/fallback tanlovi serverda yashirin.
-      const source = d.stream_path;
-      if (token !== mediaLoadToken) return;
-      video.setAttribute("data-movie-id", nextId);
-      video.src = source;
-      video.load();
-      video.currentTime = 0;
-      playOverlay.classList.remove("hidden");
-    } finally {
-      setTimeout(() => { suppressVideoEvents = false; }, 0);
+    // Faqat stream tokeni yangilanayotgan bo'lsa (bir xil kino) joriy joydan davom etamiz.
+    resumeAfterLoad = (force && !changed && video.getAttribute("data-movie-id") === nextId)
+      ? { time: Number(video.currentTime || 0), play: !video.paused }
+      : null;
+    pendingState = null;
+    resetQuiet();
+    setStatus("⏳ Kino tayyorlanmoqda...");
+    video.setAttribute("data-movie-id", nextId);
+    video.src = d.stream_path;
+    video.load();   // paused=true qiladi, currentTime=0 (alohida 'pause' hodisasi chiqmaydi)
+    playOverlay.classList.remove("hidden");
+  }
+
+  // Server holatini pleyerga qo'llaydi. Metadata kelmaguncha currentTime'ni ishonchli
+  // o'rnatib bo'lmaydi, shuning uchun holat 'loadedmetadata'gacha kutadi.
+  async function applyServerState(d) {
+    if (video.readyState < 1) { pendingState = d; return; }
+    pendingState = null;
+    const desired = desiredPosition(d);
+    const drift = Math.abs((video.currentTime || 0) - desired);
+    if (!d.playing) {
+      // Masofadagi pauza avtoritetli: aynan o'sha joyga qo'yamiz.
+      if (drift > 0.15) quietSeek(desired);
+      quietPause();
+    } else {
+      // Ijro paytida har pollda seek qilmaymiz — faqat sezilarli farqda.
+      if (drift > 1.75) quietSeek(desired);
+      if (video.paused) {
+        const ok = await quietPlay();
+        // Brauzer avtoplay'ni blokladi: foydalanuvchi bosishi kerak (overlay tugmasi).
+        if (!ok) playOverlay.classList.remove("hidden");
+      }
     }
   }
 
@@ -146,22 +243,12 @@
       .join("");
   }
 
-  async function pollState(forceSync = false) {
-    if (statePolling || !room) return;
+  async function pollState() {
+    if (statePolling || !room || authLost || roomGone) return;
     statePolling = true;
     try {
-      const requestStarted = Date.now();
-      const d = await api("/api/kino/state", null, { room });
-      const requestFinished = Date.now();
+      const d = await fetchState();
       connectionLost = false;
-
-      // The server clock is authoritative. The old implementation compared
-      // server epoch time directly with the browser clock, which can differ
-      // and makes the player jump backwards/forwards on every poll.
-      if (Number.isFinite(Number(d.server_now))) {
-        const midpoint = requestStarted + (requestFinished - requestStarted) / 2;
-        clockOffsetMs = Number(d.server_now) * 1000 - midpoint;
-      }
 
       participants = d.participants || participants;
       renderPeople();
@@ -169,61 +256,23 @@
       if (participants.length === 2) ensurePeer();
 
       const version = Number(d.version ?? -1);
-      const isNewState = !stateReady || version > lastVersion;
-      const remoteEvent = stateReady && Number(d.actor_id) !== Number(me);
-      const shouldSync = isNewState;
+      const firstSync = !stateReady;
+      // Versiya o'zgarmagan bo'lsa pleyerga tegmaymiz. Bu offline'dan qaytganda
+      // buferdagi videoni orqaga qaytarib yubormaslik uchun muhim.
+      if (!firstSync && version <= lastVersion) return;
+      lastVersion = Math.max(lastVersion, version);
+      stateReady = true;
 
-      if (shouldSync) {
-        lastVersion = Math.max(lastVersion, version);
-        stateReady = true;
-
-        // Reconnection is only a trigger to fetch state. If the room version
-        // did not change, never touch the local player. This is essential for
-        // offline playback: coming back online must not rewind buffered video.
-        if (!isNewState) return;
-
-        // Do not apply our own state echo back onto the video. We already have
-        // the exact local position; applying the server echo is what caused
-        // the repeating/re-winding behaviour during playback.
-        if (!remoteEvent && stateReady) return;
-
-        const nowServerMs = Date.now() + clockOffsetMs;
-        let desired = Number(d.position) || 0;
-        if (d.playing && Number.isFinite(Number(d.updated_at))) {
-          desired += Math.max(0, (nowServerMs / 1000) - Number(d.updated_at));
-        }
-
-        suppressVideoEvents = true;
-        try {
-          const local = Number(video.currentTime || 0);
-          const drift = Math.abs(local - desired);
-          const remotePaused = !d.playing;
-
-          if (remotePaused) {
-            // A remote pause is authoritative. Even if we were offline and
-            // continued playing buffered data, reconnecting must land exactly
-            // at the position where the other participant paused.
-            if (Number.isFinite(desired) && drift > 0.15) {
-              video.currentTime = Math.max(0, desired);
-            }
-            if (!video.paused) video.pause();
-          } else {
-            // For normal playback never continuously seek on every poll.
-            // Correct only meaningful drift; this removes the periodic jump.
-            if (Number.isFinite(desired) && drift > 1.75) {
-              video.currentTime = Math.max(0, desired);
-            }
-            if (video.paused) await video.play().catch(() => {});
-          }
-        } finally {
-          setTimeout(() => { suppressVideoEvents = false; }, 0);
-        }
-      }
-    } catch (_) {
-      // IMPORTANT: when connectivity disappears, leave the video completely
-      // alone. The browser continues with whatever has already been buffered.
-      // On the next successful request, a newer remote version is reconciled.
+      const remoteEvent = Number(d.actor_id) !== Number(me);
+      // Birinchi sinxronda (keyin kirgan odam yoki sahifani qayta ochgan foydalanuvchi)
+      // holat HAR DOIM qo'llanadi — actor o'zimiz bo'lsa ham, chunki qayta ochilganda
+      // local pozitsiya 0 bo'ladi. Keyingi o'zgarishlarda esa o'zimiz yuborgan holatning
+      // aks-sadosi qo'llanmaydi (aks holda pleyer orqaga sakrab ketadi).
+      if (firstSync || remoteEvent) await applyServerState(d);
+    } catch (e) {
+      // Internet uzilganda videoga tegmaymiz: brauzer buferdagi qism bilan davom etadi.
       connectionLost = true;
+      onApiError(e);
     } finally {
       statePolling = false;
     }
@@ -259,27 +308,78 @@
   window.addEventListener("resize", syncViewport);
   syncViewport();
 
-  video.addEventListener("error", () => {
+  // Stream URL'dagi token yaroqsiz bo'lib qolsa (yoki server qayta ishga tushsa) video
+  // 'error' beradi. Foydalanuvchini "Kino ochilmadi"da qoldirmasdan, yangi token bilan
+  // joriy joydan davom ettiramiz (10 daqiqada ko'pi bilan 3 urinish).
+  const recoverLog = [];
+  let recovering = false;
+  async function recoverStream() {
+    const now = Date.now();
+    while (recoverLog.length && now - recoverLog[0] > 600000) recoverLog.shift();
+    if (recovering || authLost || roomGone || recoverLog.length >= 3) return false;
+    recovering = true;
+    recoverLog.push(now);
+    try {
+      setStatus("🔄 Aloqa tiklanmoqda...");
+      const d = await api("/api/kino/join", null, { room });   // yangi stream tokeni
+      await applyMovie(d, { force: true });
+      return true;
+    } catch (e) {
+      onApiError(e);
+      return false;
+    } finally {
+      recovering = false;
+    }
+  }
+
+  video.addEventListener("error", async () => {
     const e = video.error;
     console.error("KINO video error", e?.code, e?.message);
-    setStatus("❌ Kino ochilmadi. Fayl MP4 (H.264/AAC) bo‘lishi kerak.");
+    if (await recoverStream()) return;
+    if (authLost || roomGone) return;
+    setStatus("❌ Kino ochilmadi. Server oqimi vaqtincha mavjud emas yoki fayl MP4 (H.264/AAC) emas.");
   });
-  video.addEventListener("loadedmetadata", () => {
+  video.addEventListener("loadedmetadata", async () => {
     setStatus("");
+    if (pendingState) {
+      const d = pendingState;
+      pendingState = null;
+      await applyServerState(d);
+    } else if (resumeAfterLoad) {
+      const r = resumeAfterLoad;
+      resumeAfterLoad = null;
+      quietSeek(r.time);
+      if (r.play && !(await quietPlay())) playOverlay.classList.remove("hidden");
+    }
   });
   video.addEventListener("canplay", () => {
     setStatus("");
   });
-  playOverlay.onclick = async () => {
-    try { await video.play(); } catch (e) { setStatus("❌ Video ishga tushmadi: " + e.message); }
+
+  // Overlay — foydalanuvchi harakati (autoplay bloklanganda yagona yo'l). play() ni
+  // gesture ichida DARHOL chaqirish shart (iOS), shuning uchun tarmoqni kutmaymiz va
+  // oxirgi ma'lum server holatidan foydalanamiz (u ≤1 soniya eskirgan).
+  playOverlay.onclick = () => {
+    const d = lastServerState;
+    if (d && stateReady) {
+      if (d.playing) {
+        // Xona allaqachon ijro etilmoqda: biz unga QO'SHILAMIZ, holatni o'zgartirmaymiz.
+        // (Eski kod bu yerda 0:00 ni yuborib, birinchi odamni ham boshiga qaytarardi.)
+        quietSeek(desiredPosition(d));
+        markQuiet("play", 2500);
+      } else {
+        // Xona to'xtatilgan: umumiy pozitsiyadan boshlaymiz; "play" hammaga yuboriladi.
+        quietSeek(Number(d.position) || 0);
+      }
+    }
+    video.play().catch((e) => {
+      quietUntil.play = 0;
+      setStatus("❌ Video ishga tushmadi: " + e.message);
+    });
   };
-  video.addEventListener("pause", () => {
-    if (video.currentTime < 0.2 && video.readyState >= 2) playOverlay.classList.remove("hidden");
-  });
-  video.addEventListener("play", () => playOverlay.classList.add("hidden"));
+
   let stateSendTimer = null;
   function pushState(playing) {
-    if (suppressVideoEvents) return;
     clearTimeout(stateSendTimer);
     stateSendTimer = setTimeout(async () => {
       try {
@@ -293,15 +393,27 @@
           lastVersion = Math.max(lastVersion, Number(d.version));
           stateReady = true;
         }
-      } catch (_) {
-        // Keep local playback untouched while offline.
+      } catch (e) {
+        // Offline paytida local ijroga tegmaymiz.
         connectionLost = true;
+        onApiError(e);
       }
     }, 120);
   }
-  video.addEventListener("play", () => pushState(true));
-  video.addEventListener("pause", () => pushState(false));
-  video.addEventListener("seeked", () => pushState(!video.paused));
+  video.addEventListener("play", () => {
+    playOverlay.classList.add("hidden");
+    if (consumeQuiet("play")) return;
+    pushState(true);
+  });
+  video.addEventListener("pause", () => {
+    if (video.currentTime < 0.2 && video.readyState >= 2) playOverlay.classList.remove("hidden");
+    if (consumeQuiet("pause")) return;
+    pushState(false);
+  });
+  video.addEventListener("seeked", () => {
+    if (consumeQuiet("seeked")) return;
+    pushState(!video.paused);
+  });
 
   async function pollChat() {
     if (chatPolling || !room) return;
@@ -313,8 +425,9 @@
         addMsg(m);
         lastChat = m.id;
       }
-    } catch (_) {
+    } catch (e) {
       // Keyingi poll aynan o‘sha cursor bilan qayta urinadi.
+      onApiError(e);
     } finally {
       chatPolling = false;
     }
@@ -393,8 +506,9 @@
       btn.disabled = true;
       const d = await api("/api/kino/change_movie", { room, movie_id: btn.dataset.movieId });
       await applyMovie(d);
-      lastVersion = Number(d.version ?? lastVersion);
+      lastVersion = Math.max(lastVersion, Number(d.version ?? lastVersion));
       stateReady = true;
+      lastServerState = d;
       moviePicker.classList.add("hidden");
       setStatus("🎬 Yangi kino tanlandi.");
       setTimeout(() => setStatus(""), 1200);
@@ -423,8 +537,9 @@
       for (const item of list || []) {
         await handleSignal(item);
       }
-    } catch (_) {
+    } catch (e) {
       // Keyingi poll qayta urinadi.
+      onApiError(e);
     } finally {
       signalPolling = false;
     }

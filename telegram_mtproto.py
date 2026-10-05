@@ -12,6 +12,7 @@ import base64
 import asyncio
 import logging
 import threading
+import time
 from typing import Any, Callable
 
 import config
@@ -104,17 +105,87 @@ def _document_metadata(message: Any) -> dict:
     }
 
 
+class MTProtoStorageError(RuntimeError):
+    """Kino saqlash kanali/xabari MTProto orqali ochilmaganda (aniq sabab bilan)."""
+
+
+# StringSession entity (access_hash) keshini SAQLAMAYDI. Yangi ishga tushgan jarayonda
+# `get_messages(-100...)` "Could not find the input entity" bilan yiqiladi, toki
+# kanal dialoglar ro'yxati orqali bir marta ko'rilmaguncha. Shu sababli har client
+# uchun keshni bir marta "isitamiz" va kerak bo'lsa public username'ga tushamiz.
+_DIALOGS_REWARM_SEC = 300
+
+
+async def _resolve_input_chat(client, chat_id: int):
+    chat_id = int(chat_id)
+    try:
+        return await client.get_input_entity(chat_id)
+    except ValueError:
+        pass
+
+    now = time.monotonic()
+    last_warm = getattr(client, "_kino_dialogs_warm_at", None)
+    if last_warm is None or now - last_warm > _DIALOGS_REWARM_SEC:
+        # Barcha dialoglarni bir marta yuklaymiz (kesh to'ladi). Muvaffaqiyatsiz
+        # urinishdan keyin ham vaqt belgilanadi, shunda har so'rovda qayta yuklanmaydi.
+        client._kino_dialogs_warm_at = now
+        try:
+            await client.get_dialogs()
+        except Exception as exc:
+            logger.warning("MTProto get_dialogs xato: %s: %s", type(exc).__name__, exc)
+        try:
+            return await client.get_input_entity(chat_id)
+        except ValueError:
+            pass
+
+    username = (getattr(config, "KINO_STORAGE_CHANNEL_USERNAME", "") or "").strip().lstrip("@")
+    if username and chat_id == int(getattr(config, "KINO_STORAGE_CHANNEL_ID", 0) or 0):
+        try:
+            return await client.get_input_entity(username)
+        except Exception as exc:
+            logger.warning("MTProto username orqali kanal topilmadi (%s): %s: %s", username, type(exc).__name__, exc)
+
+    raise MTProtoStorageError(
+        f"Kanal ({chat_id}) MTProto sessiyasi uchun ochilmadi. Session akkaunti shu kanalga "
+        "a'zo bo'lishi (yoki kanal public username'ga ega bo'lishi) kerak."
+    )
+
+
+async def _fetch_message(client, chat_id: int, message_id: int):
+    entity = await _resolve_input_chat(client, chat_id)
+    message = await client.get_messages(entity, ids=int(message_id))
+    if not message:
+        raise MTProtoStorageError(f"Xabar topilmadi: chat={chat_id} message={message_id}.")
+    if not getattr(message, "media", None):
+        raise MTProtoStorageError(f"Xabarda media yo'q: chat={chat_id} message={message_id}.")
+    return message
+
+
 async def resolve_message(chat_id: int, message_id: int) -> dict:
     """Telegramdagi aniq message'ni MTProto orqali resolve qiladi.
 
     Muhim: media download qilinmaydi. Faqat metadata olinadi.
     """
     client = await get_client()
-    message = await client.get_messages(int(chat_id), ids=int(message_id))
-    if not message:
-        raise RuntimeError("Telegram message topilmadi.")
+    message = await _fetch_message(client, chat_id, message_id)
     return _document_metadata(message)
 
+
+async def check_storage(chat_id: int, message_id: int | None = None) -> tuple[bool, str]:
+    """Admin diagnostikasi: session kanalni va (ixtiyoriy) xabarni ocha oladimi?
+    Hech qanday secret yoki media baytlari qaytarilmaydi."""
+    try:
+        client = await get_client()
+        await _resolve_input_chat(client, chat_id)
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+    if message_id is None:
+        return True, "kanal ochildi"
+    try:
+        meta = _document_metadata(await _fetch_message(client, chat_id, message_id))
+    except Exception as exc:
+        return False, f"kanal ochildi, lekin xabar #{message_id} o'qilmadi — {type(exc).__name__}: {exc}"
+    return True, f"xabar #{message_id} OK, hajm {int(meta.get('size') or 0) / (1024 * 1024):.1f} MB"
 
 
 def _stream_loop_worker():
@@ -163,30 +234,78 @@ def _ensure_stream_client():
     return _stream_loop, _stream_client
 
 
-async def _download_range_async(chat_id: int, message_id: int, offset: int, limit: int) -> bytes:
-    # This coroutine is executed inside the dedicated stream loop.
-    # Message'ni har Range so'roviga qayta resolve qilish file_reference eskirgan
-    # holatda ham yangi Telegram media reference olish imkonini beradi.
-    message = await _stream_client.get_messages(int(chat_id), ids=int(message_id))
-    if not message or not getattr(message, "media", None):
-        raise RuntimeError("Telegram media message topilmadi.")
+# Stream loop ichida ishlatiladi (bitta thread) — qulf kerak emas. Har 1 MiB chunk uchun
+# `get_messages` chaqirish minglab ortiqcha so'rov va FloodWait xavfini tug'dirardi.
+# file_reference soatlar davomida yaroqli; xato bo'lsa keshni tashlab, bir marta qayta olamiz.
+_MSG_CACHE: dict[tuple[int, int], tuple[float, Any]] = {}
+_MSG_CACHE_TTL_SEC = 600
+_MSG_CACHE_MAX = 64
+
+
+async def _get_stream_message(chat_id: int, message_id: int, fresh: bool = False):
+    key = (int(chat_id), int(message_id))
+    now = time.monotonic()
+    if not fresh:
+        hit = _MSG_CACHE.get(key)
+        if hit and now - hit[0] < _MSG_CACHE_TTL_SEC:
+            return hit[1]
+    message = await _fetch_message(_stream_client, chat_id, message_id)
+    if len(_MSG_CACHE) >= _MSG_CACHE_MAX:
+        oldest = min(_MSG_CACHE, key=lambda k: _MSG_CACHE[k][0])
+        _MSG_CACHE.pop(oldest, None)
+    _MSG_CACHE[key] = (now, message)
+    return message
+
+
+async def _read_range(media, offset: int, limit: int) -> bytes:
     chunks = []
     remaining = int(limit)
     request_size = min(
         int(getattr(config, "KINO_STREAM_CHUNK_SIZE", 1024 * 1024)),
         max(64 * 1024, remaining),
     )
-    async for chunk in _stream_client.iter_download(
-        message.media, offset=max(0, int(offset)), limit=remaining,
+    it = _stream_client.iter_download(
+        media, offset=max(0, int(offset)), limit=remaining,
         request_size=request_size,
-    ):
-        if not chunk:
-            break
-        chunks.append(bytes(chunk))
-        remaining -= len(chunk)
-        if remaining <= 0:
-            break
-    return b"".join(chunks)
+    )
+    try:
+        async for chunk in it:
+            if not chunk:
+                break
+            chunks.append(bytes(chunk))
+            remaining -= len(chunk)
+            if remaining <= 0:
+                break
+    finally:
+        # Erta break qilinganda Telethon boshqa DC uchun ochgan "exported sender"ni
+        # o'zi yopmaydi; yopmasak har Range so'rovida ulanish sizib chiqadi.
+        close = getattr(it, "close", None)
+        if close is not None:
+            try:
+                res = close()
+                if asyncio.iscoroutine(res):
+                    await res
+            except Exception:
+                pass
+    # Telegram `request_size` ga karrali qaytaradi; HTTP Content-Length'dan ortiq
+    # bayt yozilmasligi uchun so'ralgan uzunlikkacha kesamiz.
+    return b"".join(chunks)[: int(limit)]
+
+
+async def _download_range_async(chat_id: int, message_id: int, offset: int, limit: int) -> bytes:
+    # This coroutine is executed inside the dedicated stream loop.
+    if int(limit) <= 0:
+        return b""
+    message = await _get_stream_message(chat_id, message_id)
+    try:
+        return await _read_range(message.media, offset, limit)
+    except Exception as exc:
+        if "FileReference" not in type(exc).__name__:
+            raise
+        logger.info("MTProto file_reference eskirdi, yangilanmoqda: chat=%s message=%s", chat_id, message_id)
+        _MSG_CACHE.pop((int(chat_id), int(message_id)), None)
+        message = await _get_stream_message(chat_id, message_id, fresh=True)
+        return await _read_range(message.media, offset, limit)
 
 
 def download_range(chat_id: int, message_id: int, offset: int, limit: int, timeout: float = 30.0) -> bytes:

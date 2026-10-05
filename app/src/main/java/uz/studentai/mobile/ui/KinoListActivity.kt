@@ -80,17 +80,20 @@ class KinoListActivity : AppCompatActivity() {
                 val api = ApiClient.get(this@KinoListActivity)
                 val response = api.kinoWatch(movie.id)
                 val url = response.body()?.stream_url
-                if (response.isSuccessful && url != null) {
+                // Server nisbiy/bo'sh manzil qaytarsa VideoView faqat "tarmoq xatosi" ko'rsatardi.
+                if (response.isSuccessful && !url.isNullOrBlank() && url.startsWith("http")) {
                     val intent = Intent(this@KinoListActivity, KinoPlayerActivity::class.java)
                     intent.putExtra(KinoPlayerActivity.EXTRA_URL, url)
                     intent.putExtra(KinoPlayerActivity.EXTRA_TITLE, movie.title)
                     startActivity(intent)
                 } else {
-                    Toast.makeText(
-                        this@KinoListActivity,
-                        "Kino oqimi hozircha mavjud emas (server manzili sozlanmagan bo'lishi mumkin).",
-                        Toast.LENGTH_LONG
-                    ).show()
+                    val message = when (response.code()) {
+                        404 -> "Kino topilmadi yoki tomosha xonasi yaratilmadi."
+                        422 -> "Bu kinoning hajmi aniqlanmagan, uni oqimlab bo'lmaydi."
+                        503 -> "Server manzili sozlanmagan. Administratorga xabar bering (PUBLIC_BASE_URL)."
+                        else -> "Kino oqimi hozircha mavjud emas."
+                    }
+                    Toast.makeText(this@KinoListActivity, message, Toast.LENGTH_LONG).show()
                 }
             } catch (e: Exception) {
                 Toast.makeText(this@KinoListActivity, R.string.error_network, Toast.LENGTH_SHORT).show()

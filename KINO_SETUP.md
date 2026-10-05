@@ -50,3 +50,21 @@ Eski katalogdagi filmda Telegram source metadata bo‘lmasa, `/kino_migration MO
 4. Player Range request yuboradi.
 5. Server MTProto’dan chunk oladi. Xato bo‘lsa fallback ishlaydi.
 6. Watch Party/chat/WebRTC oqimi alohida qoladi.
+
+## Qo'shimcha sozlamalar va buyruqlar (kino tuzatishlari)
+
+| O'zgaruvchi | Default | Ma'nosi |
+|---|---|---|
+| `KINO_INIT_DATA_MAX_AGE_SEC` | 86400 | Mini App sessiyasi (initData) kino uchun shuncha vaqt yaroqli. Avval umumiy 1 soat edi — film 60-daqiqada uzilardi. |
+| `KINO_STREAM_TOKEN_TTL_SEC` | 43200 | Stream token umri (12 soat). |
+| `KINO_ROOM_TTL_SEC` | 21600 | Xona FAOL BO'LMAY qolgach shuncha soniyadan keyin o'chadi (avval: yaratilganidan boshlab). |
+| `KINO_ROOM_MAX_AGE_SEC` | 86400 | Faol xonaning mutlaq maksimal umri. |
+| `PUBLIC_BASE_URL` | — | Bo'sh bo'lsa mobil API `RENDER_EXTERNAL_URL` yoki so'rov `Host` sarlavhasidan foydalanadi. |
+
+**MTProto talabi:** `TG_SESSION` — bu USER sessiyasi. Shu akkaunt kino saqlash kanaliga a'zo bo'lishi
+(yoki kanal public `KINO_STORAGE_CHANNEL_USERNAME` ga ega bo'lishi) kerak, aks holda 20 MB dan katta
+kinolar ochilmaydi (Bot API zaxirasi faqat ≤20 MB).
+
+Admin buyruqlari:
+- `/kino_check` — MTProto sessiyasi kanalni va kinolarni ocha olishini tekshiradi.
+- `/kino_migration` — eski kinolarni MTProto manbasiga ulash (avval ro'yxatga olinmagan edi).

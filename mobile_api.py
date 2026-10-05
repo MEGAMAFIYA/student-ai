@@ -5,9 +5,11 @@ import base64
 import io
 import json
 import logging
+import os
+import re
 import time
 import uuid
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, quote
 
 import config
 import mobile_auth
@@ -52,6 +54,37 @@ def _json(handler, status: int, payload: dict):
     handler.send_header("Content-Length", str(len(raw)))
     handler.end_headers()
     handler.wfile.write(raw)
+
+
+_HOST_RE = re.compile(r"^[A-Za-z0-9.-]+(:\d{1,5})?$")
+_LOCAL_HOSTS = ("localhost", "127.0.0.1", "10.0.2.2")
+
+
+def _public_base_url(handler) -> str:
+    """Mobil ilovaga beriladigan ABSOLYUT server manzili ("https://host", oxirida / yo'q).
+
+    Tartib: PUBLIC_BASE_URL -> Render'ning RENDER_EXTERNAL_URL -> joriy so'rovning
+    Host / X-Forwarded-* sarlavhalari. Hech biri bo'lmasa "" qaytadi. Avval bo'sh
+    PUBLIC_BASE_URL nisbiy "/api/kino/stream/..." qaytarib, ilova buni "tarmoq xatosi"
+    deb ko'rsatardi."""
+    for raw in (getattr(config, "PUBLIC_BASE_URL", ""), os.getenv("RENDER_EXTERNAL_URL", "")):
+        raw = (raw or "").strip().rstrip("/")
+        if not raw:
+            continue
+        if not re.match(r"^https?://", raw, re.I):
+            raw = "https://" + raw
+        return raw
+    headers = getattr(handler, "headers", None)
+    host = ((headers.get("X-Forwarded-Host") or headers.get("Host") or "") if headers else "").split(",")[0].strip()
+    if not host or not _HOST_RE.match(host):
+        return ""
+    is_local = host.split(":")[0] in _LOCAL_HOSTS
+    proto = ((headers.get("X-Forwarded-Proto") or "") if headers else "").split(",")[0].strip().lower()
+    if proto not in ("http", "https"):
+        proto = "http" if is_local else "https"
+    if proto == "http" and not is_local:
+        proto = "https"   # Android cleartext'ni bloklaydi; ochiq host faqat HTTPS bo'lishi kerak
+    return f"{proto}://{host}"
 
 
 def _read_json(handler) -> dict:
@@ -229,9 +262,14 @@ def handle_get(handler) -> bool:
         rid = movie_watch.find_or_create_room(movie_id, user["id"])
         if not rid:
             _json(handler, 404, {"error": "room_create_failed"}); return True
+        if int(movie.get("size") or 0) <= 0:
+            _json(handler, 422, {"error": "movie_size_unknown"}); return True
+        base = _public_base_url(handler)
+        if not base:
+            # 200 + nisbiy URL qaytarish o'rniga aniq xato: ilova sababni ko'rsata oladi.
+            _json(handler, 503, {"error": "server_url_not_configured"}); return True
         token = movie_watch._make_stream_token(rid, movie_id, user["id"])
-        base = (config.PUBLIC_BASE_URL or "").rstrip("/")
-        stream = f"{base}/api/kino/stream/{rid}/{movie_id}?token={token}"
+        stream = f"{base}/api/kino/stream/{quote(str(rid), safe='')}/{quote(str(movie_id), safe='')}?token={quote(token, safe='')}"
         _json(handler, 200, {"stream_url": stream})
         return True
     return False

@@ -1439,6 +1439,10 @@ def main():
     app.add_handler(build_wallet_topup_conv())
     app.add_handler(build_developer_conv())
     app.add_handler(build_kino_conv())
+    # Admin kino buyruqlari (conversation emas). Avval /kino_migration yozilgan edi,
+    # lekin hech qachon ro'yxatga olinmagan — bot unga javob bermasdi.
+    app.add_handler(CommandHandler("kino_migration", kino.kino_migration))
+    app.add_handler(CommandHandler("kino_check", kino.kino_check))
 
     app.add_handler(CallbackQueryHandler(menu.universal_selected, pattern="^menu:universal$"))
     app.add_handler(CallbackQueryHandler(menu.back_to_menu, pattern="^menu:back$"))

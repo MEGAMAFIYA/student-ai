@@ -127,7 +127,18 @@ PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 # 🎬 /kino — kino katalogi + Mini App
 # ============================================================
 # Kino fayli uchun alohida upload-limit yo'q: media Telegram source message sifatida qoladi.
+# Xona FAOL BO'LMAY qolgach (hech kim so'rov yubormasa) shuncha soniyadan keyin o'chadi.
+# Film davomida mijozlar har soniya so'rov yuborgani uchun xona faol hisoblanadi.
 KINO_ROOM_TTL_SEC = int(os.getenv("KINO_ROOM_TTL_SEC", str(6 * 60 * 60)))
+# Faol xona ham shu umrdan oshib ketmasin (xotira oqib ketmasligi uchun).
+KINO_ROOM_MAX_AGE_SEC = max(KINO_ROOM_TTL_SEC, int(os.getenv("KINO_ROOM_MAX_AGE_SEC", str(24 * 60 * 60))))
+# Mini App initData'si kino sessiyasi davomida shuncha vaqt yaroqli hisoblanadi.
+# Telegram initData'ni Mini App ochiq turganda yangilamaydi, shuning uchun 1 soatlik
+# umumiy limit uzun filmlarni (2-3 soat) o'rtasida uzib qo'yardi.
+KINO_INIT_DATA_MAX_AGE_SEC = max(3600, int(os.getenv("KINO_INIT_DATA_MAX_AGE_SEC", str(24 * 60 * 60))))
+# Stream tokenining umri. Haqiqiy himoya xona + ishtirokchi tekshiruvi; token faqat
+# qo'shimcha imzo. Eng uzun film + zaxira bo'lishi uchun xona TTL'idan kam bo'lmasin.
+KINO_STREAM_TOKEN_TTL_SEC = max(3600, int(os.getenv("KINO_STREAM_TOKEN_TTL_SEC", str(12 * 60 * 60))))
 # Ixtiyoriy: BotFather > Mini App uchun short name. Bo'sh bo'lsa Main Mini App ishlatiladi.
 KINO_APP_SHORT_NAME = os.getenv("KINO_APP_SHORT_NAME", "").strip()
 # Ixtiyoriy WebRTC TURN. STUN ko‘p tarmoqlarda yetarli, lekin mobil/operator NAT
