@@ -1008,8 +1008,20 @@ def _load_runtime_overrides() -> None:
         if cfg is None or not isinstance(values, dict):
             continue
         for field in _EDITABLE_FIELDS:
-            if field in values:
-                cfg[field] = values[field]
+            if field not in values:
+                continue
+            value = values[field]
+            # Environment'dagi maxfiy API key mavjud bo'lsa, eski/persisted
+            # runtime konfiguratsiyadagi BO'SH api_key uni bosib yubormasin.
+            # Bu Render/Neon'da .env key qo'shilganidan keyin ham
+            # `api_key=YO'Q` chiqib qolishining oldini oladi.
+            if field == "api_key" and not str(value or "").strip() and str(cfg.get("api_key") or "").strip():
+                logger.warning(
+                    f"[AI CONFIG] {prefix}.api_key runtime konfiguratsiyada bo'sh; "
+                    "mavjud environment API key saqlab qolindi."
+                )
+                continue
+            cfg[field] = value
 
     total_keys = 0
     for provider, entries in pools_data.items():
