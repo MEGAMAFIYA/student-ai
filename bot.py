@@ -520,7 +520,7 @@ def _handle_draw_api(handler: "HealthHandler") -> None:
             future = asyncio.run_coroutine_threadsafe(
                 drawing_game._evaluate_single(prompt, img), _MAIN_LOOP
             )
-            score = future.result(timeout=60)
+            score = future.result(timeout=max(130, int(os.getenv("DRAW_EVAL_TIMEOUT_SEC", "130"))))
         except Exception as e:
             logger.error("🎨 DRAW_EVAL_EXCEPTION room=%s user_id=%s type=%s detail=%s", rid, result["user_id"], type(e).__name__, e, exc_info=True)
             score = {
@@ -572,24 +572,16 @@ def _handle_draw_api(handler: "HealthHandler") -> None:
 
         logger.info("🎨 DRAW_SHARE_PREPARE_SUCCESS room=%s user_id=%s prepared_id=%s", rid, result["user_id"], prepared_id)
 
-        # 🏆 Ikkala o'yinchi ham yuborib bo'lgach — g'olib e'lon qilingan
-        # qo'shimcha xabar ikkala o'yinchining o'ziga, to'g'ridan-to'g'ri
-        # bot orqali (ulashish oynasiga bog'liq bo'lmagan holda) yuboriladi.
-        # Bu birinchi bo'lib yuborgan o'yinchiga ham natijani yetkazadi —
-        # aks holda uning ulashilgan rasmi hech qachon yangilanmas edi.
+        # 🏆 Yakuniy natija Mini App status API orqali ko'rsatiladi.
+        # Inline rejimda bot foydalanuvchiga o'z-o'zidan private xabar yubora
+        # olmaydi (Forbidden: bot can't initiate conversation with a user).
+        # Shuning uchun send_message bilan majburan yuborish o'rniga frontend
+        # polling orqali natijani oladi.
         if summary:
-            recipients = {int(result["user_id"])}
-            if result.get("other_user_id"):
-                recipients.add(int(result["other_user_id"]))
-
-            async def _notify():
-                for chat_id in recipients:
-                    try:
-                        await _BOT_INSTANCE.send_message(chat_id=chat_id, text=summary)
-                    except Exception as e:
-                        logger.error("🎨 Drawing duel natija xabari yuborilmadi (chat_id=%s): %s", chat_id, e)
-
-            asyncio.run_coroutine_threadsafe(_notify(), _MAIN_LOOP)
+            logger.info(
+                "🎨 DRAW_DUEL_SUMMARY_READY room=%s user_id=%s other_user_id=%s",
+                rid, result["user_id"], result.get("other_user_id"),
+            )
 
         Timer(
             _WEBAPP_GENERATED_TTL_SEC,

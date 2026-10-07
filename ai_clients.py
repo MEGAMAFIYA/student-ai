@@ -24,6 +24,7 @@ qo'llab-quvvatlanadi.
 
 import asyncio
 import logging
+import os
 import re
 from urllib.parse import quote
 
@@ -34,7 +35,7 @@ import config
 
 logger = logging.getLogger(__name__)
 
-GEMINI_TIMEOUT_SEC = 90  # Gemini javob bermasa, cheksiz kutmaslik uchun
+GEMINI_TIMEOUT_SEC = max(30, int(os.getenv("GEMINI_TIMEOUT_SEC", "120")))  # Gemini javob bermasa, cheksiz kutmaslik uchun
 
 _gemini_model_cache: dict[tuple[str, str], object] = {}
 # google-generativeai kutubxonasining genai.configure() chaqiruvi JARAYON

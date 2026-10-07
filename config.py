@@ -400,9 +400,16 @@ def _cfg(prefix: str, default_model: str, default_provider: str = "gemini") -> d
     else:
         default_key = DEFAULT_GEMINI_KEY
 
+    # Maxsus funksiya kaliti umumiy GEMINI_API_KEY dan ustun turadi.
+    # Masalan VISION_API_KEY berilgan bo'lsa, rasm baholash aynan shu
+    # kalitdan foydalanadi. Bu Render konfiguratsiyasini aniq va bashoratli
+    # qiladi.
+    function_key = os.getenv(f"{prefix}_API_KEY", "").strip()
+    if not function_key and prefix == "VISION":
+        function_key = os.getenv("VISION_API_KEY", "").strip()
     return {
         "provider": provider,
-        "api_key": os.getenv(f"{prefix}_API_KEY", default_key),
+        "api_key": function_key or default_key,
         "model": os.getenv(f"{prefix}_MODEL", default_model),
         "base_url": os.getenv(f"{prefix}_BASE_URL", ""),
     }
