@@ -507,38 +507,106 @@ def _handle_draw_api(handler: "HealthHandler") -> None:
             f.write(jpeg)
         photo_url = f"{PUBLIC_BASE_URL}{_WEBAPP_GENERATED_URL_PREFIX}{filename}"
 
-        # 🎯 HAR bir topshirish uchun (birinchi bo'lsin, ikkinchi bo'lsin)
-        # AI shu rasmni DARHOL, do'stini kutmasdan, mustaqil baholaydi —
-        # shu bilan "Berilgan shart: X / O'xshashi: Y%" rasm ostida
-        # HAR DOIM chiqadi (avval faqat 2-chi rasm kelgach chiqar edi).
+        # Rasmni darhol qabul qilamiz. AI baholash alohida fon vazifasida
+        # ishlaydi — foydalanuvchi 90-120 soniya HTTP javobini kutib qolmaydi.
         prompt, img = result["single_eval"]
         logger.info(
-            "🎨 DRAW_EVAL_DISPATCH room=%s user_id=%s prompt=%r",
+            "🎨 DRAW_EVAL_DISPATCH room=%s user_id=%s prompt=%r mode=background",
             rid, result["user_id"], prompt,
         )
-        try:
-            future = asyncio.run_coroutine_threadsafe(
-                drawing_game._evaluate_single(prompt, img), _MAIN_LOOP
+        with drawing_game.LOCK:
+            room_now = drawing_game._room(rid)
+            if room_now and str(result["user_id"]) in room_now["submissions"]:
+                sub = room_now["submissions"][str(result["user_id"])]
+                sub["share_file_path"] = file_path
+                sub["share_photo_url"] = photo_url
+                sub["ai_status"] = "pending"
+                sub["ai_detail"] = "AI baholamoqda..."
+                room_now["updated_at"] = time.time()
+
+        async def _evaluate_background():
+            try:
+                score = await drawing_game._evaluate_single(prompt, img)
+            except Exception as e:
+                logger.error("🎨 DRAW_EVAL_EXCEPTION room=%s user_id=%s type=%s detail=%s", rid, result["user_id"], type(e).__name__, e, exc_info=True)
+                score = {
+                    "score": None,
+                    "comment": "AI baholashida kutilmagan xatolik yuz berdi.",
+                    "ai_status": "timeout_or_exception",
+                    "ai_detail": f"{type(e).__name__}: {e}"[:300],
+                }
+            room_done, caption_done, summary_done = drawing_game.finish_single_evaluation(
+                rid, str(result["user_id"]), score
             )
-            score = future.result(timeout=max(130, int(os.getenv("DRAW_EVAL_TIMEOUT_SEC", "130"))))
-        except Exception as e:
-            logger.error("🎨 DRAW_EVAL_EXCEPTION room=%s user_id=%s type=%s detail=%s", rid, result["user_id"], type(e).__name__, e, exc_info=True)
-            score = {
-                "score": None,
-                "comment": "AI vaqtida javob bermadi.",
-                "ai_status": "timeout_or_exception",
-                "ai_detail": f"{type(e).__name__}: {e}"[:300],
-            }
-        logger.info(
-            "🎨 DRAW_EVAL_DONE room=%s user_id=%s status=%s score=%s detail=%s",
-            rid, result["user_id"], score.get("ai_status"), score.get("score"), score.get("ai_detail"),
+            logger.info(
+                "🎨 DRAW_EVAL_DONE room=%s user_id=%s status=%s score=%s detail=%s",
+                rid, result["user_id"], score.get("ai_status"), score.get("score"), score.get("ai_detail"),
+            )
+            if summary_done:
+                logger.info(
+                    "🎨 DRAW_DUEL_SUMMARY_READY room=%s user_id=%s other_user_id=%s",
+                    rid, result["user_id"], result.get("other_user_id"),
+                )
+
+        asyncio.run_coroutine_threadsafe(_evaluate_background(), _MAIN_LOOP)
+        Timer(
+            _WEBAPP_GENERATED_TTL_SEC,
+            lambda: os.path.exists(file_path) and os.remove(file_path)
+        ).start()
+        # Frontend polling orqali score tayyor bo'lgach share tugmasini yoqadi.
+        reply(
+            200,
+            data={
+                "state": drawing_game.public_state(drawing_game._room(rid), str(result["user_id"])),
+                "status": "submitted",
+                "both_submitted": False,
+                "prepared_message_id": None,
+            },
         )
+        return
 
-        room, caption, summary = drawing_game.finish_single_evaluation(rid, str(result["user_id"]), score)
-        if not caption:
-            caption = f"🎯 Berilgan shart: {prompt}"
+    if path == "/api/draw/share":
+        user = drawing_game._verify(init_data)
+        if not user:
+            reply(401, error="Sessiya tasdiqlanmadi."); return
+        uid = str(int(user["id"]))
+        with drawing_game.LOCK:
+            room = drawing_game._room(rid)
+            if not room or uid not in room["players"]:
+                reply(400, error="Rasm xonasi topilmadi."); return
+            sub = room["submissions"].get(uid)
+            if not sub or not sub.get("image"):
+                reply(400, error="Avval rasmni yuboring."); return
+            image_bytes = sub["image"]
+            score = sub.get("score")
+            comment = sub.get("comment") or ""
+            prompt = room["prompt"]
+            existing_path = sub.get("share_file_path") or ""
+            existing_url = sub.get("share_photo_url") or ""
+        # Rasm fayli TTL sabab o'chgan bo'lsa, qayta yaratamiz.
+        file_path = existing_path
+        photo_url = existing_url
+        if not file_path or not os.path.exists(file_path):
+            os.makedirs(_WEBAPP_GENERATED_DIR, exist_ok=True)
+            filename = f"{uuid.uuid4().hex}.jpg"
+            file_path = os.path.join(_WEBAPP_GENERATED_DIR, filename)
+            with open(file_path, "wb") as f:
+                f.write(image_bytes)
+            photo_url = f"{PUBLIC_BASE_URL}{_WEBAPP_GENERATED_URL_PREFIX}{filename}"
+            with drawing_game.LOCK:
+                room = drawing_game._room(rid)
+                if room and uid in room["submissions"]:
+                    room["submissions"][uid]["share_file_path"] = file_path
+                    room["submissions"][uid]["share_photo_url"] = photo_url
+                    room["updated_at"] = time.time()
+        if score is None:
+            caption = f"🎯 Berilgan shart: {prompt}\n\n⏳ AI baholamoqda..."
+        else:
+            caption = f"🎯 Berilgan shart: {prompt}\n\n📊 Ball: {score}%"
+            if comment:
+                caption += f"\n💬 {comment}"
 
-        async def _prepare():
+        async def _prepare_share():
             prepared = InlineQueryResultPhoto(
                 id=uuid.uuid4().hex,
                 photo_url=photo_url,
@@ -546,56 +614,22 @@ def _handle_draw_api(handler: "HealthHandler") -> None:
                 caption=caption[:1024],
             )
             return await _BOT_INSTANCE.save_prepared_inline_message(
-                user_id=int(result["user_id"]),
-                result=prepared,
-                allow_user_chats=True,
-                allow_bot_chats=False,
-                allow_group_chats=False,
-                allow_channel_chats=False,
+                user_id=int(uid), result=prepared,
+                allow_user_chats=True, allow_bot_chats=False,
+                allow_group_chats=False, allow_channel_chats=False,
             )
-
-        logger.info("🎨 DRAW_SHARE_PREPARE_START room=%s user_id=%s", rid, result["user_id"])
+        logger.info("🎨 DRAW_SHARE_REQUEST room=%s user_id=%s score=%s", rid, uid, score)
         try:
-            future = asyncio.run_coroutine_threadsafe(_prepare(), _MAIN_LOOP)
-            prepared = future.result(timeout=30)
+            prepared_future = asyncio.run_coroutine_threadsafe(_prepare_share(), _MAIN_LOOP)
+            prepared = prepared_future.result(timeout=30)
             prepared_id = getattr(prepared, "id", None)
             if not prepared_id:
                 raise RuntimeError("Telegram PreparedInlineMessage ID qaytarmadi.")
         except Exception as e:
-            logger.error("🎨 DRAW_SHARE_PREPARE_ERROR room=%s user_id=%s type=%s detail=%s", rid, result["user_id"], type(e).__name__, e, exc_info=True)
-            try:
-                os.remove(file_path)
-            except OSError:
-                pass
-            reply(502, error="Rasmni Telegram ulashish oynasiga tayyorlab bo'lmadi.")
-            return
-
-        logger.info("🎨 DRAW_SHARE_PREPARE_SUCCESS room=%s user_id=%s prepared_id=%s", rid, result["user_id"], prepared_id)
-
-        # 🏆 Yakuniy natija Mini App status API orqali ko'rsatiladi.
-        # Inline rejimda bot foydalanuvchiga o'z-o'zidan private xabar yubora
-        # olmaydi (Forbidden: bot can't initiate conversation with a user).
-        # Shuning uchun send_message bilan majburan yuborish o'rniga frontend
-        # polling orqali natijani oladi.
-        if summary:
-            logger.info(
-                "🎨 DRAW_DUEL_SUMMARY_READY room=%s user_id=%s other_user_id=%s",
-                rid, result["user_id"], result.get("other_user_id"),
-            )
-
-        Timer(
-            _WEBAPP_GENERATED_TTL_SEC,
-            lambda: os.path.exists(file_path) and os.remove(file_path)
-        ).start()
-        reply(
-            200,
-            data={
-                "state": (room and drawing_game.public_state(room, str(result["user_id"]))) or result["state"],
-                "status": "submitted",
-                "both_submitted": bool(summary),
-                "prepared_message_id": prepared_id,
-            },
-        )
+            logger.error("🎨 DRAW_SHARE_ERROR room=%s user_id=%s type=%s detail=%s", rid, uid, type(e).__name__, e, exc_info=True)
+            reply(502, error="Rasmni Telegram ulashish oynasiga tayyorlab bo'lmadi."); return
+        logger.info("🎨 DRAW_SHARE_SUCCESS room=%s user_id=%s prepared_id=%s", rid, uid, prepared_id)
+        reply(200, data={"prepared_message_id": prepared_id, "score": score, "caption": caption})
         return
 
     if path == "/api/draw/restart":

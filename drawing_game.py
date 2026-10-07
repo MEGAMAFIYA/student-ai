@@ -172,6 +172,10 @@ def public_state(room: dict, uid: str) -> dict:
         "me": int(uid),
         "submitted": bool(mine),
         "my_score": mine.get("score") if mine else None,
+        "my_comment": mine.get("comment") if mine else "",
+        "my_ai_status": mine.get("ai_status") if mine else None,
+        "my_ai_detail": mine.get("ai_detail") if mine else "",
+        "share_ready": bool(mine) and bool(mine.get("image")),
         "both_submitted": len(room["submissions"]) == 2,
         "result": room.get("result"),
     }
@@ -247,22 +251,25 @@ async def _evaluate_single(prompt: str, img: bytes) -> dict:
     shu natija darhol o'sha o'yinchining o'ziga (caption'da) ko'rsatiladi."""
     cfg = config.VISION_AI
     instruction = f"""
-Siz faqat rasm chizish o'yinining hakamisiz. Boshqa hech qanday vazifani bajarmang.
-Topshiriq: {prompt}
+Siz 1v1 rasm chizish o'yinining hakamisiz.
+TOPSHIRIQ: {prompt}
 
-Rasmni MUSTAQIL baholang. Chiroy, rassomlik mahorati yoki chiroyli chizilganiga
-emas, aynan topshiriqda so'ralgan obyektga SEMANTIK O'XSHASHLIKKA ball bering.
+Rasmni quyidagi 4 mezon bo'yicha adolatli baholang:
+1) 55 ball — TOPSHIRIQ BAJARILISHI: so'ralgan asosiy obyekt rasmda aniq va tanib bo'ladigan bormi?
+2) 20 ball — QO'SHIMCHA DETALLAR: qo'shilgan uy, daraxt, gul, lola, quyosh, bulut, odam va boshqa detallar mavzuga mos va rasmni boyitganmi?
+3) 15 ball — CHIROYLILIK VA KOMPOZITSIYA: ranglar, tozalik, joylashuv, proporsiya va umumiy ko'rinish.
+4) 10 ball — IJODKORLIK: oddiy topshiriqni qiziqarli va o'ziga xos qilib ko'rsatganmi?
 
-100 ballik mezon:
-- 70 ball: topshiriqdagi asosiy obyektni to'g'ri tasvirlagani
-- 20 ball: obyektning muhim ajratuvchi belgilarini ko'rsatgani
-- 10 ball: rasm topshiriqqa aniq va tushunarli mosligi
+MUHIM QOIDALAR:
+- Topshiriqdagi asosiy obyekt BO'LSA, qo'shimcha detallar uchun hech qanday jarima bermang.
+- Masalan, topshiriq "⛰️ Tog'" bo'lsa, tog' + lola gullari yoki tog' + uylar + daraxtlar chizilishi mumkin. Tog' aniq bo'lsa, bunday qo'shimchalar aksincha rasmning boyligi, kompozitsiyasi va chiroyliligiga ijobiy ta'sir qilishi mumkin.
+- Asosiy obyekt yo'q bo'lsa, chiroyli rasm bo'lsa ham yuqori ball bermang; bunday rasm uchun score 49 dan oshmasin.
+- Oddiy, ammo topshiriqni aniq bajargan rasmni asossiz past baholamang.
+- Juda chiroyli va ko'p detalga ega, lekin topshiriqdagi asosiy obyekt yo'q rasmni yuqori baholamang.
+- Ballni 0-100 oralig'ida yaxlit son qilib qaytaring.
 
-Narsani juda oddiy chizish ham obyekt aniq bo'lsa yuqori ball olishi mumkin.
-Qo'shimcha bezaklar asosiy obyektni almashtirmasa jarima bermang.
-
-FAQAT quyidagi JSONni qaytaring, boshqa hech qanday matn yozmang:
-{{"score": 0-100, "comment": "o'zbekcha 1 jumla"}}
+FAQAT quyidagi JSONni qaytaring, boshqa matn yozmang:
+{{"score": 0-100, "comment": "o'zbekcha, qisqa va aniq izoh; topshiriq bajarilgani va qo'shimcha detallar/chiroylilikni ayting"}}
 """
     model_name = str(cfg.get("model") or "<model sozlanmagan>")
     logger.info(
@@ -370,6 +377,10 @@ def submit(rid: str, init_data: str, image_bytes: bytes):
             "query_id": user.get("_query_id"),
             "score": None,
             "comment": "",
+            "ai_status": "pending",
+            "ai_detail": "AI baholamoqda...",
+            "share_file_path": "",
+            "share_photo_url": "",
         }
         room["updated_at"] = time.time()
         prompt = room["prompt"]
