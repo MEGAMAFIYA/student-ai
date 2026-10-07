@@ -89,7 +89,16 @@ def _classify_gemini_error(e: Exception) -> tuple[str, str]:
         or "PermissionDenied" in type_name or "Unauthenticated" in type_name
         or "401" in msg or "403" in msg
     ):
-        return "invalid", "Kalit yaroqsiz, bekor qilingan yoki model nomi noto'g'ri."
+        return "invalid", "API kalit yaroqsiz, bekor qilingan yoki ruxsat berilmagan."
+    if (
+        "404" in msg
+        or "not found" in msg.lower()
+        or "model not found" in msg.lower()
+        or "is not found" in msg.lower()
+    ):
+        return "model_not_found", "Gemini modeli topilmadi — model nomi noto'g'ri, eskirgan yoki API loyihada mavjud emas."
+    if "400" in msg or "invalid argument" in msg.lower() or "invalid_argument" in msg.lower():
+        return "bad_request", "Gemini so'rovi noto'g'ri — model yoki yuborilgan media parametrlari mos emas."
     return "error", msg[:200]
 
 
@@ -460,7 +469,11 @@ async def ask_gemini_multimodal(
     ko'rsata oladi (matn-AI chaqiruvlaridagi kabi)."""
     api_key, model_name = cfg.get("api_key", ""), cfg.get("model", "")
     if not api_key or not model_name:
-        return None, "invalid", "Kalit yoki model sozlanmagan."
+        logger.error(
+            "%s sozlama xatosi: api_key=%s model=%r",
+            label, "bor" if api_key else "YO'Q", model_name,
+        )
+        return None, "invalid", "API kalit yoki Vision model sozlanmagan."
     logger.info(f"{label} ({model_name}) ga so'rov yuborilmoqda (media: {len(media_bytes)} bayt, {mime_type})...")
     try:
         model = await _get_gemini_model_safe(api_key, model_name)

@@ -472,17 +472,28 @@ def _handle_draw_api(handler: "HealthHandler") -> None:
     rid = str(payload.get("room") or rid)
     init_data = str(payload.get("init_data") or init_data)
     if path == "/api/draw/submit":
+        logger.info(
+            "🎨 DRAW_API_SUBMIT_REQUEST room=%s init_data=%s payload_image=%s",
+            rid, "present" if init_data else "missing", "present" if payload.get("image") else "missing",
+        )
         image = str(payload.get("image") or "")
         m = re.fullmatch(r"data:image/(?:png|jpeg|jpg);base64,([A-Za-z0-9+/=]+)", image)
         if not m:
+            logger.error("🎨 DRAW_API_SUBMIT_REJECT room=%s reason=invalid_image_data_url", rid)
             reply(400, error="Rasm formati noto'g'ri."); return
         try:
             image_bytes = base64.b64decode(m.group(1), validate=True)
-        except Exception:
+        except Exception as e:
+            logger.error("🎨 DRAW_API_SUBMIT_DECODE_ERROR room=%s type=%s detail=%s", rid, type(e).__name__, e, exc_info=True)
             reply(400, error="Rasmni o'qib bo'lmadi."); return
         result, err = drawing_game.submit(rid, init_data, image_bytes)
         if result is None:
+            logger.error("🎨 DRAW_API_SUBMIT_REJECT room=%s reason=%s", rid, err or "unknown")
             reply(400, error=err or "Rasm yuborilmadi."); return
+        logger.info(
+            "🎨 DRAW_API_SUBMIT_ACCEPTED room=%s user_id=%s bytes=%d",
+            rid, result["user_id"], len(image_bytes),
+        )
 
         # Direct/Main Mini App user-user chatga answerWebAppQuery bilan
         # to'g'ridan-to'g'ri xabar yubora olmaydi. Shuning uchun rasmni Telegram
@@ -501,14 +512,27 @@ def _handle_draw_api(handler: "HealthHandler") -> None:
         # shu bilan "Berilgan shart: X / O'xshashi: Y%" rasm ostida
         # HAR DOIM chiqadi (avval faqat 2-chi rasm kelgach chiqar edi).
         prompt, img = result["single_eval"]
+        logger.info(
+            "🎨 DRAW_EVAL_DISPATCH room=%s user_id=%s prompt=%r",
+            rid, result["user_id"], prompt,
+        )
         try:
             future = asyncio.run_coroutine_threadsafe(
                 drawing_game._evaluate_single(prompt, img), _MAIN_LOOP
             )
             score = future.result(timeout=60)
         except Exception as e:
-            logger.error("🎨 Drawing duel evaluation xato: %s", e, exc_info=True)
-            score = {"score": None, "comment": "AI vaqtida javob bermadi."}
+            logger.error("🎨 DRAW_EVAL_EXCEPTION room=%s user_id=%s type=%s detail=%s", rid, result["user_id"], type(e).__name__, e, exc_info=True)
+            score = {
+                "score": None,
+                "comment": "AI vaqtida javob bermadi.",
+                "ai_status": "timeout_or_exception",
+                "ai_detail": f"{type(e).__name__}: {e}"[:300],
+            }
+        logger.info(
+            "🎨 DRAW_EVAL_DONE room=%s user_id=%s status=%s score=%s detail=%s",
+            rid, result["user_id"], score.get("ai_status"), score.get("score"), score.get("ai_detail"),
+        )
 
         room, caption, summary = drawing_game.finish_single_evaluation(rid, str(result["user_id"]), score)
         if not caption:
@@ -530,6 +554,7 @@ def _handle_draw_api(handler: "HealthHandler") -> None:
                 allow_channel_chats=False,
             )
 
+        logger.info("🎨 DRAW_SHARE_PREPARE_START room=%s user_id=%s", rid, result["user_id"])
         try:
             future = asyncio.run_coroutine_threadsafe(_prepare(), _MAIN_LOOP)
             prepared = future.result(timeout=30)
@@ -537,13 +562,15 @@ def _handle_draw_api(handler: "HealthHandler") -> None:
             if not prepared_id:
                 raise RuntimeError("Telegram PreparedInlineMessage ID qaytarmadi.")
         except Exception as e:
-            logger.error("🎨 Drawing duel PreparedInlineMessage xato: %s", e, exc_info=True)
+            logger.error("🎨 DRAW_SHARE_PREPARE_ERROR room=%s user_id=%s type=%s detail=%s", rid, result["user_id"], type(e).__name__, e, exc_info=True)
             try:
                 os.remove(file_path)
             except OSError:
                 pass
             reply(502, error="Rasmni Telegram ulashish oynasiga tayyorlab bo'lmadi.")
             return
+
+        logger.info("🎨 DRAW_SHARE_PREPARE_SUCCESS room=%s user_id=%s prepared_id=%s", rid, result["user_id"], prepared_id)
 
         # 🏆 Ikkala o'yinchi ham yuborib bo'lgach — g'olib e'lon qilingan
         # qo'shimcha xabar ikkala o'yinchining o'ziga, to'g'ridan-to'g'ri

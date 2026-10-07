@@ -196,23 +196,50 @@ def _normalize_image(image_bytes: bytes) -> tuple[bytes, str]:
 
 def _score_single(raw: str) -> dict:
     # Modeldan JSON talab qilamiz, ammo noto'g'ri JSON bo'lsa ham foydalanuvchiga
-    # hech qachon modelning xom javobini chiqarib yubormaymiz.
+    # modelning xom javobini chiqarmaymiz. Diagnostika uchun parse xatosini
+    # alohida status/detail sifatida qaytaramiz.
     raw = (raw or "").strip()
     obj = None
     try:
         m = re.search(r"\{.*\}", raw, re.S)
         if m:
             obj = json.loads(m.group(0))
-    except Exception:
-        obj = None
+    except Exception as e:
+        logger.error("🎨 Drawing AI JSON parse xatosi: %s: %s | raw=%r", type(e).__name__, e, raw[:500])
+        return {
+            "score": None,
+            "comment": "AI javobi noto\'g\'ri formatda qaytdi.",
+            "ai_status": "parse_error",
+            "ai_detail": "Gemini javobi JSON formatiga mos kelmadi.",
+        }
     if not isinstance(obj, dict):
-        return {"score": None, "comment": "AI baholay olmadi. Qayta boshlang."}
+        logger.error("🎨 Drawing AI JSON topilmadi | raw=%r", raw[:500])
+        return {
+            "score": None,
+            "comment": "AI javobi noto\'g\'ri formatda qaytdi.",
+            "ai_status": "parse_error",
+            "ai_detail": "Gemini javobida kerakli JSON obyekt topilmadi.",
+        }
     def pct(v):
         try:
             return max(0, min(100, int(round(float(v)))))
         except Exception:
             return None
-    return {"score": pct(obj.get("score")), "comment": str(obj.get("comment") or "")[:300]}
+    score = pct(obj.get("score"))
+    if score is None:
+        logger.error("🎨 Drawing AI JSON'da score noto\'g\'ri | obj=%r", obj)
+        return {
+            "score": None,
+            "comment": "AI ballni qaytara olmadi.",
+            "ai_status": "invalid_result",
+            "ai_detail": "Gemini JSON javobida 0-100 oralig\'ida score yo\'q.",
+        }
+    return {
+        "score": score,
+        "comment": str(obj.get("comment") or "")[:300],
+        "ai_status": "ok",
+        "ai_detail": "",
+    }
 
 async def _evaluate_single(prompt: str, img: bytes) -> dict:
     """Bitta rasmni — DO'STINI kutmasdan — mustaqil baholaydi. Har bir
@@ -237,14 +264,45 @@ Qo'shimcha bezaklar asosiy obyektni almashtirmasa jarima bermang.
 FAQAT quyidagi JSONni qaytaring, boshqa hech qanday matn yozmang:
 {{"score": 0-100, "comment": "o'zbekcha 1 jumla"}}
 """
+    model_name = str(cfg.get("model") or "<model sozlanmagan>")
+    logger.info(
+        "🎨 DRAW_AI_START model=%s prompt=%r image_bytes=%d",
+        model_name, prompt, len(img),
+    )
     try:
-        raw, _status, _detail = await ask_gemini_multimodal(
+        raw, status, detail = await ask_gemini_multimodal(
             cfg, instruction, img, "image/jpeg", label="Drawing duel (1 rasm)"
         )
     except Exception as e:
-        logger.error("🎨 Drawing single-eval xato: %s", e, exc_info=True)
-        raw = None
-    return _score_single(raw or "")
+        logger.error(
+            "🎨 DRAW_AI_EXCEPTION model=%s type=%s detail=%s",
+            model_name, type(e).__name__, e, exc_info=True,
+        )
+        return {
+            "score": None,
+            "comment": "AI baholashida kutilmagan xatolik yuz berdi.",
+            "ai_status": "exception",
+            "ai_detail": f"{type(e).__name__}: {e}"[:300],
+        }
+
+    if status != "ok" or raw is None:
+        logger.error(
+            "🎨 DRAW_AI_ERROR model=%s status=%s detail=%s",
+            model_name, status, detail,
+        )
+        return {
+            "score": None,
+            "comment": "AI baholay olmadi.",
+            "ai_status": status or "error",
+            "ai_detail": detail or "Gemini natija qaytarmadi.",
+        }
+
+    result = _score_single(raw)
+    logger.info(
+        "🎨 DRAW_AI_RESULT model=%s status=%s score=%s",
+        model_name, result.get("ai_status"), result.get("score"),
+    )
+    return result
 
 def _individual_caption(room: dict, uid: str) -> str:
     """Foydalanuvchi o'z rasmini do'stiga ulashganda, rasm ostiga
@@ -252,7 +310,13 @@ def _individual_caption(room: dict, uid: str) -> str:
     sub = room["submissions"].get(uid, {})
     score = sub.get("score")
     if score is None:
-        return f"🎯 Berilgan shart: {room['prompt']}\n\n⚠️ AI baholay olmadi. «Qayta boshlash» bilan yangi raund boshlang."
+        detail = sub.get("ai_detail") or "Sabab logda qayd etilgan."
+        return (
+            f"🎯 Berilgan shart: {room['prompt']}\n\n"
+            f"⚠️ AI baholay olmadi.\n"
+            f"Sabab: {detail}\n\n"
+            "«Qayta boshlash» bilan yangi raund boshlang."
+        )
     return f"🎯 Berilgan shart: {room['prompt']}\n\n📊 O'xshashi: {score}%"
 
 def _summary_text(room: dict) -> str | None:
@@ -279,11 +343,14 @@ def _summary_text(room: dict) -> str | None:
 def submit(rid: str, init_data: str, image_bytes: bytes):
     user = _verify(init_data)
     if not user:
+        logger.warning("🎨 DRAW_SUBMIT_REJECT room=%s sabab=session_invalid", rid)
         return None, "Sessiya tasdiqlanmadi."
     uid = str(int(user["id"]))
+    logger.info("🎨 DRAW_SUBMIT_START room=%s user_id=%s image_bytes=%d", rid, uid, len(image_bytes))
     try:
         jpeg_bytes, _ = _normalize_image(image_bytes)
     except Exception as e:
+        logger.error("🎨 DRAW_SUBMIT_IMAGE_ERROR room=%s user_id=%s type=%s detail=%s", rid, uid, type(e).__name__, e)
         return None, str(e)
     with LOCK:
         room = _room(rid)
@@ -307,6 +374,7 @@ def submit(rid: str, init_data: str, image_bytes: bytes):
         room["updated_at"] = time.time()
         prompt = room["prompt"]
         other_uid = next((pid for pid in room["players"] if pid != uid), None)
+    logger.info("🎨 DRAW_SUBMIT_ACCEPTED room=%s user_id=%s prompt=%r", rid, uid, prompt)
     return {
         "state": public_state(room, uid),
         "image": jpeg_bytes,
@@ -331,7 +399,14 @@ def finish_single_evaluation(rid: str, uid: str, score: dict):
             return None, None, None
         room["submissions"][uid]["score"] = score.get("score")
         room["submissions"][uid]["comment"] = score.get("comment", "")
+        room["submissions"][uid]["ai_status"] = score.get("ai_status", "unknown")
+        room["submissions"][uid]["ai_detail"] = score.get("ai_detail", "")
         room["updated_at"] = time.time()
+        logger.info(
+            "🎨 DRAW_AI_SAVED room=%s user_id=%s status=%s score=%s detail=%s",
+            rid, uid, room["submissions"][uid]["ai_status"],
+            room["submissions"][uid]["score"], room["submissions"][uid]["ai_detail"],
+        )
         caption = _individual_caption(room, uid)
         summary = None
         if len(room["submissions"]) == 2 and all(

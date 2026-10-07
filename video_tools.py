@@ -336,6 +336,22 @@ def _classify_ytdlp_error(exc: Exception) -> str:
         return "YouTube bu so'rovni \"bot\" deb bloklamoqda (bulutli server IP'si shubhali deb belgilangan)"
     if _is_drm_error(exc):
         return "Bu kontent DRM (litsenziya) himoyasi bilan qulflangan"
+    # Instagram Reels/Posts: sahifa topilgan bo'lsa ham Instagram
+    # kontentni barcha auditoriyaga bermayotganini bildirishi mumkin.
+    # Buni umumiy "Aniqlanmagan xato" sifatida qoldirmaymiz.
+    if (
+        "this content isn't available to everyone" in low
+        or "this content is not available to everyone" in low
+        or "it can't be seen by certain audiences" in low
+        or "it cannot be seen by certain audiences" in low
+    ):
+        return (
+            "Instagram bu kontentni barcha auditoriyaga ochmagan — "
+            "Reel ayrim auditoriyalar uchun cheklangan yoki Instagram "
+            "serverdan ko'rish uchun login/cookies talab qilmoqda"
+        )
+    if "login required" in low or "login required to access" in low:
+        return "Instagram kontentini ko'rish uchun login/cookies talab qilinmoqda"
     if "private video" in low:
         return "Video shaxsiy (private) — ochiq emas"
     if "video unavailable" in low or "this video is unavailable" in low:
@@ -481,6 +497,10 @@ def download_video(url: str, dest_dir: str, max_mb: int, timeout_sec: int) -> st
             opts["ffmpeg_location"] = FFMPEG_PATH
         return opts
 
+    logger.info(
+        "🎬 VID_DOWNLOAD_START source=%s url=%s max_mb=%s timeout=%ss",
+        "youtube" if is_youtube else "non-youtube", url, max_mb, timeout_sec,
+    )
     try:
         if is_youtube:
             # YouTube'ning "bot" tekshiruvi ko'pincha bitta-ikkita
@@ -492,7 +512,10 @@ def download_video(url: str, dest_dir: str, max_mb: int, timeout_sec: int) -> st
                 ydl.download([url])
     except yt_dlp.utils.DownloadError as e:
         reason = _classify_ytdlp_error(e)
-        logger.error(f"🎬 /vid yuklab olishda xato ({url}) — sabab: {reason} | asl xato: {e}")
+        logger.error(
+            "🎬 VID_DOWNLOAD_ERROR url=%s reason=%s raw=%s",
+            url, reason, str(e), exc_info=True,
+        )
         raise DownloadError(f"❌ Video yuklab bo'lmadi.\n\nSabab: {reason}.") from e
     except Exception as e:
         logger.error(f"🎬 /vid kutilmagan xato ({url}): {type(e).__name__}: {e}", exc_info=True)
@@ -500,9 +523,14 @@ def download_video(url: str, dest_dir: str, max_mb: int, timeout_sec: int) -> st
 
     filepath = _largest_file_in(dest_dir)
     if not filepath:
+        logger.error("🎬 VID_DOWNLOAD_NO_FILE url=%s dest=%s", url, dest_dir)
         raise DownloadError("❌ Video yuklab olindi, lekin fayl topilmadi.")
 
     _enforce_size_limit(filepath, max_mb)
+    logger.info(
+        "🎬 VID_DOWNLOAD_SUCCESS url=%s file=%s size_bytes=%d",
+        url, filepath, os.path.getsize(filepath),
+    )
     return filepath
 
 

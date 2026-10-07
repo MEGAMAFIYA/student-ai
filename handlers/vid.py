@@ -62,6 +62,7 @@ async def vid_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE, override_t
         pending_input.set_pending(chat_id, user_id, "vid")
         await update.message.reply_text("🎬 Video nomi yoki qidiruv so'rovini yuboring:")
         return
+    logger.info("🎬 VID_REQUEST_START chat_id=%s user_id=%s url=%s", chat_id, user_id, url)
     status = await update.message.reply_text("⏳ Video yuklab olinmoqda, biroz kuting...")
     await context.bot.send_chat_action(chat_id, ChatAction.UPLOAD_VIDEO)
 
@@ -83,6 +84,10 @@ async def vid_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE, override_t
         storage.record_usage("vid", update.effective_user.id)
         logger.info(f"🎬 /vid muvaffaqiyatli: chat_id={chat_id}, url={url}.")
     except video_tools.DownloadError as e:
+        logger.error(
+            "🎬 VID_REQUEST_ERROR chat_id=%s user_id=%s url=%s reason=%s",
+            chat_id, user_id, url, str(e),
+        )
         await update.message.reply_text(str(e))
     except Exception as e:
         logger.error(f"🎬 /vid kutilmagan xato (chat_id={chat_id}, url={url}): {type(e).__name__}: {e}", exc_info=True)
