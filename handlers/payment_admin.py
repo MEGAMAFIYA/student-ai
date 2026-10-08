@@ -19,6 +19,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 import config
 import wallet
+import storage
 
 logger = logging.getLogger(__name__)
 
@@ -235,6 +236,194 @@ def user_balance_text(user_id: int) -> str:
             sign = "+" if t["amount"] > 0 else ""
             lines.append(f"  {t['created_at'][:16]} — {sign}{_fmt_sum(abs(t['amount']))} — {_esc(t['description'])}")
     return "\n".join(lines)
+
+
+
+# ============================================================
+# 🎁 Admin sovg'asi + 👥 Foydalanuvchilar
+# ============================================================
+
+USERS_PER_PAGE = 10
+
+
+def _user_label(user_id: int) -> str:
+    profile = storage.get_user_profile(user_id)
+    username = (profile.get("username") or "").strip()
+    first = (profile.get("first_name") or "").strip()
+    last = (profile.get("last_name") or "").strip()
+    name = " ".join(x for x in (first, last) if x).strip()
+    if username:
+        handle = f"@{username}"
+    else:
+        handle = f"ID {user_id}"
+    if name:
+        return f"{handle} — {name}"
+    return handle
+
+
+def _user_display(user_id: int) -> str:
+    profile = storage.get_user_profile(user_id)
+    username = (profile.get("username") or "").strip()
+    first = (profile.get("first_name") or "").strip()
+    last = (profile.get("last_name") or "").strip()
+    name = " ".join(x for x in (first, last) if x).strip() or "Noma'lum foydalanuvchi"
+    lines = [f"👤 <b>{_esc(name)}</b>"]
+    if username:
+        lines.append(f"🔗 <b>@{_esc(username)}</b>")
+    lines.append(f"🆔 ID: <code>{int(user_id)}</code>")
+    lines.append(f"💰 Balans: {_fmt_sum(wallet.get_balance(user_id))}")
+    return "\n".join(lines)
+
+
+def _users_keyboard(user_ids: list[int], page: int, total: int) -> InlineKeyboardMarkup:
+    rows = []
+    for uid in user_ids:
+        rows.append([InlineKeyboardButton(_user_label(uid)[:60], callback_data=f"dev:user:{uid}")])
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("⬅️", callback_data=f"dev:users:{page-1}"))
+    if (page + 1) * USERS_PER_PAGE < total:
+        nav.append(InlineKeyboardButton("➡️", callback_data=f"dev:users:{page+1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton("🔄 Yangilash", callback_data=f"dev:users:{page}")])
+    rows.append([InlineKeyboardButton("⬅️ Moliya", callback_data="dev:moliya")])
+    return InlineKeyboardMarkup(rows)
+
+
+def users_text(user_ids: list[int], page: int, total: int) -> str:
+    start = page * USERS_PER_PAGE
+    end = min(start + USERS_PER_PAGE, total)
+    return (
+        "👥 <b>Foydalanuvchilar</b>\n\n"
+        f"Jami: <b>{total}</b> ta\n"
+        f"Ko'rsatilmoqda: <b>{start + 1 if total else 0}–{end}</b>\n\n"
+        "Foydalanuvchini tanlash uchun pastdagi tugmani bosing."
+    )
+
+
+async def refresh_user_profiles(bot, user_ids: list[int]) -> None:
+    """Eski all_users yozuvlarida profil bo'lmasa Telegramdan imkon qadar yangilaydi."""
+    for uid in user_ids:
+        profile = storage.get_user_profile(uid)
+        if profile.get("username") or profile.get("first_name"):
+            continue
+        try:
+            chat = await bot.get_chat(chat_id=uid)
+            storage.record_user(
+                uid,
+                getattr(chat, "username", "") or "",
+                getattr(chat, "first_name", "") or "",
+                getattr(chat, "last_name", "") or "",
+            )
+        except Exception as exc:
+            logger.debug("Foydalanuvchi profilini olish imkoni bo'lmadi: user_id=%s: %s", uid, exc)
+
+
+def users_page(page: int = 0) -> tuple[str, InlineKeyboardMarkup]:
+    all_ids = storage.get_all_users()
+    # Yangi foydalanuvchilar yuqorida ko'rinsin.
+    all_ids = list(reversed(all_ids))
+    total = len(all_ids)
+    max_page = max(0, (total - 1) // USERS_PER_PAGE)
+    page = max(0, min(int(page), max_page))
+    page_ids = all_ids[page * USERS_PER_PAGE:(page + 1) * USERS_PER_PAGE]
+    return users_text(page_ids, page, total), _users_keyboard(page_ids, page, total)
+
+
+def user_detail_text(user_id: int) -> str:
+    return _user_display(user_id)
+
+
+def user_detail_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    uid = int(user_id)
+    profile = storage.get_user_profile(uid)
+    username = (profile.get("username") or "").strip()
+    chat_url = f"https://t.me/{username}" if username else f"tg://user?id={uid}"
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("💬 Chatiga o'tish", url=chat_url)],
+        [InlineKeyboardButton("🆔 Foydalanuvchi ID", callback_data=f"dev:userid:{uid}")],
+        [InlineKeyboardButton("💰 Balansi — hisob to'ldirish", callback_data=f"dev:usertopup:{uid}")],
+        [InlineKeyboardButton("⬅️ Foydalanuvchilar", callback_data="dev:users:0")],
+    ])
+
+
+def gift_prompt_text() -> str:
+    return (
+        "🎁 <b>Sovg'a berish</b>\n\n"
+        "Foydalanuvchi Telegram ID raqamini yuboring.\n"
+        "Barcha foydalanuvchilarga berish uchun <code>all</code> deb yuboring."
+    )
+
+
+def gift_confirm_text(target: str, amount: int, count: int | None = None) -> str:
+    target_text = (
+        "👥 <b>BARCHA foydalanuvchilar</b>"
+        if target == "all"
+        else f"👤 Foydalanuvchi ID: <code>{_esc(target)}</code>"
+    )
+    extra = f"\n👥 Foydalanuvchilar soni: <b>{count}</b> ta" if count is not None else ""
+    return (
+        "🎁 <b>Sovg'ani tasdiqlash</b>\n\n"
+        f"{target_text}{extra}\n"
+        f"💰 Summa: <b>{_fmt_sum(amount)}</b>\n\n"
+        "Tasdiqlasangiz balansga darhol qo'shiladi."
+    )
+
+
+def gift_confirm_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Tasdiqlash", callback_data="dev:giftconfirm"),
+         InlineKeyboardButton("❌ Bekor qilish", callback_data="dev:giftcancel")],
+    ])
+
+
+def gift_amount_prompt(target: str) -> str:
+    if target == "all":
+        count = len(storage.get_all_users())
+        return (
+            f"👥 Barcha foydalanuvchilar: <b>{count}</b> ta.\n\n"
+            "💰 Har bir foydalanuvchiga beriladigan summani so'mda yuboring.\n"
+            "Masalan: <code>10000</code>"
+        )
+    return (
+        f"👤 ID: <code>{_esc(target)}</code>\n\n"
+        "💰 Beriladigan summani so'mda yuboring.\n"
+        "Masalan: <code>10000</code>"
+    )
+
+
+def admin_gift(target: str, amount: int, actor_id: int) -> dict:
+    """Sovg'ani atomik wallet.credit_balance() orqali tarqatadi."""
+    if amount <= 0:
+        raise ValueError("Summa 0 dan katta bo'lishi kerak.")
+    if target == "all":
+        user_ids = storage.get_all_users()
+        txs = wallet.credit_balances_bulk(
+            user_ids, amount,
+            description=f"Admin sovg'asi: {_fmt_sum(amount)}",
+            tx_type=wallet.TX_ADMIN_ADJUST,
+            actor_id=actor_id,
+        )
+        return {"count": len(txs), "total": amount * len(txs)}
+    uid = int(target)
+    tx = wallet.credit_balance(
+        uid, amount,
+        description=f"Admin sovg'asi: {_fmt_sum(amount)}",
+        tx_type=wallet.TX_ADMIN_ADJUST,
+        actor_id=actor_id,
+    )
+    return {"count": 1, "total": amount, "tx": tx}
+
+
+def user_topup_prompt(user_id: int) -> str:
+    return (
+        f"💰 <b>Hisob to'ldirish</b>\n\n"
+        f"👤 Foydalanuvchi ID: <code>{int(user_id)}</code>\n"
+        f"💳 Hozirgi balans: <b>{_fmt_sum(wallet.get_balance(user_id))}</b>\n\n"
+        "Faqat SHU foydalanuvchiga o'tkaziladigan summani so'mda yuboring.\n"
+        "Masalan: <code>10000</code>"
+    )
 
 
 # ============================================================

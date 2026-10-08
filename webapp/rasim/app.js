@@ -21,7 +21,6 @@
   const redoBtn = document.getElementById("redoBtn");
   const clearBtn = document.getElementById("clearBtn");
   const sendBtn = document.getElementById("sendBtn");
-  const shareBtn = document.getElementById("shareBtn");
   const statusMsg = document.getElementById("statusMsg");
 
   const toolTabs = document.getElementById("toolTabs");
@@ -131,23 +130,17 @@
       restartBtn.classList.remove("hidden");
       sendBtn.disabled = true;
     } else if (s.submitted) {
-      const scoreReady = (s.my_score !== null && s.my_score !== undefined);
-      const scoreText = scoreReady
-        ? `\n📊 Sizning natijangiz — ${s.my_score}%${s.my_comment ? `\n💬 ${s.my_comment}` : ""}`
+      const scoreText = (s.my_score !== null && s.my_score !== undefined)
+        ? `\n📊 Sizning natijangiz — O'xshashi: ${s.my_score}%`
         : "\n⏳ AI baholamoqda...";
-      statusMsg.textContent = "✅ Rasm qabul qilindi. Do'stingizni kutyapmiz..." + scoreText;
+      statusMsg.textContent = "✅ Rasm yuborildi. Do'stingizni kutyapmiz..." + scoreText;
       sendBtn.disabled = true;
-      shareBtn.classList.remove("hidden");
-      shareBtn.disabled = false;
-      shareBtn.textContent = scoreReady ? "🏆 Natija bilan yuborish" : "📤 Rasmni yuborish";
     } else if (players.length < 2) {
       statusMsg.textContent = "👥 Avval do'stingiz ham xonaga kirsin.";
       sendBtn.disabled = true;
-      shareBtn.classList.add("hidden");
     } else {
       statusMsg.textContent = "";
       sendBtn.disabled = false;
-      shareBtn.classList.add("hidden");
       restartBtn.classList.add("hidden");
     }
   }
@@ -156,7 +149,6 @@
     if (!initData || !room) {
       statusMsg.textContent = "❌ Rasm chizish xonasi topilmadi. Telegramdagi «Rasm chizishni boshlash» tugmasini qayta bosing.";
       sendBtn.disabled = true;
-      shareBtn.classList.add("hidden");
       return;
     }
     try {
@@ -741,36 +733,6 @@
     return params.get("rid") || "";
   }
 
-  shareBtn.addEventListener("click", async () => {
-    if (duelBusy || !duelState?.submitted) return;
-    if (!tg?.shareMessage) {
-      statusMsg.textContent = "❌ Bu Telegram versiyasida rasm ulashish funksiyasi mavjud emas.";
-      return;
-    }
-    duelBusy = true;
-    shareBtn.disabled = true;
-    statusMsg.textContent = "📤 Yangi ulashish oynasi tayyorlanmoqda...";
-    try {
-      const state = await duelApi("/api/draw/share", "POST", {});
-      if (!state.prepared_message_id) throw new Error("Telegram ulashish ID qaytarmadi.");
-      tg.shareMessage(state.prepared_message_id, (sent) => {
-        if (sent) {
-          statusMsg.textContent = state.score !== null && state.score !== undefined
-            ? `✅ Rasm ${state.score}% natija bilan yuborildi.`
-            : "✅ Rasm yuborildi.";
-        } else {
-          statusMsg.textContent = "ℹ️ Ulashish bekor qilindi. Istasangiz yana yuborishingiz mumkin.";
-        }
-        shareBtn.disabled = false;
-        duelBusy = false;
-      });
-    } catch (e) {
-      statusMsg.textContent = "❌ " + e.message;
-      shareBtn.disabled = false;
-      duelBusy = false;
-    }
-  });
-
   sendBtn.addEventListener("click", async () => {
     if (duelBusy) return;
     if (!duelState || duelState.players?.length < 2) {
@@ -811,12 +773,29 @@
       const state = await duelApi("/api/draw/submit", "POST", {image: dataUrl});
       renderDuelState(state.state || duelState);
 
-      // Baholash endi fonda ishlaydi. Rasmni yuborish alohida `shareBtn` orqali
-      // istalgancha qayta chaqiriladi; shu sabab submit javobi AI'ni kutmaydi.
-      statusMsg.textContent = "⏳ Rasm qabul qilindi. AI baholamoqda...";
-      shareBtn.classList.remove("hidden");
-      shareBtn.disabled = false;
-      shareBtn.textContent = "📤 Rasmni yuborish";
+      // Direct/Main Mini App'lar answerWebAppQuery orqali joriy user-user
+      // chatga xabar yubora olmaydi. Bot API 8.0+ dagi PreparedInlineMessage
+      // + shareMessage esa Mini App ichidan rasmni Telegram'ning native
+      // ulashish oynasiga chiqaradi. Foydalanuvchi shu yerda o'z 1:1 chatini
+      // tanlaydi.
+      if (state.prepared_message_id && tg?.shareMessage) {
+        statusMsg.textContent = "📤 Telegramda chatni tanlang — rasm yuboriladi.";
+        tg.shareMessage(state.prepared_message_id, (sent) => {
+          if (sent) {
+            statusMsg.textContent = state.both_submitted
+              ? "🏆 Rasm yuborildi. Ikkala rasm ham topshirildi."
+              : "✅ Rasm chatga yuborildi. Do'stingizni kutyapmiz.";
+            if (tg?.close) setTimeout(() => tg.close(), 400);
+          } else {
+            statusMsg.textContent = "ℹ️ Rasm tayyor. Telegramdagi ulashish oynasidan chatni tanlang.";
+            sendBtn.disabled = false;
+          }
+        });
+      } else if (state.both_submitted) {
+        statusMsg.textContent = "🏆 Ikkala rasm ham yuborildi. Natija tayyor.";
+      } else {
+        statusMsg.textContent = "✅ Rasm qabul qilindi. Uni Telegram orqali ulashing.";
+      }
     } catch (e) {
       statusMsg.textContent = "❌ " + e.message;
       sendBtn.disabled = false;

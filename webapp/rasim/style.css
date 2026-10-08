@@ -341,21 +341,7 @@ button { font-family: inherit; }
   cursor: pointer;
 }
 
-#sendBtn:disabled, #shareBtn:disabled { opacity: 0.55; }
-
-.share-btn {
-  flex-shrink: 0;
-  margin: 0 10px 8px;
-  padding: 13px 15px;
-  font-size: 15px;
-  font-weight: 700;
-  border: 1px solid var(--accent);
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--accent-dark);
-  cursor: pointer;
-}
-.share-btn.hidden { display: none; }
+#sendBtn:disabled { opacity: 0.55; }
 
 #statusMsg {
   text-align: center;

@@ -46,6 +46,7 @@ _DEFAULT_DATA = {
     "files": {},      # {"<user_id>": [{"type","title","file_id","ts"}, ...]}
     "usage": {},       # {"<func>": {"total": int, "unique_users": [ids], "by_date": {date: int}}}
     "all_users": [],   # botdan umuman foydalangan barcha noyob user_id'lar
+    "user_profiles": {},  # {"<user_id>": {"username","first_name","last_name","updated_at"}}
     "reminders": [],   # [{"id","user_id","chat_id","text","due_ts","created_ts"}]
     "groups": {},      # {"<chat_id>": {"active": bool}} — guruhda Universal chat holati
     "inline_logs": [],  # [{"ts","user_id","username","query","status","detail"}] — inline (@Bot ...) jurnali
@@ -130,6 +131,49 @@ _FUNCTION_LABELS_FOR_STATS = {
     "voice": "🎙 Ovozli xabar",
     "universal_chat": "💬 Universal chat",
 }
+
+
+def record_user(user_id: int, username: str = "", first_name: str = "", last_name: str = "") -> None:
+    """Bot bilan o'zaro aloqaga kirgan foydalanuvchini doimiy ro'yxatga oladi.
+
+    /developer > Moliya > Foydalanuvchilar uchun ID, @username va ism/familiyani
+    saqlaydi. Username keyinchalik o'zgarsa, yangi qiymat bilan yangilanadi.
+    """
+    uid = int(user_id)
+    with _lock:
+        profiles = _data.setdefault("user_profiles", {})
+        key = str(uid)
+        profile = {
+            "username": (username or "").lstrip("@")[:64],
+            "first_name": (first_name or "")[:128],
+            "last_name": (last_name or "")[:128],
+        }
+        old_profile = profiles.get(key) or {}
+        changed = uid not in _data["all_users"]
+        if uid not in _data["all_users"]:
+            _data["all_users"].append(uid)
+        if any(old_profile.get(k, "") != v for k, v in profile.items()):
+            profile["updated_at"] = _now_iso()
+            profiles[key] = profile
+            changed = True
+        elif key not in profiles:
+            profile["updated_at"] = _now_iso()
+            profiles[key] = profile
+            changed = True
+        if changed:
+            _save()
+
+
+def get_all_users() -> list[int]:
+    """Botdan foydalangan barcha foydalanuvchi IDlarini qaytaradi."""
+    with _lock:
+        return [int(uid) for uid in _data.get("all_users", [])]
+
+
+def get_user_profile(user_id: int) -> dict:
+    with _lock:
+        profile = _data.get("user_profiles", {}).get(str(int(user_id)), {})
+        return dict(profile)
 
 
 def record_usage(function_key: str, user_id: int) -> None:

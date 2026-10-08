@@ -314,6 +314,8 @@ def _moliya_menu_text() -> str:
 
 def _moliya_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎁 Sovg'a", callback_data="dev:gift"),
+         InlineKeyboardButton("👥 Foydalanuvchilar", callback_data="dev:users:0")],
         [InlineKeyboardButton("💎 Pro obunalar", callback_data="dev:prosub")],
         [InlineKeyboardButton("💳 To'lovlar", callback_data="dev:pay")],
         [InlineKeyboardButton("💰 Balanslar", callback_data="dev:paybal")],
@@ -1441,7 +1443,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # oldingi "kutilayotgan matn kiritish" holatini tozalaydi — pastda
     # tegishli branch (edit/keyaddprov/keyrepl/keymodel/bulkprov/keybulkscope)
     # kerak bo'lsa uni qaytadan o'rnatadi.
-    if action not in ("edit", "bulkprov", "keyaddprov", "keyrepl", "keymodel", "keybulkscope", "priceedit", "balsearch", "ptsong", "ptemoji", "ptdelay", "ptrevert", "gh", "github", "mt_stop"):
+    if action not in ("edit", "bulkprov", "keyaddprov", "keyrepl", "keymodel", "keybulkscope", "priceedit", "balsearch", "ptsong", "ptemoji", "ptdelay", "ptrevert", "gh", "github", "mt_stop", "giftconfirm"):
         context.user_data.pop("dev_action", None)
 
     # ---------- Asosiy menyu ----------
@@ -1463,6 +1465,89 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "moliya":
         await _safe_edit_query(query, _moliya_menu_text(), reply_markup=_moliya_menu_keyboard(), parse_mode="HTML")
         return DEV_MENU
+
+    # ---------- 🎁 Sovg'a ----------
+    if action == "gift":
+        context.user_data["dev_action"] = {"type": "gift_target"}
+        await _safe_edit_query(
+            query, pay_ui.gift_prompt_text(),
+            reply_markup=_back_keyboard("dev:moliya"), parse_mode="HTML",
+        )
+        return DEV_WAIT_TEXT
+
+    if action == "giftconfirm":
+        gift = context.user_data.get("dev_action") or {}
+        if gift.get("type") != "gift_confirm":
+            await _safe_edit_query(query, "⚠️ Sovg'a sessiyasi topilmadi.", reply_markup=_moliya_menu_keyboard(), parse_mode="HTML")
+            return DEV_MENU
+        try:
+            result = await asyncio.to_thread(
+                pay_ui.admin_gift,
+                gift["target"], int(gift["amount"]), update.effective_user.id,
+            )
+            target = gift["target"]
+            if target == "all":
+                msg = (
+                    "✅ <b>Sovg'a tarqatildi.</b>\n\n"
+                    f"👥 Foydalanuvchilar: <b>{result['count']}</b> ta\n"
+                    f"💰 Har biriga: <b>{pay_ui._fmt_sum(gift['amount'])}</b>\n"
+                    f"💵 Jami: <b>{pay_ui._fmt_sum(result['total'])}</b>"
+                )
+            else:
+                msg = (
+                    "✅ <b>Sovg'a balansga tushdi.</b>\n\n"
+                    f"🆔 ID: <code>{pay_ui._esc(target)}</code>\n"
+                    f"💰 Summa: <b>{pay_ui._fmt_sum(result['total'])}</b>\n"
+                    f"💳 Yangi balans: <b>{pay_ui._fmt_sum(result['tx']['balance_after'])}</b>"
+                )
+            context.user_data.pop("dev_action", None)
+            await _safe_edit_query(query, msg, reply_markup=_moliya_menu_keyboard(), parse_mode="HTML")
+        except Exception as exc:
+            logger.error("🎁 Admin gift xatosi: %s", exc, exc_info=True)
+            await _safe_edit_query(query, f"❌ Sovg'a berishda xato: {_esc(str(exc))}", reply_markup=_moliya_menu_keyboard(), parse_mode="HTML")
+            context.user_data.pop("dev_action", None)
+        return DEV_MENU
+
+    if action == "giftcancel":
+        context.user_data.pop("dev_action", None)
+        await _safe_edit_query(query, "❌ Sovg'a bekor qilindi.", reply_markup=_moliya_menu_keyboard(), parse_mode="HTML")
+        return DEV_MENU
+
+    # ---------- 👥 Foydalanuvchilar ----------
+    if action == "users":
+        page = int(parts[2]) if len(parts) > 2 else 0
+        all_ids = list(reversed(storage.get_all_users()))
+        page_ids = all_ids[page * pay_ui.USERS_PER_PAGE:(page + 1) * pay_ui.USERS_PER_PAGE]
+        await pay_ui.refresh_user_profiles(context.bot, page_ids)
+        text_users, kb_users = pay_ui.users_page(page)
+        await _safe_edit_query(query, text_users, reply_markup=kb_users, parse_mode="HTML")
+        return DEV_MENU
+
+    if action == "user":
+        user_id = int(parts[2])
+        await pay_ui.refresh_user_profiles(context.bot, [user_id])
+        await _safe_edit_query(
+            query, pay_ui.user_detail_text(user_id),
+            reply_markup=pay_ui.user_detail_keyboard(user_id), parse_mode="HTML",
+        )
+        return DEV_MENU
+
+    if action == "userid":
+        user_id = int(parts[2])
+        await _safe_edit_query(
+            query, pay_ui.user_detail_text(user_id),
+            reply_markup=pay_ui.user_detail_keyboard(user_id), parse_mode="HTML",
+        )
+        return DEV_MENU
+
+    if action == "usertopup":
+        user_id = int(parts[2])
+        context.user_data["dev_action"] = {"type": "user_topup", "user_id": user_id}
+        await _safe_edit_query(
+            query, pay_ui.user_topup_prompt(user_id),
+            reply_markup=_back_keyboard(f"dev:user:{user_id}"), parse_mode="HTML",
+        )
+        return DEV_WAIT_TEXT
 
     # ---------- 📝 Boshqariladigan testlar ----------
     if action == "managed_tests" or action.startswith("mt_"):
@@ -2597,6 +2682,100 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             + _keys_menu_text(),
             _keys_menu_keyboard(),
         )
+
+    elif action_type == "gift_target":
+        target = raw_value.strip()
+        if target.casefold() == "all":
+            target = "all"
+        elif not target.isdigit() or int(target) <= 0:
+            await _edit_menu(
+                context,
+                "⚠️ Telegram ID noto'g'ri. Raqamli ID yoki <code>all</code> yuboring.\n\n"
+                + pay_ui.gift_prompt_text(),
+                _back_keyboard("dev:moliya"),
+            )
+            context.user_data["dev_action"] = action
+            return DEV_WAIT_TEXT
+        if target != "all":
+            target = str(int(target))
+        count = len(storage.get_all_users()) if target == "all" else None
+        context.user_data["dev_action"] = {"type": "gift_amount", "target": target}
+        await _edit_menu(
+            context,
+            pay_ui.gift_amount_prompt(target),
+            _back_keyboard("dev:moliya"),
+            parse_mode="HTML",
+        )
+        return DEV_WAIT_TEXT
+
+    elif action_type == "gift_amount":
+        if not raw_value.isdigit() or int(raw_value) <= 0:
+            await _edit_menu(
+                context,
+                "⚠️ Summa 0 dan katta bo'lgan butun son bo'lishi kerak. Masalan: <code>10000</code>.",
+                _back_keyboard("dev:moliya"),
+            )
+            context.user_data["dev_action"] = action
+            return DEV_WAIT_TEXT
+        amount = int(raw_value)
+        target = action["target"]
+        if target == "all" and not storage.get_all_users():
+            await _edit_menu(
+                context, "⚠️ Hozircha botdan foydalangan foydalanuvchi topilmadi.",
+                _moliya_menu_keyboard(),
+            )
+            context.user_data.pop("dev_action", None)
+            return DEV_MENU
+        count = len(storage.get_all_users()) if target == "all" else None
+        context.user_data["dev_action"] = {
+            "type": "gift_confirm", "target": target, "amount": amount,
+        }
+        await _edit_menu(
+            context,
+            pay_ui.gift_confirm_text(target, amount, count),
+            pay_ui.gift_confirm_keyboard(),
+            parse_mode="HTML",
+        )
+        return DEV_MENU
+
+    elif action_type == "user_topup":
+        if not raw_value.isdigit() or int(raw_value) <= 0:
+            user_id = int(action["user_id"])
+            await _edit_menu(
+                context,
+                "⚠️ Summa 0 dan katta bo'lgan butun son bo'lishi kerak. Masalan: <code>10000</code>.\n\n"
+                + pay_ui.user_topup_prompt(user_id),
+                _back_keyboard(f"dev:user:{user_id}"),
+            )
+            context.user_data["dev_action"] = action
+            return DEV_WAIT_TEXT
+        user_id = int(action["user_id"])
+        amount = int(raw_value)
+        try:
+            tx = await asyncio.to_thread(
+                wallet.credit_balance,
+                user_id, amount,
+                f"Admin tomonidan hisob to'ldirildi: {pay_ui._fmt_sum(amount)}",
+                wallet.TX_ADMIN_ADJUST,
+                None,
+                update.effective_user.id,
+            )
+            context.user_data.pop("dev_action", None)
+            await _edit_menu(
+                context,
+                "✅ <b>Hisob to'ldirildi.</b>\n\n"
+                f"🆔 ID: <code>{user_id}</code>\n"
+                f"➕ Qo'shildi: <b>{pay_ui._fmt_sum(amount)}</b>\n"
+                f"💳 Yangi balans: <b>{pay_ui._fmt_sum(tx['balance_after'])}</b>",
+                pay_ui.user_detail_keyboard(user_id),
+            )
+        except Exception as exc:
+            context.user_data["dev_action"] = action
+            await _edit_menu(
+                context, f"❌ Hisob to'ldirishda xato: {_esc(str(exc))}",
+                _back_keyboard(f"dev:user:{user_id}"),
+            )
+            return DEV_WAIT_TEXT
 
     elif action_type == "feature_price":
         feature_id = action["feature_id"]

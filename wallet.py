@@ -326,6 +326,32 @@ def credit_balance(user_id: int, amount: int, description: str,
     return tx
 
 
+def credit_balances_bulk(user_ids: list[int], amount: int, description: str,
+                         tx_type: str = TX_TOPUP, actor_id=None) -> list[dict]:
+    """Bir xil summani bir nechta foydalanuvchiga bitta saqlash amali bilan kreditlaydi.
+    Adminning `all` sovg'asi uchun ishlatiladi."""
+    amount = int(amount)
+    if amount <= 0:
+        raise WalletError("Kredit summasi musbat butun son bo'lishi kerak.")
+    ids = [int(uid) for uid in user_ids]
+    with _lock:
+        txs = []
+        for uid in ids:
+            key = str(uid)
+            wallet = _data["wallets"].setdefault(key, {"balance": 0})
+            before = int(wallet["balance"])
+            after = before + amount
+            wallet["balance"] = after
+            tx = _new_tx_locked(uid, tx_type, amount, before, after, description=description)
+            txs.append(tx)
+            _log_audit_locked(
+                "BALANCE_CREDIT", actor_id=actor_id, user_id=uid, amount=amount, details=description,
+            )
+        _save()
+    logger.info("💰 Bulk balans OSHDI: users=%d, each=%d, total=%d.", len(ids), amount, len(ids) * amount)
+    return txs
+
+
 def debit_balance(user_id: int, amount: int, description: str,
                    tx_type: str = TX_FEATURE_CHARGE) -> dict:
     """Balansdan pul YECHADI. Balans YETARLI bo'lmasa InsufficientBalanceError
