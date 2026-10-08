@@ -406,6 +406,7 @@ def update_movie(movie_id: str, **fields) -> dict | None:
             "telegram_chat_id", "telegram_message_id",
             "telegram_file_unique_id", "telegram_document_id",
             "telegram_access_hash", "telegram_file_reference",
+            "variants",   # {"480": {telegram_chat_id, telegram_message_id, size, mime_type}, ...}
         }
         for key, value in fields.items():
             if key in allowed:

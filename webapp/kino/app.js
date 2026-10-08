@@ -8,11 +8,14 @@
   let room = qs.get("room") || "";
   const startParam = tg?.initDataUnsafe?.start_param || qs.get("startapp") || "";
   let movieId = qs.get("movie") || "";
+  let ownerHint = qs.get("owner") || "";
   if (!room && startParam.startsWith("room_")) {
-    // `room_<xona>_<kino>`: kino ID server qayta ishga tushganda xonani tiklash uchun kerak.
-    const [rid, mid] = startParam.slice(5).split("_");
+    // `room_<xona>_<kino>_<ega>`: kino ID server qayta ishga tushganda xonani tiklash uchun,
+    // ega ID'si esa egalik yo'qolmasligi uchun kerak.
+    const [rid, mid, oid] = startParam.slice(5).split("_");
     room = rid;
     if (mid && !movieId) movieId = mid;
+    if (oid && !ownerHint) ownerHint = oid;
   }
   const initData = tg?.initData || (() => {
     // Router (webapp/index.html) Main Mini App'dan o'tishda initData nusxasini saqlaydi.
@@ -52,6 +55,20 @@
   let lastOutboundStats = null;
   let goodNetworkSince = 0;
   let stateReady = false;
+  // Egalik / ruxsatlar. `canCtl()` — pauza, o'tkazish, kino almashtirish huquqi.
+  let ownerId = 0;
+  let tempOwner = null;        // {user_id, until} (server soniyalarida)
+  let people = [];             // [{id, name, online, role}]
+  let onlineIds = [];
+  let quality = "original";
+  let qualities = ["original"];
+  let requestPending = false;  // MEN yuborgan so'rov javob kutmoqda
+  let ownerReqKey = "";
+  const answeredReq = new Set();
+  let hadTemp = false;
+  let iceRestarts = 0;
+  let remoteSession = "";
+  const mySession = Math.random().toString(36).slice(2, 10);
   const mediaPermissionKey = "student_ai_media_permission_v2";
   const emojiList = ["😀","😂","😍","🥰","😎","😢","😡","😮","👏","🔥","❤️","💯","👍","👎","🎉","🏆","⚡","🤝","😄","🤣","😉","😘","🤗","🙏","💪","🙌","✨","🎯","🎮","😭"];
 
@@ -105,6 +122,7 @@
   function onApiError(e) {
     const code = e && e.code;
     if (code === "auth") return giveUp("auth");
+    if (code === "owner") { revertToRoom(); showDeny(); return; }
     if (code === "room" || code === "member") {
       // Server qayta ishga tushgan bo'lishi mumkin (xonalar xotirada). Avval tiklashga urinamiz.
       restoreRoom().then((ok) => { if (!ok) giveUp("room"); });
@@ -123,16 +141,21 @@
       setStatus("🔄 Xona tiklanmoqda...");
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          const d = await api("/api/kino/join", null, { room, movie: mid });
+          const d = await api("/api/kino/join", null, { room, movie: mid, owner: ownerHint });
           me = d.user_id ?? me;
           participants = d.participants || participants;
+          applyControl(d);
           await applyMovie(d);
           lastVersion = Number(d.state?.version ?? 0);
           stateReady = true;
-          const s = await api("/api/kino/state", {
-            room, playing: !video.paused, position: Number(video.currentTime || 0),
-          });
-          lastVersion = Math.max(lastVersion, Number(s.version ?? lastVersion));
+          // Yangi xona bo'sh (0:00, pauza): faqat EGA o'z haqiqiy holatini yozadi. Mehmonning
+          // yozishi rad etiladi va u xonaga o'z pozitsiyasi bilan tegmasligi kerak.
+          if (canCtl()) {
+            const s = await api("/api/kino/state", {
+              room, playing: !video.paused, position: Number(video.currentTime || 0),
+            });
+            lastVersion = Math.max(lastVersion, Number(s.version ?? lastVersion));
+          }
           setStatus("");
           return true;
         } catch (e) {
@@ -173,6 +196,18 @@
     el.classList.toggle("hidden", !text);
   }
 
+  // Bloklamaydigan kichik xabar (kamera aloqasi va h.k.). Video ustini YOPMAYDI:
+  // avval WebRTC holati `setStatus` overlay'ini chaqirgani uchun uzilgan do'st sabab
+  // film "yo'qolib" qayta-qayta ko'rinardi.
+  let noteTimer = null;
+  function setNote(text, ms = 0) {
+    const el = $("note");
+    clearTimeout(noteTimer);
+    el.textContent = text || "";
+    el.classList.toggle("hidden", !text);
+    if (text && ms) noteTimer = setTimeout(() => setNote(""), ms);
+  }
+
   async function boot() {
     if (!initData) {
       setStatus("❌ Telegram Mini App sessiyasi topilmadi. Telegram ichidan qayta oching.");
@@ -185,15 +220,16 @@
         history.replaceState(null, "", `?movie=${encodeURIComponent(movieId)}&room=${encodeURIComponent(room)}`);
       }
 
-      const d = await api("/api/kino/join", null, { room, movie: movieId });
+      const d = await api("/api/kino/join", null, { room, movie: movieId, owner: ownerHint });
       me = d.user_id;
       participants = d.participants || [];
       shareUrl = d.share_url || location.href;
+      applyControl(d);
       await applyMovie(d);
-      $("roomInfo").textContent = `2 kishilik xona • ${room.slice(0, 6)}`;
       setStatus("⏳ Kino yuklanmoqda...");
       playOverlay.classList.remove("hidden");
       renderPeople();
+      renderRole();
       ensurePeer();
 
       // Har bir timer alohida guard bilan ishlaydi: sekin tarmoqda bir xil
@@ -271,18 +307,24 @@
     const changed = !!currentMovieId && currentMovieId !== nextId;
     currentMovieId = nextId;
     $("title").textContent = "🎬 " + d.movie.title;
+    // Ega sifatni o'zgartirsa stream URL (`&q=`) o'zgaradi: shu holatda ham joriy
+    // joydan davom etib, yangi fayl bilan qayta yuklaymiz (bayt ofsetlari fayllar orasida mos emas).
+    const nextQuality = d.quality || "original";
+    const qualityChanged = !changed && !!video.getAttribute("data-quality") &&
+                           video.getAttribute("data-quality") !== nextQuality;
     // State polling applyMovie'ni qayta-qayta chaqiradi: kino o'zgarmagan bo'lsa
     // (yoki majburiy qayta yuklash so'ralmagan bo'lsa) video elementiga tegmaymiz.
-    if (!force && !changed && video.getAttribute("data-movie-id") === nextId && video.src) return;
+    if (!force && !changed && !qualityChanged && video.getAttribute("data-movie-id") === nextId && video.src) return;
 
-    // Faqat stream tokeni yangilanayotgan bo'lsa (bir xil kino) joriy joydan davom etamiz.
-    resumeAfterLoad = (force && !changed && video.getAttribute("data-movie-id") === nextId)
+    // Faqat stream tokeni yoki sifat yangilanayotgan bo'lsa (bir xil kino) joriy joydan davom etamiz.
+    resumeAfterLoad = ((force || qualityChanged) && !changed && video.getAttribute("data-movie-id") === nextId)
       ? { time: Number(video.currentTime || 0), play: !video.paused }
       : null;
     pendingState = null;
     resetQuiet();
     setStatus("⏳ Kino tayyorlanmoqda...");
     video.setAttribute("data-movie-id", nextId);
+    video.setAttribute("data-quality", nextQuality);
     video.src = d.stream_path;
     video.load();   // paused=true qiladi, currentTime=0 (alohida 'pause' hodisasi chiqmaydi)
     playOverlay.classList.remove("hidden");
@@ -311,22 +353,55 @@
   }
 
   function renderPeople() {
-    $("people").innerHTML = participants
-      .map((p) => `<div class="person">🟢 ${p === me ? "Siz" : "Do‘st"}</div>`)
-      .join("");
+    const list = people.length ? people : participants.map((id) => ({
+      id, name: "", online: true, role: Number(id) === Number(ownerId) ? "owner" : "guest",
+    }));
+    $("people").innerHTML = list.map((p) => {
+      const you = Number(p.id) === Number(me);
+      const on = you || p.online;
+      const label = you ? "Siz" : (p.name || "Do‘st");
+      const mark = p.role === "owner" ? " 👑" : p.role === "temp" ? " ⏱" : "";
+      return `<div class="person">${on ? "🟢" : "⚪"} ${escapeHtml(label)}${mark}${on ? "" : " • uzildi"}</div>`;
+    }).join("");
   }
 
-  // Ijro paytida buferlash yoki tarmoq sababli ortda qolgan (yoki oldinga ketgan) odamni
-  // xona vaqtiga qaytaradi. Faqat holat o'zgarmagan pollda, sezilarli farqda (>3s), video
-  // bufer kutmayotgan paytda va kamida 6s oralig'ida; ijro/pauza holatiga tegmaydi.
-  function correctDrift(d) {
-    if (!d.playing || video.paused || video.seeking || video.readyState < 3) return;
-    if (Date.now() - lastDriftFixAt < 6000) return;
-    const desired = desiredPosition(d);
-    if (Math.abs((video.currentTime || 0) - desired) > 3) {
-      lastDriftFixAt = Date.now();
-      quietSeek(desired);
+  // Ortda qolgan (yoki oldinga ketgan) odamni xona vaqtiga qaytaradi.
+  // Avval 3 soniyalik farqda har 6 soniyada SEEK qilinardi: sekin oqimda (Telegramdan har
+  // yangi Range ~2-3 s) bu "2-3 soniya qayta-qayta o'qish" tsikliga aylanardi — seek yangi
+  // so'rov, yangi kechikish, yana ortda qolish. Endi: kichik farq playbackRate bilan
+  // YUMSHOQ tenglashtiriladi, seek faqat katta farqda va kam-kam, bufer kutilayotganda tegilmaydi.
+  let rateNudged = false;
+  function setRate(r) {
+    try { if (video.playbackRate !== r) video.playbackRate = r; } catch (_) {}
+    rateNudged = r !== 1;
+  }
+  function bufferedAhead() {
+    const t = video.currentTime || 0;
+    const b = video.buffered;
+    for (let i = 0; i < b.length; i++) {
+      if (b.start(i) <= t + 0.1 && b.end(i) > t) return b.end(i) - t;
     }
+    return 0;
+  }
+  function correctDrift(d) {
+    if (!d.playing || video.paused || video.seeking || video.readyState < 3) {
+      if (rateNudged) setRate(1);
+      return;
+    }
+    const desired = desiredPosition(d);
+    const diff = desired - (video.currentTime || 0);   // >0: biz ortdamiz
+    const abs = Math.abs(diff);
+    if (abs <= 0.7) { if (rateNudged) setRate(1); return; }
+    if (abs <= 10) {
+      // Ortda bo'lsak tezlatamiz, lekin bufer yupqa bo'lsa tezlatmaymiz (to'xtab qolardi).
+      if (diff > 0) setRate(bufferedAhead() > 4 ? 1.08 : 1);
+      else setRate(0.92);
+      return;
+    }
+    if (Date.now() - lastDriftFixAt < 20000) return;
+    lastDriftFixAt = Date.now();
+    setRate(1);
+    quietSeek(desired);
   }
 
   async function pollState() {
@@ -337,9 +412,9 @@
       connectionLost = false;
 
       participants = d.participants || participants;
-      renderPeople();
+      applyControl(d);
       await applyMovie(d);
-      if (participants.length === 2) ensurePeer();
+      ensurePeer();
 
       const version = Number(d.version ?? -1);
       const firstSync = !stateReady;
@@ -414,7 +489,7 @@
     recoverLog.push(now);
     try {
       setStatus("🔄 Aloqa tiklanmoqda...");
-      const d = await api("/api/kino/join", null, { room });   // yangi stream tokeni
+      const d = await api("/api/kino/join", null, { room, owner: ownerHint });   // yangi stream tokeni
       await applyMovie(d, { force: true });
       return true;
     } catch (e) {
@@ -454,6 +529,7 @@
   // oxirgi ma'lum server holatidan foydalanamiz (u ≤1 soniya eskirgan).
   playOverlay.onclick = () => {
     const d = lastServerState;
+    if (!(d && stateReady) && !canCtl()) { showDeny(); return; }
     if (d && stateReady) {
       if (d.playing) {
         // Xona allaqachon ijro etilmoqda: biz unga QO'SHILAMIZ, holatni o'zgartirmaymiz.
@@ -461,7 +537,9 @@
         quietSeek(desiredPosition(d));
         markQuiet("play", 2500);
       } else {
-        // Xona to'xtatilgan: umumiy pozitsiyadan boshlaymiz; "play" hammaga yuboriladi.
+        // Xona to'xtatilgan: kinoni faqat ega (yoki vaqtinchalik ega) boshlay oladi.
+        if (!canCtl()) { showDeny(); return; }
+        // Umumiy pozitsiyadan boshlaymiz; "play" hammaga yuboriladi.
         quietSeek(Number(d.position) || 0);
       }
     }
@@ -486,9 +564,10 @@
           lastVersion = Math.max(lastVersion, Number(d.version));
           stateReady = true;
         }
+        applyControl(d);
       } catch (e) {
-        // Offline paytida local ijroga tegmaymiz.
-        connectionLost = true;
+        // Offline paytida local ijroga tegmaymiz. "owner" xatosi esa internet muammosi emas.
+        if (!e || e.code !== "owner") connectionLost = true;
         onApiError(e);
       }
     }, 120);
@@ -496,15 +575,26 @@
   video.addEventListener("play", () => {
     playOverlay.classList.add("hidden");
     if (consumeQuiet("play")) return;
+    if (!canCtl()) {
+      // Xona allaqachon ijro etilayotgan bo'lsa mehmonning "play"i — shunchaki qo'shilish.
+      if (lastServerState?.playing) { revertToRoom(); return; }
+      revertToRoom(); showDeny(); return;
+    }
     pushState(true);
   });
   video.addEventListener("pause", () => {
     if (video.currentTime < 0.2 && video.readyState >= 2) playOverlay.classList.remove("hidden");
     if (consumeQuiet("pause")) return;
+    if (!canCtl()) {
+      // Film tugashi yoki sahifa fonga o'tishi (OS pauza qiladi) — buzarlik emas.
+      if (video.ended || document.hidden) return;
+      revertToRoom(); showDeny(); return;
+    }
     pushState(false);
   });
   video.addEventListener("seeked", () => {
     if (consumeQuiet("seeked")) return;
+    if (!canCtl()) { revertToRoom(); showDeny(); return; }
     pushState(!video.paused);
   });
 
@@ -598,6 +688,7 @@
     try {
       btn.disabled = true;
       const d = await api("/api/kino/change_movie", { room, movie_id: btn.dataset.movieId });
+      applyControl(d);
       await applyMovie(d);
       lastVersion = Math.max(lastVersion, Number(d.version ?? lastVersion));
       stateReady = true;
@@ -607,16 +698,17 @@
       setTimeout(() => setStatus(""), 1200);
     } catch (err) {
       btn.disabled = false;
+      if (err && err.code === "owner") { moviePicker.classList.add("hidden"); showDeny(); return; }
       tg?.showAlert?.(err.message);
     }
   });
 
-  $("nextMovie").onclick = openMoviePicker;
+  $("nextMovie").onclick = () => { if (canCtl()) openMoviePicker(); else showDeny(); };
   $("closeMoviePicker").onclick = () => moviePicker.classList.add("hidden");
 
   async function sendSignal(target, payload) {
     try {
-      await api("/api/kino/signal", { room, target_user_id: target, payload });
+      await api("/api/kino/signal", { room, target_user_id: target, payload: { ...payload, s: mySession } });
     } catch (e) {
       console.warn("KINO signal yuborilmadi", e);
     }
@@ -641,6 +733,11 @@
   async function handleSignal(item) {
     const p = item.payload || {};
     if (!p.type) return;
+    // Do'st sahifani qayta ochgan (yangi sessiya): eski ulanish yaroqsiz, yangisini quramiz.
+    if (p.s) {
+      if (remoteSession && remoteSession !== p.s) closePeer();
+      remoteSession = p.s;
+    }
     try {
       if (p.type === "offer") await handleOffer(item.from, p.sdp);
       else if (p.type === "answer") await handleAnswer(p.sdp);
@@ -697,6 +794,7 @@
   function scheduleIceRestart(reason = "network") {
     const now = Date.now();
     if (!peer || !peerTarget || makingOffer || now - lastIceRestartAt < 5000) return;
+    if (!otherOnline() || iceRestarts >= 4) return;   // do'st yo'q yoki juda ko'p urinish
     clearTimeout(reconnectTimer);
     boostSignals();
     reconnectTimer = setTimeout(async () => {
@@ -704,6 +802,7 @@
       if (!["failed", "disconnected", "checking"].includes(peer.connectionState) &&
           !["failed", "disconnected", "checking"].includes(peer.iceConnectionState)) return;
       lastIceRestartAt = Date.now();
+      iceRestarts++;
       try {
         makingOffer = true;
         if (peer.restartIce) peer.restartIce();
@@ -780,20 +879,23 @@
       const s = peer?.connectionState;
       if (s === "connected") {
         connectionLost = false;
+        iceRestarts = 0;
         remoteWrap.classList.remove("hidden");
-        if (participants.length >= 2) setStatus("");
+        setNote("");
         tuneAllVideoSenders("high");
         startRtcStats();
       } else if (s === "failed" || s === "disconnected") {
         console.warn("KINO WebRTC connection", s);
-        setStatus("📡 Kamera aloqasi tiklanmoqda...");
-        scheduleIceRestart(s);
+        if (otherOnline()) {
+          setNote("📡 Kamera aloqasi tiklanmoqda...");
+          scheduleIceRestart(s);
+        }
       }
     };
     peer.oniceconnectionstatechange = () => {
       const s = peer?.iceConnectionState;
-      if (s === "failed" || s === "disconnected") scheduleIceRestart(s);
-      if (s === "connected" || s === "completed") setStatus("");
+      if ((s === "failed" || s === "disconnected") && otherOnline()) scheduleIceRestart(s);
+      if (s === "connected" || s === "completed") setNote("");
     };
     peer.onnegotiationneeded = async () => {
       try {
@@ -809,10 +911,24 @@
     return peer;
   }
 
+  function otherOnline() {
+    return onlineIds.some((x) => Number(x) !== Number(me));
+  }
+  function closePeer() {
+    clearTimeout(reconnectTimer);
+    clearInterval(statsTimer);
+    if (peer) { try { peer.close(); } catch (_) {} }
+    peer = null; peerTarget = 0; pendingIce = []; makingOffer = false; iceRestarts = 0;
+    try { remoteVideo.srcObject = null; } catch (_) {}
+    remoteWrap.classList.add("hidden");
+    setNote("");
+  }
+  // Ulanish FAQAT ikkala odam ham onlayn bo'lganda. Do'st uzilsa ulanish yopiladi
+  // (avval u "tiklanmoqda" holatida cheksiz qayta urinardi va video ustini yopardi).
   function ensurePeer() {
-    if (participants.length !== 2 || !me) return;
-    const target = participants.find(x => Number(x) !== Number(me));
-    if (!target) return;
+    if (!me) return;
+    const target = onlineIds.find((x) => Number(x) !== Number(me));
+    if (!target) { if (peer) closePeer(); return; }
     makePeer(target);
   }
 
@@ -914,6 +1030,199 @@
       prompt("Xona havolasi:", url);
     }
   };
+
+  // ---- Egalik, ruxsatlar, dialoglar, sozlamalar --------------------------------------
+  const serverNowSec = () => (Date.now() + clockOffsetMs) / 1000;
+  const isOwner = () => !!ownerId && Number(ownerId) === Number(me);
+  const tempActive = () => !!tempOwner && Number(tempOwner.user_id) === Number(me) && Number(tempOwner.until) > serverNowSec();
+  const canCtl = () => isOwner() || tempActive();
+
+  function applyControl(d) {
+    if (!d || d.owner_id === undefined) return;
+    ownerId = Number(d.owner_id) || 0;
+    tempOwner = d.temp_owner || null;
+    people = d.people || people;
+    onlineIds = (d.online || onlineIds).map(Number);
+    if (Array.isArray(d.qualities)) qualities = d.qualities;
+    if (d.quality) quality = d.quality;
+    renderPeople();
+    renderRole();
+    handleOwnerRequest(d);
+    handleRequestResult(d);
+    renderSettings();
+    $("settingsBtn").classList.toggle("hidden", !isOwner());
+  }
+
+  function renderRole() {
+    let text;
+    if (isOwner()) text = "👑 Siz egasiz";
+    else if (tempActive()) {
+      const left = Math.max(0, Math.ceil(Number(tempOwner.until) - serverNowSec()));
+      text = `⏱ Vaqtinchalik ega • ${left}s`;
+    } else text = "👤 Mehmon";
+    $("roomInfo").textContent = `${text} • ${room.slice(0, 6)}`;
+    if (hadTemp && !tempActive() && !isOwner()) {
+      hadTemp = false;
+      setNote("⏱ Vaqtinchalik egalik tugadi", 4000);
+    }
+    if (tempActive()) hadTemp = true;
+  }
+  setInterval(() => { if (me) renderRole(); }, 1000);
+
+  // Umumiy dialog (bir vaqtda bittasi).
+  let dlgKind = "";
+  function hideDialog(kind) {
+    if (kind && dlgKind !== kind) return;
+    dlgKind = "";
+    $("dlg").classList.add("hidden");
+  }
+  function showDialog(kind, { title, text, buttons }) {
+    dlgKind = kind;
+    $("dlgTitle").textContent = title;
+    $("dlgText").textContent = text;
+    const box = $("dlgBtns");
+    box.innerHTML = "";
+    for (const b of buttons) {
+      const el = document.createElement("button");
+      el.type = "button";
+      el.textContent = b.label;
+      if (b.cls) el.className = b.cls;
+      el.onclick = async () => {
+        el.disabled = true;
+        try { await b.onClick?.(); } finally { el.disabled = false; }
+      };
+      box.appendChild(el);
+    }
+    $("dlg").classList.remove("hidden");
+  }
+  const closeBtn = { label: "Yopish", onClick: () => hideDialog() };
+
+  // Mehmon pauza/seek/kino almashtirishga urindi.
+  function showDeny() {
+    if (canCtl() || dlgKind === "ownerReq") return;
+    if (requestPending) { showWaiting(); return; }
+    if (dlgKind === "deny") return;
+    showDialog("deny", {
+      title: "🔒 Siz ega emassiz",
+      text: "Pauza, o‘tkazish va kino almashtirishni faqat ega bajara oladi. " +
+            "Ega tasdiqlasa, 1 daqiqalik ega huquqiga ega bo‘lasiz.",
+      buttons: [{ label: "🙋 Egalikni so‘rash", cls: "primary", onClick: requestOwnership }, closeBtn],
+    });
+  }
+  function showWaiting() {
+    const ownerOn = onlineIds.includes(Number(ownerId));
+    showDialog("waiting", {
+      title: "⏳ So‘rov yuborildi",
+      text: ownerOn ? "Ega tasdiqlashini kuting…" : "Ega hozir onlayn emas. U qaytsa so‘rovni ko‘radi (45 soniya ichida).",
+      buttons: [closeBtn],
+    });
+  }
+  async function requestOwnership() {
+    try {
+      const d = await api("/api/kino/request_owner", { room });
+      applyControl(d);
+      if (canCtl()) { hideDialog(); return; }
+      requestPending = true;
+      showWaiting();
+    } catch (e) {
+      showDialog("result", { title: "⚠️ Xato", text: e.message, buttons: [closeBtn] });
+    }
+  }
+  function handleRequestResult(d) {
+    const r = d.request_result;
+    if (!requestPending || !r || Number(r.user_id) !== Number(me)) return;
+    requestPending = false;
+    if (r.status === "approved") {
+      hideDialog("waiting"); hideDialog("deny");
+      setNote("✅ Ega tasdiqladi — 1 daqiqalik ega huquqi sizda", 5000);
+      try { tg?.HapticFeedback?.notificationOccurred?.("success"); } catch (_) {}
+    } else {
+      showDialog("result", {
+        title: r.status === "rejected" ? "❌ Rad etildi" : "⌛ Javob kelmadi",
+        text: r.status === "rejected" ? "Ega so‘rovni rad etdi." : "Ega so‘rovga javob bermadi.",
+        buttons: [closeBtn],
+      });
+    }
+  }
+
+  // Egaga: "Ali sizdan vaqtinchalik egalikni so‘radi" + Tasdiq / Rad etish.
+  function handleOwnerRequest(d) {
+    const req = d.owner_request;
+    if (req && isOwner()) {
+      const key = req.user_id + ":" + req.ts;
+      if (answeredReq.has(key)) return;
+      if (dlgKind === "ownerReq" && ownerReqKey === key) return;
+      ownerReqKey = key;
+      const who = req.name || "Do‘st";
+      const answer = async (approve) => {
+        answeredReq.add(key);
+        try {
+          const nd = await api("/api/kino/respond_owner", { room, approve });
+          hideDialog("ownerReq");
+          applyControl(nd);
+        } catch (e) {
+          hideDialog("ownerReq");
+          tg?.showAlert?.(e.message);
+        }
+      };
+      showDialog("ownerReq", {
+        title: "🙋 Egalik so‘rovi",
+        text: `${who} sizdan vaqtinchalik egalikni so‘radi (1 daqiqa).`,
+        buttons: [
+          { label: "✅ Tasdiq", cls: "primary", onClick: () => answer(true) },
+          { label: "✖ Rad etish", onClick: () => answer(false) },
+        ],
+      });
+      try { tg?.HapticFeedback?.notificationOccurred?.("warning"); } catch (_) {}
+    } else if (dlgKind === "ownerReq") {
+      hideDialog("ownerReq");   // so'rov boshqa joyda javob oldi yoki muddati o'tdi
+    }
+  }
+
+  // Mehmonning ruxsatsiz amalini bekor qilib, xona holatiga qaytaradi.
+  async function revertToRoom() {
+    try {
+      const d = await fetchState();
+      applyControl(d);
+      await applyServerState(d);
+    } catch (_) {
+      if (lastServerState) applyServerState(lastServerState);
+    }
+  }
+
+  // ⚙️ Sozlamalar (faqat ega): video sifati.
+  const QUALITY_LABELS = { original: "Asl sifat", "1080": "1080p", "720": "720p", "480": "480p" };
+  function renderSettings() {
+    const box = $("qualityList");
+    if (!box) return;
+    const order = ["1080", "720", "480", "original"];
+    const only = qualities.length <= 1;
+    box.innerHTML = order.map((q) => {
+      const have = qualities.includes(q);
+      const cur = quality === q;
+      return `<button type="button" class="movie-item ${cur ? "current" : ""}" data-q="${q}" ${have && !cur ? "" : "disabled"}>
+        ${QUALITY_LABELS[q]}${cur ? " • Hozirgi" : ""}${have ? "" : " • mavjud emas"}</button>`;
+    }).join("") + (only
+      ? `<div class="hint">Bu kinoning boshqa sifatdagi nusxasi yuklanmagan. Admin /kino_quality buyrug‘i bilan ulaydi.</div>`
+      : "");
+  }
+  $("settingsBtn").onclick = () => { renderSettings(); $("settingsPanel").classList.toggle("hidden"); };
+  $("closeSettings").onclick = () => $("settingsPanel").classList.add("hidden");
+  $("qualityList").addEventListener("click", async (e) => {
+    const btn = e.target.closest("[data-q]");
+    if (!btn || btn.disabled) return;
+    btn.disabled = true;
+    try {
+      const d = await api("/api/kino/set_quality", { room, quality: btn.dataset.q });
+      applyControl(d);
+      await applyMovie(d);
+      $("settingsPanel").classList.add("hidden");
+      setNote(`🎞 Sifat: ${QUALITY_LABELS[d.quality] || d.quality}`, 3000);
+    } catch (err) {
+      btn.disabled = false;
+      tg?.showAlert?.(err.message);
+    }
+  });
 
   boot();
 })();

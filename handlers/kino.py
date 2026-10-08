@@ -427,3 +427,97 @@ async def kino_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append("Yechim: session akkaunti saqlash kanaliga a'zo bo'lishi (yoki kanal public "
                      "username'ga ega bo'lishi) va KINO_STORAGE_CHANNEL_ID to'g'ri bo'lishi kerak.")
     await msg.reply_text("\n".join(lines))
+
+
+_QUALITY_LIST = ("1080", "720", "480")
+
+
+async def kino_quality(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: kinoga boshqa sifatdagi (1080/720/480) variantni ulaydi.
+
+    Foydalanish:
+      /kino_quality                                    -> yordam va ulangan variantlar
+      /kino_quality MOVIE_ID 480 CHAT_ID MESSAGE_ID    -> 480p variantni ulash
+      /kino_quality MOVIE_ID 480 off                   -> variantni olib tashlash
+
+    Server videoni o'zi qayta kodlamaydi (Render'da og'ir). Past sifatli fayl kompyuterda
+    tayyorlanib, saqlash kanaliga yuklanadi, so'ng shu buyruq bilan kinoga ulanadi.
+    """
+    user = update.effective_user
+    msg = update.effective_message
+    if not user or not msg:
+        return
+    if not _is_admin(user.id):
+        await msg.reply_text("⛔ Faqat admin uchun.")
+        return
+
+    args = list(context.args or [])
+    if not args:
+        lines = [
+            "🎞 Kino sifat variantlari",
+            "",
+            "Ulash: /kino_quality MOVIE_ID 480 CHAT_ID MESSAGE_ID",
+            "Olib tashlash: /kino_quality MOVIE_ID 480 off",
+            "",
+            "480p tayyorlash (kompyuterda):",
+            "ffmpeg -i kino.mp4 -vf scale=-2:480 -c:v libx264 -crf 26 -c:a aac -movflags +faststart kino_480.mp4",
+            "Faylni saqlash kanaliga yuboring, xabar ID'sini oling va yuqoridagi buyruq bilan ulang.",
+            "",
+        ]
+        for m in storage.search_movies("")[:30]:
+            have = ", ".join(f"{q}p" for q in _QUALITY_LIST if (m.get("variants") or {}).get(q)) or "faqat asl"
+            lines.append(f"🎬 {m['title'][:40]} — {m['id']} — {have}")
+        await msg.reply_text("\n".join(lines))
+        return
+
+    if len(args) < 3:
+        await msg.reply_text("❌ Format: /kino_quality MOVIE_ID 480 CHAT_ID MESSAGE_ID")
+        return
+    movie_id, quality = args[0], args[1].lower().rstrip("p")
+    movie = storage.get_movie(movie_id)
+    if not movie:
+        await msg.reply_text("❌ Bunday kino ID topilmadi.")
+        return
+    if quality not in _QUALITY_LIST:
+        await msg.reply_text("❌ Sifat 1080, 720 yoki 480 bo'lishi kerak.")
+        return
+
+    variants = dict(movie.get("variants") or {})
+    if args[2].lower() in ("off", "o'chir", "ochir", "delete"):
+        variants.pop(quality, None)
+        storage.update_movie(movie_id, variants=variants)
+        await msg.reply_text(f"✅ {quality}p varianti olib tashlandi.")
+        return
+
+    if len(args) != 4:
+        await msg.reply_text("❌ Format: /kino_quality MOVIE_ID 480 CHAT_ID MESSAGE_ID")
+        return
+    try:
+        chat_id, message_id = int(args[2]), int(args[3])
+        if message_id <= 0:
+            raise ValueError
+    except ValueError:
+        await msg.reply_text("❌ CHAT_ID va MESSAGE_ID raqam bo'lishi kerak.")
+        return
+    try:
+        meta = await asyncio.wait_for(
+            telegram_mtproto.resolve_message(chat_id=chat_id, message_id=message_id), timeout=90)
+    except Exception as exc:
+        logger.warning("🎬 kino_quality resolve xato: %s: %s", type(exc).__name__, exc)
+        await msg.reply_text(f"❌ Telegram xabarini MTProto orqali olib bo'lmadi.\nSabab: {type(exc).__name__}: {exc}")
+        return
+    if not meta.get("telegram_document_id") or int(meta.get("size") or 0) <= 0:
+        await msg.reply_text("❌ Bu xabarda oqimlanadigan video topilmadi yoki hajmi noma'lum.")
+        return
+
+    variants[quality] = {
+        "telegram_chat_id": meta.get("telegram_chat_id") or chat_id,
+        "telegram_message_id": meta.get("telegram_message_id") or message_id,
+        "size": int(meta.get("size") or 0),
+        "mime_type": meta.get("mime_type") or "video/mp4",
+    }
+    storage.update_movie(movie_id, variants=variants)
+    await msg.reply_text(
+        f"✅ {quality}p varianti ulandi.\n🎬 {movie['title']}\n📦 {variants[quality]['size']} bayt\n\n"
+        "Endi xona egasi sozlamalardan shu sifatni tanlay oladi."
+    )

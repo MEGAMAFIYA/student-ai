@@ -1496,6 +1496,7 @@ def main():
     # lekin hech qachon ro'yxatga olinmagan — bot unga javob bermasdi.
     app.add_handler(CommandHandler("kino_migration", kino.kino_migration))
     app.add_handler(CommandHandler("kino_check", kino.kino_check))
+    app.add_handler(CommandHandler("kino_quality", kino.kino_quality))
 
     app.add_handler(CallbackQueryHandler(menu.universal_selected, pattern="^menu:universal$"))
     app.add_handler(CallbackQueryHandler(menu.back_to_menu, pattern="^menu:back$"))

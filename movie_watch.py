@@ -52,6 +52,18 @@ ERR_AUTH = "Mini App sessiyasi tasdiqlanmadi yoki muddati tugagan. Mini App'ni T
 ERR_ROOM = "Kino xonasi topilmadi yoki muddati o'tgan."
 ERR_NOT_MEMBER = "Siz bu xonaga qo'shilmagansiz."
 ERR_BAD_REQUEST = "So'rov ma'lumotlari noto'g'ri."
+ERR_NOT_OWNER = "Siz ega emassiz. Pauza, o'tkazish va kino almashtirishni faqat ega (yoki vaqtinchalik ega) bajara oladi."
+
+# Egalik: xonani yaratgan odam EGA. Boshqalar faqat havolani ulasha oladi; boshqaruv
+# uchun ega tasdig'i bilan TEMP_OWNER_SEC soniyalik vaqtinchalik egalik olinadi.
+QUALITIES = ("1080", "720", "480")           # tanlash mumkin bo'lgan sifatlar (p)
+QUALITY_ORIGINAL = "original"
+TEMP_OWNER_SEC = int(getattr(config, "KINO_TEMP_OWNER_SEC", 60))
+OWNER_REQUEST_TTL_SEC = int(getattr(config, "KINO_OWNER_REQUEST_TTL_SEC", 45))
+# Foydalanuvchi shu soniya ichida so'rov yubormasa "oflayn" hisoblanadi (polling ~1s,
+# fon rejimida ~3s). Oflayn mehmon xona to'lganda o'rnini bo'shatadi.
+PRESENCE_SEC = int(getattr(config, "KINO_PRESENCE_SEC", 25))
+MAX_PARTICIPANTS = 2        # WebRTC kamera 1:1 — ikkitadan ortiq qo'shib bo'lmaydi
 
 MAX_BODY_BYTES = 64 * 1024            # POST tanasi chegarasi (autentifikatsiyadan OLDIN o'qiladi)
 MAX_POSITION_SEC = 48 * 60 * 60       # video pozitsiyasi uchun oqilona yuqori chegara
@@ -105,9 +117,13 @@ def _purge_rooms():
                 del ROOMS[rid]
 
 
-def create_room(movie_id: str, creator_id: int, rid: str | None = None) -> str | None:
+def create_room(movie_id: str, creator_id: int, rid: str | None = None,
+                owner_id: int | None = None, creator_name: str = "") -> str | None:
     """Yangi xona yaratadi. `rid` berilsa (server qayta ishga tushgandan keyin tiklash)
-    shu ID bilan yaratiladi; shu ID'li xona allaqachon bo'lsa, uni o'zgartirmaydi."""
+    shu ID bilan yaratiladi; shu ID'li xona allaqachon bo'lsa, uni o'zgartirmaydi.
+
+    Ega (owner) — xonani yaratgan odam. Tiklashda esa havoladagi `owner_id` ishlatiladi,
+    aks holda xonani birinchi bo'lib qayta ochgan mehmon ega bo'lib qolardi."""
     if not storage.get_movie(movie_id):
         return None
     _purge_rooms()
@@ -120,12 +136,19 @@ def create_room(movie_id: str, creator_id: int, rid: str | None = None) -> str |
             logger.warning("🎬 Xonalar limiti to'ldi (%s)", len(ROOMS))
             return None
         rid = rid or uuid.uuid4().hex[:24]
+        now = time.time()
+        owner = int(owner_id) if owner_id and int(owner_id) > 0 else int(creator_id)
         ROOMS[rid] = {
             "movie_id": movie_id,
-            "created_at": time.time(),
-            "last_active": time.time(),
+            "created_at": now,
+            "last_active": now,
             "joined": False,
-            "participants": {str(int(creator_id)): {"joined_at": time.time()}},
+            "owner_id": owner,
+            "temp_owner": None,        # {"user_id": int, "until": epoch}
+            "request": None,           # kutilayotgan so'rov {"user_id","name","ts"}
+            "last_result": None,       # {"user_id","status": approved|rejected|expired,"ts"}
+            "quality": QUALITY_ORIGINAL,
+            "participants": {str(int(creator_id)): {"joined_at": now, "last_seen": now, "name": creator_name or ""}},
             "state": {"playing": False, "position": 0.0, "version": 0, "updated_at": time.time(), "actor_id": int(creator_id)},
             "chat": [],
             "chat_client_keys": {},
@@ -145,20 +168,27 @@ def find_or_create_room(movie_id: str, creator_id: int) -> str | None:
     return create_room(movie_id, creator_id)
 
 
-def room_url(movie_id: str, room_id: str) -> str:
+def room_url(movie_id: str, room_id: str, owner_id: int | None = None) -> str:
     # Main Mini App direct-link form. BotFather'da Main Mini App shu
     # /miniapp/kino/ URL'ga o'rnatilganda Telegram foydalanuvchiga
     # initData + startapp=room_<id> beradi va link 1:1 chatda ham ishlaydi.
     username = config.BOT_USERNAME_FALLBACK.lstrip("@")
+    # Ega ID'si ham havolaga qo'shiladi (server qayta ishga tushsa egalik yo'qolmasligi uchun).
+    # Telegram startapp qiymati 64 belgigacha.
+    if owner_id is None:
+        owner_id = (ROOMS.get(room_id) or {}).get("owner_id")
+    param = f"room_{room_id}_{movie_id}"
+    if owner_id and len(param) + 1 + len(str(int(owner_id))) <= 64:
+        param += f"_{int(owner_id)}"
     if getattr(config, "KINO_APP_SHORT_NAME", ""):
         # Named Direct Mini App (agar alohida app short name berilgan bo'lsa).
-        return f"https://t.me/{username}/{config.KINO_APP_SHORT_NAME}?startapp=room_{room_id}_{movie_id}&mode=fullscreen"
+        return f"https://t.me/{username}/{config.KINO_APP_SHORT_NAME}?startapp={param}&mode=fullscreen"
     # Asosiy Mini App Direct Link. BotFather'da Main Mini App URL sifatida
     # /miniapp/ yoki loyihaning root URL'i berilgan bo'lishi kerak.
     # startapp qiymati Mini App ichida tgWebAppStartParam orqali olinadi.
     # `room_<xona>_<kino>`: kino ID havolaga qo'shilgani uchun server qayta ishga tushsa ham
     # (xotiradagi xonalar yo'qolsa) havola ochilganda xona o'sha kino bilan qayta tiklanadi.
-    return f"https://t.me/{username}?startapp=room_{room_id}_{movie_id}&mode=fullscreen"
+    return f"https://t.me/{username}?startapp={param}&mode=fullscreen"
 
 
 def _get_room(rid):
@@ -189,6 +219,8 @@ def _respond(handler, data, err):
             status, code = 401, "auth"
         elif err == ERR_ROOM:
             status, code = 404, "room"
+        elif err == ERR_NOT_OWNER:
+            status, code = 403, "owner"
         elif err == ERR_NOT_MEMBER:
             # Xona qayta tiklangan bo'lishi mumkin (server restart): mijoz join orqali qayta qo'shiladi.
             status, code = 403, "member"
@@ -198,7 +230,105 @@ def _respond(handler, data, err):
     return _json(handler, 200, {"ok": True, "data": data, "error": None})
 
 
-def join_room(rid: str, init_data: str, movie_hint: str = ""):
+def _user_name(user: dict) -> str:
+    return str(user.get("first_name") or user.get("username") or user.get("id") or "")[:40]
+
+
+def _touch(room: dict, uid: str, name: str = "") -> None:
+    """Foydalanuvchi hozir ONLAYN ekanini belgilaydi (har bir polling so'rovida)."""
+    p = room["participants"].get(uid)
+    if p is not None:
+        p["last_seen"] = time.time()
+        if name:
+            p["name"] = name
+
+
+def _is_online(p: dict, now: float) -> bool:
+    return now - float(p.get("last_seen", p.get("joined_at", 0))) <= PRESENCE_SEC
+
+
+def _online_ids(room: dict) -> list[int]:
+    now = time.time()
+    return [int(u) for u, p in room["participants"].items() if _is_online(p, now)]
+
+
+def _active_temp_owner(room: dict) -> dict | None:
+    t = room.get("temp_owner")
+    if t and float(t.get("until", 0)) > time.time():
+        return t
+    room["temp_owner"] = None
+    return None
+
+
+def _is_owner(room: dict, uid) -> bool:
+    return int(uid) == int(room.get("owner_id") or 0)
+
+
+def _is_controller(room: dict, uid) -> bool:
+    """Ega yoki faol vaqtinchalik ega: pauza/seek/kino almashtirishga ruxsat."""
+    if _is_owner(room, uid):
+        return True
+    t = _active_temp_owner(room)
+    return bool(t and int(t["user_id"]) == int(uid))
+
+
+def _expire_request(room: dict) -> None:
+    req = room.get("request")
+    if req and time.time() - float(req["ts"]) > OWNER_REQUEST_TTL_SEC:
+        room["request"] = None
+        room["last_result"] = {"user_id": req["user_id"], "status": "expired", "ts": time.time()}
+
+
+def _movie_qualities(movie: dict | None) -> list[str]:
+    variants = (movie or {}).get("variants") or {}
+    return [QUALITY_ORIGINAL] + [q for q in QUALITIES if isinstance(variants.get(q), dict)]
+
+
+def _effective_quality(room: dict, movie: dict | None) -> str:
+    """Xona sifati shu kinoda mavjud bo'lmasa, asl faylga qaytiladi."""
+    q = room.get("quality") or QUALITY_ORIGINAL
+    return q if q in _movie_qualities(movie) else QUALITY_ORIGINAL
+
+
+def _control_payload(room: dict, user_id: int | None) -> dict:
+    """Egalik, onlayn holat va sifat ma'lumoti — har bir /state javobiga qo'shiladi."""
+    _expire_request(room)
+    now = time.time()
+    temp = _active_temp_owner(room)
+    movie = storage.get_movie(room.get("movie_id"))
+    owner = int(room.get("owner_id") or 0)
+    people = []
+    for u, p in room["participants"].items():
+        uid_i = int(u)
+        role = "owner" if uid_i == owner else ("temp" if temp and int(temp["user_id"]) == uid_i else "guest")
+        people.append({"id": uid_i, "name": p.get("name") or "", "online": _is_online(p, now), "role": role})
+    if owner not in [x["id"] for x in people]:
+        people.insert(0, {"id": owner, "name": "", "online": False, "role": "owner"})
+    req = room.get("request")
+    return {
+        "owner_id": owner,
+        "online": _online_ids(room),
+        "people": people,
+        "can_control": bool(user_id) and _is_controller(room, user_id),
+        "temp_owner": ({"user_id": int(temp["user_id"]), "until": float(temp["until"])} if temp else None),
+        "owner_request": ({"user_id": int(req["user_id"]), "name": req.get("name", ""), "ts": float(req["ts"])} if req else None),
+        "request_result": room.get("last_result"),
+        "quality": _effective_quality(room, movie),
+        "qualities": _movie_qualities(movie),
+    }
+
+
+def _state_payload(room: dict, rid: str, user_id: int) -> dict:
+    return {
+        **room["state"],
+        "participants": [int(x) for x in room["participants"]],
+        "server_now": time.time(),
+        **_room_movie_payload(room, rid, int(user_id)),
+        **_control_payload(room, int(user_id)),
+    }
+
+
+def join_room(rid: str, init_data: str, movie_hint: str = "", owner_hint: str = ""):
     user = _verify(init_data)
     if not user:
         return None, ERR_AUTH
@@ -208,28 +338,38 @@ def join_room(rid: str, init_data: str, movie_hint: str = ""):
         # Xotiradagi xonalar server qayta ishga tushganda yo'qoladi. Mijoz kino ID'ni
         # bilgani uchun xonani SHU ID bilan qayta tiklaymiz (xona ID'si 96 bitlik tasodifiy
         # kalit, havolani bilish uning o'zi xonaga kirish huquqi bilan teng).
-        if create_room(movie_hint, int(user["id"]), rid=rid):
+        if create_room(movie_hint, int(user["id"]), rid=rid, owner_id=_to_int(owner_hint),
+                       creator_name=_user_name(user)):
             room = _get_room(rid)
     if not room:
         return None, ERR_ROOM
     uid = str(user["id"])
     with ROOM_LOCK:
-        if uid not in room["participants"] and len(room["participants"]) >= 2:
+        if uid not in room["participants"] and len(room["participants"]) >= MAX_PARTICIPANTS:
+            # Uzilib ketgan (oflayn) MEHMON joyini bo'shatadi; ega hech qachon chiqarilmaydi.
+            now = time.time()
+            for other, info in list(room["participants"].items()):
+                if not _is_owner(room, other) and not _is_online(info, now):
+                    del room["participants"][other]
+                    break
+        if uid not in room["participants"] and len(room["participants"]) >= MAX_PARTICIPANTS:
             return None, "Bu xona to'la. Faqat 2 kishi birga tomosha qilishi mumkin."
         movie = storage.get_movie(room["movie_id"])
         if not movie:
             return None, "Bu kino katalogdan o'chirilgan."
         room["participants"].setdefault(uid, {"joined_at": time.time()})
+        _touch(room, uid, _user_name(user))
         room["joined"] = True
-        token = urllib.parse.quote(_make_stream_token(rid, movie["id"], int(uid)))
+        payload = _room_movie_payload(room, rid, int(uid))
         return {
             "user_id": int(uid),
-            "movie": _public_movie(movie),
+            "movie": payload["movie"],
             "participants": [int(x) for x in room["participants"]],
             "state": dict(room["state"]),
             "server_now": time.time(),
-            "stream_path": f"/api/kino/stream/{rid}/{movie['id']}?token={token}",
+            "stream_path": payload["stream_path"],
             "share_url": room_url(movie["id"], rid),
+            **_control_payload(room, int(uid)),
         }, None
 
 
@@ -237,6 +377,10 @@ def _room_movie_payload(room: dict, rid: str, user_id: int | None = None):
     movie = storage.get_movie(room.get("movie_id"))
     token = _make_stream_token(rid, movie["id"], int(user_id or 0)) if movie and user_id else ""
     stream = f"/api/kino/stream/{rid}/{movie['id']}?token={urllib.parse.quote(token)}" if movie and token else ""
+    quality = _effective_quality(room, movie)
+    if stream and quality != QUALITY_ORIGINAL:
+        # Brauzer sifat o'zgarganini aynan shu URL farqidan biladi.
+        stream += f"&q={quality}"
     return {
         "movie": _public_movie(movie),
         "stream_path": stream,
@@ -262,6 +406,9 @@ def change_movie(rid: str, init_data: str, movie_id: str):
     with ROOM_LOCK:
         if uid not in room["participants"]:
             return None, ERR_NOT_MEMBER
+        _touch(room, uid)
+        if not _is_controller(room, uid):
+            return None, ERR_NOT_OWNER
         if str(room.get("movie_id")) != str(movie["id"]):
             room["movie_id"] = str(movie["id"])
             room["state"].update({
@@ -275,12 +422,7 @@ def change_movie(rid: str, init_data: str, movie_id: str):
             # kamera/mikrofon (WebRTC) ulanishiga tegmasligi kerak; navbatdagi
             # offer/answer/ice xabarlarini o'chirish ulanishni buzardi.
             room["updated_at"] = time.time()
-        return {
-            **room["state"],
-            "participants": [int(x) for x in room["participants"]],
-            "server_now": time.time(),
-            **_room_movie_payload(room, rid, int(user["id"])),
-        }, None
+        return _state_payload(room, rid, int(user["id"])), None
 
 
 def list_movies(rid: str, init_data: str):
@@ -326,6 +468,10 @@ def room_state(rid: str, init_data: str, playing=None, position=None):
     with ROOM_LOCK:
         if uid not in room["participants"]:
             return None, ERR_NOT_MEMBER
+        _touch(room, uid, _user_name(user))
+        if (playing is not None or position is not None) and not _is_controller(room, uid):
+            # Faqat ega / vaqtinchalik ega pauza, davom ettirish va seek qila oladi.
+            return None, ERR_NOT_OWNER
         if playing is not None or position is not None:
             # Only an explicit client action changes the authoritative room state.
             # Store the actor so clients can distinguish their own echo from a
@@ -338,12 +484,90 @@ def room_state(rid: str, init_data: str, playing=None, position=None):
             room["state"]["version"] += 1
             room["state"]["updated_at"] = time.time()
             room["state"]["actor_id"] = int(user["id"])
-        return {
-            **room["state"],
-            "participants": [int(x) for x in room["participants"]],
-            "server_now": time.time(),
-            **_room_movie_payload(room, rid, int(user["id"])),
-        }, None
+        return _state_payload(room, rid, int(user["id"])), None
+
+
+def request_owner(rid: str, init_data: str):
+    """Mehmon vaqtinchalik egalik so'raydi; ega ekranida Tasdiq / Rad etish chiqadi."""
+    user = _verify(init_data)
+    if not user:
+        return None, ERR_AUTH
+    room = _get_room(rid)
+    if not room:
+        return None, ERR_ROOM
+    uid = str(user["id"])
+    with ROOM_LOCK:
+        if uid not in room["participants"]:
+            return None, ERR_NOT_MEMBER
+        _touch(room, uid, _user_name(user))
+        _expire_request(room)
+        if _is_controller(room, uid):
+            return _state_payload(room, rid, int(uid)), None
+        req = room.get("request")
+        if req and str(req["user_id"]) != uid:
+            return None, "Boshqa foydalanuvchining so'rovi kutilmoqda."
+        if not req:
+            room["request"] = {"user_id": int(uid), "name": _user_name(user), "ts": time.time()}
+            room["last_result"] = None
+        return _state_payload(room, rid, int(uid)), None
+
+
+def respond_owner(rid: str, init_data: str, approve):
+    """Faqat HAQIQIY ega javob beradi (vaqtinchalik ega emas)."""
+    user = _verify(init_data)
+    if not user:
+        return None, ERR_AUTH
+    room = _get_room(rid)
+    if not room:
+        return None, ERR_ROOM
+    if not isinstance(approve, bool):
+        return None, ERR_BAD_REQUEST
+    uid = str(user["id"])
+    with ROOM_LOCK:
+        if uid not in room["participants"] and not _is_owner(room, uid):
+            return None, ERR_NOT_MEMBER
+        _touch(room, uid)
+        if not _is_owner(room, uid):
+            return None, "Faqat ega so'rovga javob bera oladi."
+        _expire_request(room)
+        req = room.get("request")
+        if not req:
+            return None, "So'rov topilmadi yoki muddati o'tgan."
+        now = time.time()
+        room["request"] = None
+        if approve:
+            room["temp_owner"] = {"user_id": int(req["user_id"]), "until": now + TEMP_OWNER_SEC}
+            room["last_result"] = {"user_id": int(req["user_id"]), "status": "approved", "ts": now}
+        else:
+            room["last_result"] = {"user_id": int(req["user_id"]), "status": "rejected", "ts": now}
+        return _state_payload(room, rid, int(uid)), None
+
+
+def set_quality(rid: str, init_data: str, quality: str):
+    """Video sifatini faqat HAQIQIY ega o'zgartiradi; barcha qatnashchilar uchun amal qiladi."""
+    user = _verify(init_data)
+    if not user:
+        return None, ERR_AUTH
+    room = _get_room(rid)
+    if not room:
+        return None, ERR_ROOM
+    quality = str(quality or "").strip().lower().rstrip("p")
+    if quality in ("", "asl", "auto"):
+        quality = QUALITY_ORIGINAL
+    if quality != QUALITY_ORIGINAL and quality not in QUALITIES:
+        return None, ERR_BAD_REQUEST
+    uid = str(user["id"])
+    with ROOM_LOCK:
+        if uid not in room["participants"] and not _is_owner(room, uid):
+            return None, ERR_NOT_MEMBER
+        _touch(room, uid)
+        if not _is_owner(room, uid):
+            return None, "Sifatni faqat ega o'zgartira oladi."
+        movie = storage.get_movie(room.get("movie_id"))
+        if quality not in _movie_qualities(movie):
+            return None, f"Bu kino uchun {quality}p varianti yuklanmagan."
+        room["quality"] = quality
+        return _state_payload(room, rid, int(uid)), None
 
 
 def add_chat(rid: str, init_data: str, text: str, client_id: str = ""):
@@ -397,6 +621,7 @@ def get_chat(rid: str, init_data: str, after_id: str = ""):
     if str(user["id"]) not in room["participants"]:
         return None, ERR_NOT_MEMBER
     with ROOM_LOCK:
+        _touch(room, str(user["id"]))
         items = list(room["chat"])
     if after_id:
         for i, x in enumerate(items):
@@ -435,6 +660,7 @@ def get_signals(rid: str, init_data: str):
     if uid not in room["participants"]:
         return None, ERR_NOT_MEMBER
     with ROOM_LOCK:
+        _touch(room, uid)
         items = room["signals"].get(uid, [])
         room["signals"][uid] = []
     return items, None
@@ -640,12 +866,35 @@ def _authorize_stream(handler, room_id: str, movie_id: str):
     return uid, movie
 
 
+def _stream_variant(handler, movie: dict) -> dict:
+    """`?q=480` bo'lsa va shu variant katalogda bo'lsa, oqim manbasini shu faylga almashtiradi.
+
+    Variant fayl alohida Telegram xabarida turadi, shuning uchun HAMMA manba maydonlari
+    (chat/message/size/mime) almashtiriladi. Bot API `file_id` zaxirasi faqat asl fayl uchun:
+    uni variant bilan aralashtirsak noto'g'ri baytlar ketardi."""
+    from urllib.parse import parse_qs, urlsplit
+    q = parse_qs(urlsplit(handler.path).query).get("q", [""])[0]
+    variant = ((movie.get("variants") or {}).get(q)) if q in QUALITIES else None
+    if not isinstance(variant, dict):
+        return movie
+    merged = dict(movie)
+    merged.update({
+        "telegram_chat_id": variant.get("telegram_chat_id"),
+        "telegram_message_id": variant.get("telegram_message_id"),
+        "size": int(variant.get("size") or 0),
+        "mime_type": variant.get("mime_type") or movie.get("mime_type") or "video/mp4",
+        "file_id": "",
+    })
+    return merged
+
+
 def serve_movie_head(handler, room_id: str, movie_id: str):
     """Browser/Telegram HEAD so'roviga faqat metadata bilan javob beradi."""
     uid, movie = _authorize_stream(handler, room_id, movie_id)
     if not movie:
         logger.error("🎬 STREAM REJECTED room=%s movie=%s path=%s", room_id, movie_id, getattr(handler, "path", ""))
         return
+    movie = _stream_variant(handler, movie)
     logger.info("🎬 STREAM START room=%s movie=%s user=%s chat=%s message=%s size=%s range=%s", room_id, movie_id, uid, movie.get("telegram_chat_id"), movie.get("telegram_message_id"), movie.get("size"), handler.headers.get("Range", ""))
     size = int(movie.get("size") or 0)
     if size <= 0:
@@ -671,6 +920,7 @@ def serve_movie(handler, room_id: str, movie_id: str):
     uid, movie = _authorize_stream(handler, room_id, movie_id)
     if not movie:
         return
+    movie = _stream_variant(handler, movie)
     size = int(movie.get("size") or 0)
     if size <= 0:
         _send_text(handler, 502, "Kino hajmi aniqlanmadi.")
@@ -777,7 +1027,8 @@ def handle_api(handler):
         qs = parse_qs(parsed.query)
         room = _str_arg(qs.get("room", [""])[0])
         if path == "/api/kino/join":
-            data, err = join_room(room, init_data, _str_arg(qs.get("movie", [""])[0], 64))
+            data, err = join_room(room, init_data, _str_arg(qs.get("movie", [""])[0], 64),
+                                  _str_arg(qs.get("owner", [""])[0], 20))
             return _respond(handler, data, err)
         if path == "/api/kino/state":
             data, err = room_state(room, init_data)
@@ -842,13 +1093,22 @@ def handle_post(handler):
                 return _respond(handler, None, ERR_AUTH)
             if not movie_id or not storage.get_movie(movie_id):
                 return _respond(handler, None, "Kino topilmadi.")
-            rid = create_room(movie_id, int(user["id"]))
+            rid = create_room(movie_id, int(user["id"]), creator_name=_user_name(user))
             if not rid:
                 return _json(handler, 503, {"ok": False, "data": None, "code": "error",
                                             "error": "Hozir faol xonalar juda ko'p. Birozdan keyin urinib ko'ring."})
             return _json(handler, 200, {"ok": True, "data": {"room": rid, "url": room_url(movie_id, rid)}})
         if path == "/api/kino/state":
             data, err = room_state(room, init_data, body.get("playing"), body.get("position"))
+            return _respond(handler, data, err)
+        if path == "/api/kino/request_owner":
+            data, err = request_owner(room, init_data)
+            return _respond(handler, data, err)
+        if path == "/api/kino/respond_owner":
+            data, err = respond_owner(room, init_data, body.get("approve"))
+            return _respond(handler, data, err)
+        if path == "/api/kino/set_quality":
+            data, err = set_quality(room, init_data, _str_arg(body.get("quality"), 16))
             return _respond(handler, data, err)
         if path == "/api/kino/change_movie":
             data, err = change_movie(room, init_data, _str_arg(body.get("movie_id"), 64))

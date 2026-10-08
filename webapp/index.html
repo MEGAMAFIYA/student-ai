@@ -37,9 +37,11 @@
     if (start && start.startsWith("room_")) {
       // `room_<xona>` (eski havolalar) yoki `room_<xona>_<kino>` (yangi: server qayta
       // ishga tushsa xona kino ID bo'yicha tiklanadi).
-      const [rid, mid] = start.slice(5).split("_");
+      // `room_<xona>_<kino>_<ega>`: ega ID'si server qayta ishga tushganda egalikni saqlaydi.
+      const [rid, mid, oid] = start.slice(5).split("_");
       location.replace("/miniapp/kino/?room=" + encodeURIComponent(rid) +
-                       (mid ? "&movie=" + encodeURIComponent(mid) : ""));
+                       (mid ? "&movie=" + encodeURIComponent(mid) : "") +
+                       (oid ? "&owner=" + encodeURIComponent(oid) : ""));
       return;
     }
     if (start && start.startsWith("game_")) {

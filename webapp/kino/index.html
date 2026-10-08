@@ -9,7 +9,7 @@
 </head>
 <body>
 <div class="app">
-  <header><div><b id="title">🎬 Kino</b><small id="roomInfo">Xona tayyorlanmoqda...</small></div><div class="header-actions"><button id="nextMovie" type="button">⏭️ Keyingi</button><button id="share">🔗</button></div></header>
+  <header><div><b id="title">🎬 Kino</b><small id="roomInfo">Xona tayyorlanmoqda...</small></div><div class="header-actions"><button id="settingsBtn" class="hidden" type="button" aria-label="Sozlamalar">⚙️</button><button id="nextMovie" type="button">⏭️ Keyingi</button><button id="share">🔗</button></div></header>
 
   <main>
     <section class="player-wrap">
@@ -17,6 +17,7 @@
       <div id="remoteVideoWrap" class="remote hidden"><video id="remoteVideo" autoplay playsinline></video><span>Do‘st</span></div>
       <div id="localVideoWrap" class="local hidden"><video id="localVideo" autoplay muted playsinline></video><span>Siz</span></div>
       <div id="waiting" class="overlay">⏳ Xona ulanmoqda...</div>
+      <div id="note" class="note hidden"></div>
       <button id="playOverlay" class="play-overlay hidden" type="button">▶️ Kinoni boshlash</button>
     </section>
 
@@ -25,6 +26,11 @@
     <section class="controls">
       <button id="mic">🎤 Mikrofon</button>
       <button id="cam">📹 Kamera</button>
+    </section>
+
+    <section id="settingsPanel" class="movie-picker hidden">
+      <div class="movie-picker-head"><b>⚙️ Sozlamalar • Video sifati</b><button id="closeSettings" type="button">✕</button></div>
+      <div id="qualityList" class="movie-list"></div>
     </section>
 
     <section id="moviePicker" class="movie-picker hidden">
@@ -39,6 +45,9 @@
       <form id="chatForm"><button id="emojiBtn" class="emoji-btn" type="button">😊</button><input id="chatInput" maxlength="500" autocomplete="off" placeholder="Xabar yozing..."><button class="send-btn">➤</button></form>
     </section>
   </main>
+</div>
+<div id="dlg" class="dlg hidden" role="dialog" aria-modal="true">
+  <div class="dlg-card"><div id="dlgTitle" class="dlg-title"></div><div id="dlgText" class="dlg-text"></div><div id="dlgBtns" class="dlg-btns"></div></div>
 </div>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script src="/miniapp/kino/app.js"></script>

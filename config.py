@@ -293,6 +293,10 @@ KINO_STREAM_PREFETCH = max(1, min(16, int(os.getenv("KINO_STREAM_PREFETCH", "4")
 KINO_STREAM_MAX_RESPONSE_BYTES = max(256 * 1024, int(os.getenv("KINO_STREAM_MAX_RESPONSE_BYTES", str(32 * 1024 * 1024))))
 # Xotiradagi xonalar soni cheklovi va hech kim kirmagan xonalar uchun qisqa umr (inline natijalar uchun).
 KINO_MAX_ROOMS = max(10, int(os.getenv("KINO_MAX_ROOMS", "500")))
+# Egalik: vaqtinchalik egalik muddati, so'rov kutish muddati, onlayn deb hisoblash oynasi (soniya).
+KINO_TEMP_OWNER_SEC = max(10, int(os.getenv("KINO_TEMP_OWNER_SEC", "60")))
+KINO_OWNER_REQUEST_TTL_SEC = max(10, int(os.getenv("KINO_OWNER_REQUEST_TTL_SEC", "45")))
+KINO_PRESENCE_SEC = max(8, int(os.getenv("KINO_PRESENCE_SEC", "25")))
 KINO_UNUSED_ROOM_TTL_SEC = max(60, int(os.getenv("KINO_UNUSED_ROOM_TTL_SEC", str(30 * 60))))
 
 TG_SEARCH_ENABLED = bool(TG_API_ID and TG_API_HASH and TG_SESSION and TG_SEARCH_CHANNELS)
