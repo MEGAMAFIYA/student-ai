@@ -351,23 +351,52 @@ def user_detail_keyboard(user_id: int) -> InlineKeyboardMarkup:
 def gift_prompt_text() -> str:
     return (
         "🎁 <b>Sovg'a berish</b>\n\n"
-        "Foydalanuvchi Telegram ID raqamini yuboring.\n"
-        "Barcha foydalanuvchilarga berish uchun <code>all</code> deb yuboring."
+        "Kimga berishni tanlang:"
     )
 
 
-def gift_confirm_text(target: str, amount: int, count: int | None = None) -> str:
+def gift_target_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("👤 Foydalanuvchi ID", callback_data="dev:gift_target:user")],
+        [InlineKeyboardButton("👥 Hammasi (all)", callback_data="dev:gift_target:all")],
+        [InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:moliya")],
+    ])
+
+
+def gift_all_mode_text() -> str:
+    return (
+        "👥 <b>Barcha foydalanuvchilar</b>\n\n"
+        "Qanday berilsin?"
+    )
+
+
+def gift_all_mode_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕ Qo'shish", callback_data="dev:giftmode:add")],
+        [InlineKeyboardButton("🎯 Oshmagan", callback_data="dev:giftmode:cap")],
+        [InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:gift")],
+    ])
+
+
+def gift_confirm_text(target: str, amount: int, count: int | None = None, mode: str = "add") -> str:
     target_text = (
         "👥 <b>BARCHA foydalanuvchilar</b>"
         if target == "all"
         else f"👤 Foydalanuvchi ID: <code>{_esc(target)}</code>"
     )
     extra = f"\n👥 Foydalanuvchilar soni: <b>{count}</b> ta" if count is not None else ""
+    mode_text = "➕ Qo'shish" if mode == "add" else "🎯 Oshmagan"
     return (
         "🎁 <b>Sovg'ani tasdiqlash</b>\n\n"
         f"{target_text}{extra}\n"
-        f"💰 Summa: <b>{_fmt_sum(amount)}</b>\n\n"
-        "Tasdiqlasangiz balansga darhol qo'shiladi."
+        f"🎯 Rejim: <b>{mode_text}</b>\n"
+        f"💰 Belgilangan summa: <b>{_fmt_sum(amount)}</b>\n\n"
+        + (
+            "Har bir foydalanuvchining balansiga shu summa qo'shiladi."
+            if mode == "add"
+            else "Balansi shu summadan kam bo'lgan foydalanuvchining balansi aynan shu summaga yetkaziladi. "
+                 "Balansi shu summa yoki undan ko'p bo'lsa, hech narsa qo'shilmaydi."
+        )
     )
 
 
@@ -378,13 +407,19 @@ def gift_confirm_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
-def gift_amount_prompt(target: str) -> str:
+def gift_amount_prompt(target: str, mode: str = "add") -> str:
     if target == "all":
         count = len(storage.get_all_users())
+        mode_text = "➕ Qo'shish" if mode == "add" else "🎯 Oshmagan"
         return (
-            f"👥 Barcha foydalanuvchilar: <b>{count}</b> ta.\n\n"
-            "💰 Har bir foydalanuvchiga beriladigan summani so'mda yuboring.\n"
-            "Masalan: <code>10000</code>"
+            f"👥 Barcha foydalanuvchilar: <b>{count}</b> ta.\n"
+            f"🎯 Rejim: <b>{mode_text}</b>\n\n"
+            + (
+                "💰 Har bir foydalanuvchi balansiga qo'shiladigan summani yuboring."
+                if mode == "add"
+                else "💰 Foydalanuvchi balansi oshmaydigan chegaraviy summani yuboring."
+            )
+            + "\nMasalan: <code>10000</code>"
         )
     return (
         f"👤 ID: <code>{_esc(target)}</code>\n\n"
@@ -393,28 +428,58 @@ def gift_amount_prompt(target: str) -> str:
     )
 
 
-def admin_gift(target: str, amount: int, actor_id: int) -> dict:
-    """Sovg'ani atomik wallet.credit_balance() orqali tarqatadi."""
+def admin_gift(target: str, amount: int, actor_id: int, mode: str = "add") -> dict:
+    """Admin sovg'asi. `add` balansga qo'shadi, `cap` esa balansni
+    berilgan summadan oshirmaydi: faqat balans < amount bo'lsa farqi kreditlanadi."""
     if amount <= 0:
         raise ValueError("Summa 0 dan katta bo'lishi kerak.")
+    if mode not in ("add", "cap"):
+        raise ValueError("Noto'g'ri sovg'a rejimi.")
+
     if target == "all":
         user_ids = storage.get_all_users()
-        txs = wallet.credit_balances_bulk(
-            user_ids, amount,
-            description=f"Admin sovg'asi: {_fmt_sum(amount)}",
-            tx_type=wallet.TX_ADMIN_ADJUST,
-            actor_id=actor_id,
-        )
-        return {"count": len(txs), "total": amount * len(txs)}
+        txs = []
+        for uid in user_ids:
+            current = wallet.get_balance(int(uid))
+            credit = amount if mode == "add" else max(0, amount - current)
+            if credit <= 0:
+                continue
+            txs.append(wallet.credit_balance(
+                int(uid), credit,
+                description=(
+                    f"Admin sovg'asi: +{_fmt_sum(credit)}"
+                    if mode == "add"
+                    else f"Admin sovg'asi: balansni {_fmt_sum(amount)} gacha to'ldirish"
+                ),
+                tx_type=wallet.TX_ADMIN_ADJUST,
+                actor_id=actor_id,
+            ))
+        return {
+            "count": len(txs),
+            "total": sum(int(tx.get("amount", 0)) for tx in txs),
+            "skipped": len(user_ids) - len(txs),
+            "mode": mode,
+        }
+
     uid = int(target)
+    current = wallet.get_balance(uid)
+    credit = amount if mode == "add" else max(0, amount - current)
+    if credit <= 0:
+        return {
+            "count": 0, "total": 0, "skipped": 1, "mode": mode,
+            "tx": {"balance_after": current},
+        }
     tx = wallet.credit_balance(
-        uid, amount,
-        description=f"Admin sovg'asi: {_fmt_sum(amount)}",
+        uid, credit,
+        description=(
+            f"Admin sovg'asi: +{_fmt_sum(credit)}"
+            if mode == "add"
+            else f"Admin sovg'asi: balansni {_fmt_sum(amount)} gacha to'ldirish"
+        ),
         tx_type=wallet.TX_ADMIN_ADJUST,
         actor_id=actor_id,
     )
-    return {"count": 1, "total": amount, "tx": tx}
-
+    return {"count": 1, "total": credit, "skipped": 0, "tx": tx, "mode": mode}
 
 def user_topup_prompt(user_id: int) -> str:
     return (

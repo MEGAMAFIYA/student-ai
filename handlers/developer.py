@@ -1471,7 +1471,50 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["dev_action"] = {"type": "gift_target"}
         await _safe_edit_query(
             query, pay_ui.gift_prompt_text(),
-            reply_markup=_back_keyboard("dev:moliya"), parse_mode="HTML",
+            reply_markup=pay_ui.gift_target_keyboard(),
+            parse_mode="HTML",
+        )
+        return DEV_MENU
+
+    if action == "gift_target":
+        target = parts[2] if len(parts) > 2 else ""
+        if target == "all":
+            context.user_data["dev_action"] = {"type": "gift_all_mode", "target": "all"}
+            await _safe_edit_query(
+                query, pay_ui.gift_all_mode_text(),
+                reply_markup=pay_ui.gift_all_mode_keyboard(),
+                parse_mode="HTML",
+            )
+            return DEV_MENU
+        if target == "user":
+            context.user_data["dev_action"] = {"type": "gift_target"}
+            await _safe_edit_query(
+                query,
+                "👤 <b>Foydalanuvchini tanlash</b>\\n\\n"
+                "Telegram ID raqamini yuboring.",
+                reply_markup=_back_keyboard("dev:moliya"),
+                parse_mode="HTML",
+            )
+            return DEV_WAIT_TEXT
+
+    if action == "giftmode":
+        mode = parts[2] if len(parts) > 2 else ""
+        if mode not in ("add", "cap"):
+            await _safe_edit_query(query, "⚠️ Noto'g'ri sovg'a rejimi.", reply_markup=_moliya_menu_keyboard(), parse_mode="HTML")
+            return DEV_MENU
+        gift = context.user_data.get("dev_action") or {}
+        if gift.get("type") != "gift_all_mode":
+            await _safe_edit_query(query, "⚠️ Sovg'a sessiyasi topilmadi.", reply_markup=_moliya_menu_keyboard(), parse_mode="HTML")
+            return DEV_MENU
+        gift["type"] = "gift_amount"
+        gift["target"] = "all"
+        gift["mode"] = mode
+        context.user_data["dev_action"] = gift
+        await _safe_edit_query(
+            query,
+            pay_ui.gift_amount_prompt("all", mode=mode),
+            _back_keyboard("dev:gift"),
+            parse_mode="HTML",
         )
         return DEV_WAIT_TEXT
 
@@ -1484,22 +1527,36 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             result = await asyncio.to_thread(
                 pay_ui.admin_gift,
                 gift["target"], int(gift["amount"]), update.effective_user.id,
+                gift.get("mode", "add"),
             )
             target = gift["target"]
             if target == "all":
                 msg = (
                     "✅ <b>Sovg'a tarqatildi.</b>\n\n"
                     f"👥 Foydalanuvchilar: <b>{result['count']}</b> ta\n"
-                    f"💰 Har biriga: <b>{pay_ui._fmt_sum(gift['amount'])}</b>\n"
-                    f"💵 Jami: <b>{pay_ui._fmt_sum(result['total'])}</b>"
+                    f"🎯 Rejim: <b>{'Qo\'shish' if gift.get('mode', 'add') == 'add' else 'Oshmagan'}</b>\n"
+                    f"💰 Belgilangan summa: <b>{pay_ui._fmt_sum(gift['amount'])}</b>\n"
+                    f"➕ Haqiqatan qo'shilgan: <b>{pay_ui._fmt_sum(result['total'])}</b>\n"
+                    f"👤 Pul olganlar: <b>{result['count']}</b> ta"
                 )
             else:
-                msg = (
-                    "✅ <b>Sovg'a balansga tushdi.</b>\n\n"
-                    f"🆔 ID: <code>{pay_ui._esc(target)}</code>\n"
-                    f"💰 Summa: <b>{pay_ui._fmt_sum(result['total'])}</b>\n"
-                    f"💳 Yangi balans: <b>{pay_ui._fmt_sum(result['tx']['balance_after'])}</b>"
-                )
+                mode_text = "➕ Qo'shish" if gift.get("mode", "add") == "add" else "🎯 Oshmagan"
+                if result["count"] == 0:
+                    msg = (
+                        "ℹ️ <b>Sovg'a qo'shilmadi.</b>\n\n"
+                        f"🆔 ID: <code>{pay_ui._esc(target)}</code>\n"
+                        f"🎯 Rejim: <b>{mode_text}</b>\n"
+                        f"💳 Joriy balans: <b>{pay_ui._fmt_sum(result['tx']['balance_after'])}</b>\n\n"
+                        "Balans belgilangan summaga teng yoki undan katta."
+                    )
+                else:
+                    msg = (
+                        "✅ <b>Sovg'a balansga tushdi.</b>\n\n"
+                        f"🆔 ID: <code>{pay_ui._esc(target)}</code>\n"
+                        f"🎯 Rejim: <b>{mode_text}</b>\n"
+                        f"➕ Qo'shilgan summa: <b>{pay_ui._fmt_sum(result['total'])}</b>\n"
+                        f"💳 Yangi balans: <b>{pay_ui._fmt_sum(result['tx']['balance_after'])}</b>"
+                    )
             context.user_data.pop("dev_action", None)
             await _safe_edit_query(query, msg, reply_markup=_moliya_menu_keyboard(), parse_mode="HTML")
         except Exception as exc:
@@ -2685,9 +2742,18 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif action_type == "gift_target":
         target = raw_value.strip()
+        # "all" endi matn orqali emas, tugma orqali tanlanadi.
         if target.casefold() == "all":
-            target = "all"
-        elif not target.isdigit() or int(target) <= 0:
+            await _edit_menu(
+                context,
+                "⚠️ <code>all</code> matn sifatida qabul qilinmaydi. "
+                "Sovg'a oynasidagi <b>👥 Hammasi</b> tugmasini bosing.",
+                pay_ui.gift_target_keyboard(),
+                parse_mode="HTML",
+            )
+            context.user_data["dev_action"] = {"type": "gift_target"}
+            return DEV_MENU
+        if not target.isdigit() or int(target) <= 0:
             await _edit_menu(
                 context,
                 "⚠️ Telegram ID noto'g'ri. Raqamli ID yoki <code>all</code> yuboring.\n\n"
@@ -2729,10 +2795,11 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         count = len(storage.get_all_users()) if target == "all" else None
         context.user_data["dev_action"] = {
             "type": "gift_confirm", "target": target, "amount": amount,
+            "mode": action.get("mode", "add"),
         }
         await _edit_menu(
             context,
-            pay_ui.gift_confirm_text(target, amount, count),
+            pay_ui.gift_confirm_text(target, amount, count, action.get("mode", "add")),
             pay_ui.gift_confirm_keyboard(),
             parse_mode="HTML",
         )
