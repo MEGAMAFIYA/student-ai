@@ -1,0 +1,4 @@
+[
+  "test_game_rules.py::GameRulesTest::test_checkers_mandatory_and_multi_capture",
+  "test_game_rules.py::GameRulesTest::test_chess_basic_and_rook_castling_right"
+]

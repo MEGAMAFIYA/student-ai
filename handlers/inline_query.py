@@ -132,6 +132,7 @@ import inline_media
 import webapp_security
 import movie_watch
 import game
+import chat_games
 import drawing_game
 
 logger = logging.getLogger(__name__)
@@ -347,9 +348,8 @@ async def on_inline_query(
     # Server barcha yurishlarni qayta tekshiradi.
     # --------------------------------------------------------
     if GAME_RE.match(query):
-        if not PUBLIC_BASE_URL:
-            await _answer_redirect(update, query, "PUBLIC_BASE_URL sozlanmagan — O'yin Mini App ochilmaydi")
-            return
+        # Shashka va X-O Telegram chatining o'zida ishlaydi.
+        # Faqat Shaxmat uchun Mini App URL kerak bo'lishi mumkin.
         results=[]
         for gkey,title,desc,emoji in [
             ("chess","♟ Shaxmat","2 kishi • oq/qora • klassik yurish qoidalari","♟"),
@@ -360,20 +360,36 @@ async def on_inline_query(
             rid=game.create_room(gkey,user.id)
             if not rid:
                 continue
-            url=game.room_url(gkey,rid)
-            results.append(InlineQueryResultArticle(
-                id=f"game_{gkey}_{uuid.uuid4().hex}",
-                title=title,
-                description=desc,
-                input_message_content=InputTextMessageContent(
-                    f"{emoji} {title}\n\n"
-                    "👥 1v1 o'yin xonasi tayyor.\n"
-                    "👇 Ikkalangiz ham tugmani bosib Mini App'ga kiring va rang tanlang."
-                ),
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🎮 O‘yinni boshlash", url=url)
-                ]]),
-            ))
+            if gkey in ("checkers", "tictactoe"):
+                if gkey == "checkers":
+                    kb = [[InlineKeyboardButton("⚪ Oq", callback_data=f"cg:side:{rid}:w"), InlineKeyboardButton("⚫ Qora", callback_data=f"cg:side:{rid}:b")], [InlineKeyboardButton("👥 Qo‘shilish", callback_data=f"cg:join:{rid}")]]
+                    text = ("⚪ <b>Rus shashkasi</b>\n\n"
+                            "👥 1v1 o‘yin chatning o‘zida.\n"
+                            "Har bir yurish shu xabardagi tugmalar orqali qilinadi.\n"
+                            "Avval rangni tanlang, sherigingiz qo‘shilsin.")
+                else:
+                    kb = [[InlineKeyboardButton("❌ X", callback_data=f"cg:mark:{rid}:x"), InlineKeyboardButton("⭕ O", callback_data=f"cg:mark:{rid}:o")], [InlineKeyboardButton("👥 Qo‘shilish", callback_data=f"cg:join:{rid}")]]
+                    text = ("❌⭕ <b>X-O o‘yini</b>\n\n"
+                            "👥 1v1 o‘yin chatning o‘zida.\n"
+                            "Har bir yurish shu xabardagi tugmalar orqali qilinadi.\n"
+                            "Avval belgini tanlang, sherigingiz qo‘shilsin.")
+                results.append(InlineQueryResultArticle(
+                    id=f"game_{gkey}_{uuid.uuid4().hex}", title=title, description=desc,
+                    input_message_content=InputTextMessageContent(text, parse_mode="HTML"),
+                    reply_markup=InlineKeyboardMarkup(kb),
+                ))
+            else:
+                # Shaxmat hozircha Mini App rejimida qoladi.
+                if not PUBLIC_BASE_URL:
+                    continue
+                url=game.room_url(gkey,rid)
+                results.append(InlineQueryResultArticle(
+                    id=f"game_{gkey}_{uuid.uuid4().hex}", title=title, description=desc,
+                    input_message_content=InputTextMessageContent(
+                        f"{emoji} {title}\n\n👥 1v1 o'yin xonasi tayyor.\n👇 Ikkalangiz ham tugmani bosib Mini App'ga kiring va rang tanlang."
+                    ),
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🎮 O‘yinni boshlash", url=url)]]),
+                ))
         if not results:
             await _answer_instruction(update,"🎮 O'yin hozircha mavjud emas","Server sozlamasini tekshiring.",query=query)
             return
