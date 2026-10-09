@@ -360,19 +360,26 @@ async def on_inline_query(
             rid=game.create_room(gkey,user.id)
             if not rid:
                 continue
-            if gkey in ("checkers", "tictactoe"):
+            if gkey in ("checkers", "tictactoe", "memory"):
                 if gkey == "checkers":
                     kb = [[InlineKeyboardButton("⚪ Oq", callback_data=f"cg:side:{rid}:w"), InlineKeyboardButton("⚫ Qora", callback_data=f"cg:side:{rid}:b")], [InlineKeyboardButton("👥 Qo‘shilish", callback_data=f"cg:join:{rid}")]]
                     text = ("⚪ <b>Rus shashkasi</b>\n\n"
                             "👥 1v1 o‘yin chatning o‘zida.\n"
                             "Har bir yurish shu xabardagi tugmalar orqali qilinadi.\n"
                             "Avval rangni tanlang, sherigingiz qo‘shilsin.")
-                else:
+                elif gkey == "tictactoe":
                     kb = [[InlineKeyboardButton("❌ X", callback_data=f"cg:mark:{rid}:x"), InlineKeyboardButton("⭕ O", callback_data=f"cg:mark:{rid}:o")], [InlineKeyboardButton("👥 Qo‘shilish", callback_data=f"cg:join:{rid}")]]
                     text = ("❌⭕ <b>X-O o‘yini</b>\n\n"
                             "👥 1v1 o‘yin chatning o‘zida.\n"
                             "Har bir yurish shu xabardagi tugmalar orqali qilinadi.\n"
                             "Avval belgini tanlang, sherigingiz qo‘shilsin.")
+                else:
+                    kb = [[InlineKeyboardButton("4×4", callback_data=f"cg:msize:{rid}:4x4"), InlineKeyboardButton("4×6", callback_data=f"cg:msize:{rid}:4x6"), InlineKeyboardButton("6×6", callback_data=f"cg:msize:{rid}:6x6")],
+                          [InlineKeyboardButton("🍎 Mevalar", callback_data=f"cg:msym:{rid}:fruits"), InlineKeyboardButton("😀 Emoji", callback_data=f"cg:msym:{rid}:emoji"), InlineKeyboardButton("🔢 Raqamlar", callback_data=f"cg:msym:{rid}:numbers")],
+                          [InlineKeyboardButton("👥 Qo‘shilish", callback_data=f"cg:join:{rid}")]]
+                    text = ("🧠 <b>Aqil charxi</b>\n\n"
+                            "👥 2 kishi chatning o‘zida o‘ynaydi.\n"
+                            "Katak o‘lchami va belgilar turini tanlang, keyin ikkala o‘yinchi <b>▶️ Boshlash</b> tugmasini bosadi.")
                 results.append(InlineQueryResultArticle(
                     id=f"game_{gkey}_{uuid.uuid4().hex}", title=title, description=desc,
                     input_message_content=InputTextMessageContent(text, parse_mode="HTML"),

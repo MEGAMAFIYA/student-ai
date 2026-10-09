@@ -1054,6 +1054,10 @@ async def _chat_game_callback(update, context):
             if ok: ok,err=chat_games.choose_mark(room,user.id,parts[3])
         elif action == "c": ok,err=chat_games.checkers_move(room,user.id,int(parts[3]),int(parts[4]))
         elif action == "t": ok,err=chat_games.ttt_move(room,user.id,int(parts[3]))
+        elif action == "msize": ok,err=chat_games.memory_config(room,user.id,"size",parts[3])
+        elif action == "msym": ok,err=chat_games.memory_config(room,user.id,"symbols",parts[3])
+        elif action == "mready": ok,err=chat_games.memory_ready(room,user.id)
+        elif action == "mf": ok,err=chat_games.memory_flip(room,user.id,int(parts[3]))
         elif action == "refresh": ok,err=True,None
         else: ok,err=False,"Noma’lum o‘yin tugmasi."
     except Exception:
