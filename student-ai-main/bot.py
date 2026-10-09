@@ -48,8 +48,8 @@ import mobile_api
 import inline_media
 import movie_watch
 import game
-import chat_games
 import drawing_game
+from handlers import chat_memory
 from handlers import (
     menu, universal_chat, course_work, translate as translate_handler, images_to_pdf,
     edit_pdf, guide, inline_query, developer, pptx_gen, essay, quiz, solve, summarize, managed_tests,
@@ -1034,51 +1034,6 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
 
-async def _chat_game_callback(update, context):
-    q = update.callback_query
-    if not q or not q.data or not q.data.startswith("cg:"): return
-    parts = q.data.split(":")
-    try: action, rid = parts[1], parts[2]
-    except Exception:
-        await q.answer("O‘yin tugmasi noto‘g‘ri.", show_alert=True); return
-    user=q.from_user; room=chat_games._room(rid)
-    if not room:
-        await q.answer("O‘yin xonasi topilmadi yoki muddati o‘tgan.", show_alert=True); return
-    try:
-        if action == "join": ok,err=chat_games.add_player(room,user.id,user)
-        elif action == "side":
-            ok,err=chat_games.add_player(room,user.id,user)
-            if ok and room.get("status") == "lobby": ok,err=chat_games.choose_side(room,user.id,parts[3])
-        elif action == "mark":
-            ok,err=chat_games.add_player(room,user.id,user)
-            if ok and room.get("status") == "lobby": ok,err=chat_games.choose_mark(room,user.id,parts[3])
-        elif action == "c": ok,err=chat_games.checkers_move(room,user.id,int(parts[3]),int(parts[4]))
-        elif action == "t": ok,err=chat_games.ttt_move(room,user.id,int(parts[3]))
-        elif action == "msize": ok,err=chat_games.memory_config(room,user.id,"size",parts[3])
-        elif action == "msym": ok,err=chat_games.memory_config(room,user.id,"symbols",parts[3])
-        elif action == "mready": ok,err=chat_games.memory_ready(room,user.id)
-        elif action == "mf": ok,err=chat_games.memory_flip(room,user.id,int(parts[3]))
-        elif action == "refresh": ok,err=True,None
-        else: ok,err=False,"Noma’lum o‘yin tugmasi."
-    except Exception:
-        logger.exception("Chat game callback xatosi")
-        ok,err=False,"O‘yinda texnik xato yuz berdi."
-    if not ok:
-        await q.answer(err or "Amal bajarilmadi.", show_alert=True); return
-    text,kb=chat_games.render(room)
-    try: await q.edit_message_text(text,reply_markup=kb,parse_mode="HTML")
-    except Exception: pass
-    await q.answer("✅" if action!="refresh" else "Yangilandi")
-    # Xotira o'yinida mos kelmagan juftlik 1 soniya ko'rinadi, so'ng yopiladi.
-    # Shu orada server memory_waiting orqali boshqa yurishlarni rad etadi.
-    if action == "mf" and room.get("memory_waiting"):
-        await asyncio.sleep(1.0)
-        if chat_games.memory_hide_mismatch(room):
-            text,kb=chat_games.render(room)
-            try: await q.edit_message_text(text,reply_markup=kb,parse_mode="HTML")
-            except Exception: pass
-
-
 def start_health_server():
     global _PLACEHOLDER_PDF_BYTES, _MUSIC_ICON_PNG_BYTES, _PRO_AUDIO_BYTES
     _PLACEHOLDER_PDF_BYTES = _build_placeholder_pdf()
@@ -1447,7 +1402,6 @@ def main():
     # doimiy qayd etamiz. Profil (username/ism) keyinchalik admin ro'yxatida
     # ko'rsatiladi; handler block=False bo'lgani uchun asosiy oqimni kutdirmaydi.
     app.add_handler(MessageHandler(filters.ALL, _track_user_message, block=False), group=-2)
-    app.add_handler(CallbackQueryHandler(_chat_game_callback, pattern=r"^cg:", block=True), group=0)
     app.add_handler(CallbackQueryHandler(_track_user_callback, pattern=".*", block=False), group=-2)
     app.add_handler(InlineQueryHandler(_track_user_inline, block=False), group=-2)
 
@@ -1578,6 +1532,8 @@ def main():
     app.add_handler(InlineQueryHandler(inline_query.on_inline_query))
     app.add_handler(ChosenInlineResultHandler(inline_query.on_chosen_inline_result))
     app.add_handler(CallbackQueryHandler(managed_tests.callback, pattern=r"^mt:"))
+    # 🧠 Aqil charxi — chat ichidagi inline Memory o'yini.
+    app.add_handler(CallbackQueryHandler(chat_memory.callback, pattern=r"^cm:"))
 
     app.add_error_handler(_error_handler)
 

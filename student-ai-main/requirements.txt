@@ -1,0 +1,30 @@
+# 22.8 kerak (21.6 EMAS): Bot API 9.0+ Business huquqlari (BusinessBotRights /
+# can_delete_sent_messages) va Bot.delete_business_messages() faqat 22.1+
+# versiyada bor (rasmiy PTB changelog: "Added in version 22.1"); 22.8 —
+# tekshirish vaqtidagi eng so'nggi barqaror versiya, Python 3.10+ bilan mos
+# (shu jumladan 3.13). /tabrik Business oqimi (tabrik_business.py) shu
+# versiyaga bog'liq.
+python-telegram-bot==22.8
+
+google-generativeai==0.8.3
+
+httpx==0.27.2
+
+reportlab==4.2.5
+
+python-dotenv==1.0.1
+
+pypdf==5.1.0
+
+Pillow==10.4.0
+
+python-pptx==1.0.2
+
+psycopg2-binary==2.9.10
+
+yt-dlp[default,curl-cffi]>=2026.08.19
+
+imageio-ffmpeg>=0.5.1
+
+telethon>=1.44.0
+# Optional Cloudflare R2/S3-compatible movie storage
