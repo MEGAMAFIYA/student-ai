@@ -33,7 +33,7 @@ def _memory_text(room):
         ready="✅" if room.get("memory_ready",{}).get(uid) else "⏳"
         lines.append(f"{ready} {_name(p)}")
     if room.get("status")=="lobby":
-        lines += ["", "Ikkala o‘yinchi qo‘shilgach, ▶️ Boshlash tugmasini bosing."]
+        lines += ["", "Birinchi o‘yinchi ▶️ Boshlash tugmasini bir marta bosadi. Ikkinchi o‘yinchi qo‘shilishi shart emas."]
     elif room.get("status")=="playing":
         uid=str(room.get("turn")); p=room.get("players",{}).get(uid)
         scores=room.get("scores",{})
@@ -53,14 +53,15 @@ def _memory_kb(room):
             i=r*cols+c; cell=board[i] if i<len(board) else None
             label="⬜"
             if cell:
-                if cell.get("state") in ("revealed","matched","pending"): label=cell.get("symbol","⬜")
+                if cell.get("state") in ("revealed","pending"): label=cell.get("symbol","⬜")
+                elif cell.get("state") == "matched": label="⠀"
             row.append(InlineKeyboardButton(label, callback_data=f"cg:mf:{room['id']}:{i}"))
         kb.append(row)
     if room.get("status")=="lobby":
         kb.append([InlineKeyboardButton("4×4",callback_data=f"cg:msize:{room['id']}:4x4"),InlineKeyboardButton("4×6",callback_data=f"cg:msize:{room['id']}:4x6"),InlineKeyboardButton("6×6",callback_data=f"cg:msize:{room['id']}:6x6")])
         kb.append([InlineKeyboardButton("🍎 Meva",callback_data=f"cg:msym:{room['id']}:fruits"),InlineKeyboardButton("😀 Emoji",callback_data=f"cg:msym:{room['id']}:emoji"),InlineKeyboardButton("🔢 Raqam",callback_data=f"cg:msym:{room['id']}:numbers")])
         if len(room.get("players",{}))<2: kb.append([InlineKeyboardButton("👥 Qo‘shilish",callback_data=f"cg:join:{room['id']}")])
-        if len(room.get("players",{}))==2: kb.append([InlineKeyboardButton("▶️ Boshlash",callback_data=f"cg:mready:{room['id']}")])
+        if room.get("players"): kb.append([InlineKeyboardButton("▶️ Boshlash",callback_data=f"cg:mready:{room['id']}")])
     kb.append([InlineKeyboardButton("🔄 Yangilash",callback_data=f"cg:refresh:{room['id']}")])
     return InlineKeyboardMarkup(kb)
 
@@ -81,12 +82,20 @@ def memory_ready(room, uid):
         uid=str(uid)
         if uid not in room.get("players",{}): return False,"Avval o‘yinga qo‘shiling."
         if room.get("status")!="lobby": return False,"O‘yin allaqachon boshlangan."
-        room.setdefault("memory_ready",{})[uid]=True
-        if len(room.get("players",{}))==2 and all(room["memory_ready"].get(k) for k in room["players"]):
-            rows,cols=MEMORY_SIZES[room.get("memory_size","4x4")]; pairs=rows*cols//2
-            pool=MEMORY_SYMBOLS[room.get("memory_symbols","fruits")]
-            deck=(pool*((pairs//len(pool))+1))[:pairs]*2; random.shuffle(deck)
-            room["board"]=[{"symbol":x,"state":"hidden"} for x in deck]; room["turn"]=list(room["players"])[0]; room["scores"]={k:0 for k in room["players"]}; room["status"]="playing"; room["memory_pending"]=[]; room["memory_waiting"]=False; room["last_mismatch"]=None
+        rows,cols=MEMORY_SIZES.get(room.get("memory_size") or "4x4", MEMORY_SIZES["4x4"])
+        pairs=rows*cols//2
+        pool=MEMORY_SYMBOLS.get(room.get("memory_symbols") or "fruits", MEMORY_SYMBOLS["fruits"])
+        chosen=(pool*((pairs//len(pool))+1))[:pairs]
+        deck=chosen*2
+        random.shuffle(deck)
+        room["board"]=[{"symbol":x,"state":"hidden"} for x in deck]
+        room["turn"]=uid
+        room["scores"]={k:0 for k in room["players"]}
+        room["status"]="playing"
+        room["memory_pending"]=[]
+        room["memory_waiting"]=False
+        room["last_mismatch"]=None
+        room["memory_started_by"]=uid
         room["updated_at"]=game.time.time(); room["version"]+=1; game._save()
     return True,None
 

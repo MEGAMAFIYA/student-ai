@@ -26,3 +26,6 @@
 .ttt-cell .card-face{font-size:clamp(28px,10vw,54px)}
 .ttt-cell.card-hidden{background:linear-gradient(145deg,#333d63,#181d31)}
 @media(max-width:480px){.board.ttt{gap:7px}.ttt-cell .card-face{font-size:clamp(24px,11vw,42px)}}
+
+/* Rus shashkasida yurilmaydigan och rangli kataklar ko‘rinmaydi; joyi bo‘sh qoladi. */
+.board .sq.empty-square { visibility: hidden; pointer-events: none; border: 0; background: transparent; box-shadow: none; }

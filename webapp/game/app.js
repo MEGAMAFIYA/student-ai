@@ -248,6 +248,7 @@
     for (let vr=0;vr<8;vr++) for (let vc=0;vc<8;vc++) {
       const [r,c] = orient(vr,vc), sq = document.createElement("button");
       sq.className = "sq " + (((r+c)%2) ? "dark" : "light"); sq.dataset.r=r; sq.dataset.c=c;
+      if (state.game === "checkers" && (r+c)%2===0) { sq.classList.add("empty-square"); sq.disabled=true; }
       if (selected && selected[0]===r && selected[1]===c) sq.classList.add("selected");
       if (selected && isLegalTarget(r,c)) {
         const isEpCapture = state.game === "chess" && state.ep && state.ep[0]===r && state.ep[1]===c;
@@ -260,7 +261,7 @@
         else { d.className=`checker ${p.toLowerCase()==="b"?"b ":""}${p===p.toUpperCase()?"king ":""}`; }
         sq.appendChild(d);
       }
-      sq.onclick=()=>clickSquare(r,c); board.appendChild(sq);
+      if (!(state.game === "checkers" && (r+c)%2===0)) sq.onclick=()=>clickSquare(r,c); board.appendChild(sq);
     }
   }
   function targetsFor(r, c) {

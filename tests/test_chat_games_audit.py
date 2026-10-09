@@ -182,8 +182,8 @@ class ChatGamesAuditTests(unittest.TestCase):
                   'memory_size':size,'memory_symbols':'fruits','memory_ready':{},'board':[], 'scores':{},
                   'version':0,'updated_at':0}
             self.assertTrue(chat_games.memory_ready(room,'1')[0])
-            self.assertEqual(room['status'],'lobby')
-            self.assertTrue(chat_games.memory_ready(room,'2')[0])
+            self.assertEqual(room['status'],'playing')
+            self.assertEqual(len(room['board']),rows*cols)
             self.assertEqual(len(room['board']), rows*cols)
             symbols=[x['symbol'] for x in room['board']]
             self.assertEqual(len(set(symbols)), rows*cols//2)
