@@ -1,0 +1,23 @@
+TALABA AI — PATCH FAYLLARI
+==========================
+
+Bu arxiv TO'LIQ LOYIHA EMAS. Faqat o'zgartirilgan va yangi fayllar mavjud.
+Uni asl student-ai-main/ loyihasining ildiziga oching va fayllarni ustidan
+yozishga ruxsat bering.
+
+MUHIM: xavfsizlik sababli eski .env fayli bu patch ichiga kiritilmagan.
+1) Eski student-ai-main/.env faylini xavfsiz joyga ko'chirib, loyihadan o'chiring.
+   U ichida haqiqiy DATABASE_URL yoki token bo'lgan bo'lsa, tegishli sirlarni
+   almashtiring/revoke qiling. Faqat .gitignore qo'shish Git tarixini tozalamaydi.
+2) .env.example ni nusxalab .env yarating va faqat kerakli qiymatlarni qayta kiriting.
+   Ishlab turgan hostingda qiymatlarni hostingning Environment Variables qismida
+   sozlang; maxfiy qiymatlarni GitHub'ga commit qilmang.
+3) SQLite login sessiyalari uchun hostingda persistent disk ulang va
+   MOBILE_AUTH_DB_PATH ni o'sha diskdagi faylga sozlang. Render misoli:
+   MOBILE_AUTH_DB_PATH=/var/data/mobile_auth.sqlite3
+4) GitHub Actions Gradle 8.7 ni o'zi o'rnatadi va `gradle assembleDebug` ishlatadi.
+5) Patch qo'llangandan so'ng `python -m pip install -r requirements.txt` va
+   `python -m pytest -q` bilan sinang. Android build uchun Android SDK/Gradle
+   internet orqali kerakli dependency'larni yuklay olishi shart.
+
+Patch ichida maxfiy .env qiymatlari yo'q. Asl ZIP o'zgartirilmagan.

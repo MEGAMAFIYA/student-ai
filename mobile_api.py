@@ -9,6 +9,7 @@ import os
 import re
 import time
 import uuid
+from collections import deque
 from urllib.parse import urlparse, parse_qs, quote
 
 import config
@@ -25,6 +26,43 @@ logger = logging.getLogger(__name__)
 
 _QUIZ_SESSIONS: dict[int, dict] = {}
 _APPLICATION = None
+
+# Per-process abuse protection. For multiple workers/instances, use a shared
+# gateway or Redis-backed limiter as well.
+_RATE_LIMITS: dict[tuple[str, str], deque] = {}
+_RATE_LOCK = __import__("threading").Lock()
+_RATE_WINDOW_SECONDS = 60
+_RATE_LIMITS_PER_WINDOW = {"GET": 90, "POST": 30}
+
+
+def _client_ip(handler) -> str:
+    # Do not trust forwarded headers here; client_address is the direct peer.
+    try:
+        return str(handler.client_address[0])
+    except (AttributeError, IndexError, TypeError):
+        return "unknown"
+
+
+def _rate_limited(handler, method: str) -> bool:
+    limit = _RATE_LIMITS_PER_WINDOW.get(method, 30)
+    now = time.monotonic()
+    key = (method, _client_ip(handler))
+    with _RATE_LOCK:
+        # Periodically prune old client keys to prevent unbounded memory growth.
+        for old_key, timestamps in list(_RATE_LIMITS.items()):
+            while timestamps and now - timestamps[0] >= _RATE_WINDOW_SECONDS:
+                timestamps.popleft()
+            if not timestamps:
+                _RATE_LIMITS.pop(old_key, None)
+        timestamps = _RATE_LIMITS.setdefault(key, deque())
+        while timestamps and now - timestamps[0] >= _RATE_WINDOW_SECONDS:
+            timestamps.popleft()
+        if len(timestamps) >= limit:
+            _json(handler, 429, {"error": "rate_limited", "retry_after_seconds": _RATE_WINDOW_SECONDS})
+            return True
+        timestamps.append(now)
+        return False
+
 
 
 def set_application(application) -> None:
@@ -61,38 +99,53 @@ _LOCAL_HOSTS = ("localhost", "127.0.0.1", "10.0.2.2")
 
 
 def _public_base_url(handler) -> str:
-    """Mobil ilovaga beriladigan ABSOLYUT server manzili ("https://host", oxirida / yo'q).
+    """Return a validated public base URL.
 
-    Tartib: PUBLIC_BASE_URL -> Render'ning RENDER_EXTERNAL_URL -> joriy so'rovning
-    Host / X-Forwarded-* sarlavhalari. Hech biri bo'lmasa "" qaytadi. Avval bo'sh
-    PUBLIC_BASE_URL nisbiy "/api/kino/stream/..." qaytarib, ilova buni "tarmoq xatosi"
-    deb ko'rsatardi."""
+    Production URLs must come from explicit configuration or Render's trusted
+    environment variable. Request Host/X-Forwarded-* headers are not trusted
+    to build links because clients can spoof them.
+    """
     for raw in (getattr(config, "PUBLIC_BASE_URL", ""), os.getenv("RENDER_EXTERNAL_URL", "")):
         raw = (raw or "").strip().rstrip("/")
         if not raw:
             continue
         if not re.match(r"^https?://", raw, re.I):
             raw = "https://" + raw
-        return raw
+        parsed = urlparse(raw)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password:
+            logger.warning("PUBLIC_BASE_URL noto'g'ri formatda; URL qaytarilmadi")
+            continue
+        if parsed.scheme == "http" and parsed.hostname not in _LOCAL_HOSTS:
+            logger.warning("Ochiq PUBLIC_BASE_URL uchun HTTPS talab qilinadi")
+            continue
+        return f"{parsed.scheme}://{parsed.netloc}"
+
+    # Allow only explicit local development hosts; never derive a public URL
+    # from an arbitrary Host or X-Forwarded-* header.
     headers = getattr(handler, "headers", None)
-    host = ((headers.get("X-Forwarded-Host") or headers.get("Host") or "") if headers else "").split(",")[0].strip()
-    if not host or not _HOST_RE.match(host):
-        return ""
-    is_local = host.split(":")[0] in _LOCAL_HOSTS
-    proto = ((headers.get("X-Forwarded-Proto") or "") if headers else "").split(",")[0].strip().lower()
-    if proto not in ("http", "https"):
-        proto = "http" if is_local else "https"
-    if proto == "http" and not is_local:
-        proto = "https"   # Android cleartext'ni bloklaydi; ochiq host faqat HTTPS bo'lishi kerak
-    return f"{proto}://{host}"
+    host = (headers.get("Host", "") if headers else "").split(",")[0].strip()
+    if host and _HOST_RE.fullmatch(host) and host.split(":")[0] in _LOCAL_HOSTS:
+        return f"http://{host}"
+    return ""
 
 
 def _read_json(handler) -> dict:
-    length = int(handler.headers.get("Content-Length", 0) or 0)
-    if length <= 0 or length > 15 * 1024 * 1024:
-        return {}
+    try:
+        length = int(handler.headers.get("Content-Length", 0) or 0)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid_content_length") from exc
+    if length <= 0:
+        raise ValueError("empty_request_body")
+    if length > 15 * 1024 * 1024:
+        raise ValueError("request_body_too_large")
     raw = handler.rfile.read(length)
-    return json.loads(raw.decode("utf-8"))
+    try:
+        body = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("invalid_json") from exc
+    if not isinstance(body, dict):
+        raise ValueError("json_object_required")
+    return body
 
 
 def _auth(handler) -> dict | None:
@@ -235,6 +288,8 @@ def handle_get(handler) -> bool:
     path = urlparse(handler.path).path
     if not path.startswith("/api/mobile/"):
         return False
+    if _rate_limited(handler, "GET"):
+        return True
     if path == "/api/mobile/auth/poll":
         token = parse_qs(urlparse(handler.path).query).get("token", [""])[0]
         _json(handler, 200, mobile_auth.poll(token))
@@ -279,6 +334,14 @@ def handle_post(handler) -> bool:
     path = urlparse(handler.path).path
     if not path.startswith("/api/mobile/"):
         return False
+    if _rate_limited(handler, "POST"):
+        return True
+    if path == "/api/mobile/auth/logout":
+        header = handler.headers.get("Authorization", "")
+        token = header[7:].strip() if header.lower().startswith("bearer ") else ""
+        revoked = mobile_auth.revoke_session(token)
+        _json(handler, 200, {"revoked": bool(revoked)})
+        return True
     if path == "/api/mobile/auth/start":
         start = mobile_auth.start_login()
         _json(handler, 200, {"login_token": start.login_token, "deep_link": start.deep_link, "expires_in": start.expires_in})
@@ -302,6 +365,9 @@ def handle_post(handler) -> bool:
             return _quiz_start(handler, user, body)
         if path == "/api/mobile/quiz/answer":
             return _quiz_answer(handler, user, body)
+    except ValueError as e:
+        _json(handler, 400, {"error": str(e) or "invalid_request"})
+        return True
     except Exception as e:
         logger.exception("mobile API xatosi")
         _json(handler, 500, {"error": f"server_error: {type(e).__name__}"})

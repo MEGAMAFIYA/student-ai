@@ -24,3 +24,8 @@ venv/
 # --- Foydalanuvchi ma'lumotlari / runtime data (HECH QACHON commit qilinmasin) ---
 mening_kabinetim/
 *.session
+
+# Mobile authentication session database (runtime only)
+mobile_auth.sqlite3
+mobile_auth.sqlite3-shm
+mobile_auth.sqlite3-wal

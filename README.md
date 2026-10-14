@@ -55,13 +55,16 @@ o'zi (`config.BOT_USERNAME_FALLBACK` asosida) tayyorlab beradi.
 **A) Android Studio orqali (eng oson):**
 1. Android Studio'da `File > Open` → shu papkani (`StudentAiApp/`) tanlang.
 2. Gradle sinxronizatsiyasini kuting (birinchi marta internet kerak —
-   kutubxonalarni yuklab oladi).
+   kutubxonalarni yuklab oladi). Loyiha Gradle 8.7 / Android Gradle Plugin
+   8.5.2 talab qiladi.
 3. `Build > Build Bundle(s) / APK(s) > Build APK(s)`.
 4. Tayyor `.apk` — `app/build/outputs/apk/debug/app-debug.apk`.
 
 **B) GitHub Actions orqali (Android Studio shart emas):**
 1. Shu papkani GitHub repozitoriyingizga yuklang (`git push`).
-2. `.github/workflows/build-apk.yml` avtomatik ishga tushadi.
+2. `.github/workflows/build-apk.yml` Gradle 8.7 ni o'zi o'rnatib,
+   `gradle assembleDebug` orqali avtomatik ishga tushadi (Wrapper fayllari
+   talab qilinmaydi).
 3. GitHub'da **Actions** bo'limi → oxirgi run → **Artifacts** →
    `student-ai-debug-apk` — shu yerdan `.apk`ni yuklab oling.
 
@@ -76,3 +79,24 @@ vid, qo'shiq, wallet va h.k.) aynan shu naqsh bo'yicha qo'shiladi:
 
 Bu tartib botning ishlashiga HECH QANDAY ta'sir qilmaydi — backend'da
 qo'shilgan hamma narsa faqat `/api/mobile/` yo'li ostida, alohida.
+
+
+## Xavfsizlik va deploy eslatmalari
+
+- `.env` faylini hech qachon ZIP yoki GitHub'ga maxfiy qiymatlar bilan
+  qo'shmang. `.env.example` faqat bo'sh andoza; deploy sozlamalarini
+  hostingning Environment Variables bo'limida kiriting.
+- Agar avval tarqatilgan `.env` ichida haqiqiy DB paroli yoki API token bo'lgan
+  bo'lsa, uni bekor qiling/almashtiring. `.gitignore` Git tarixidagi faylni
+  o'zi o'chirmaydi.
+- Mobil login sessiyalari SQLite bazasida saqlanadi. Doimiy saqlash uchun
+  `MOBILE_AUTH_DB_PATH` ni hostingdagi persistent diskka yo'naltiring.
+  Masalan, Render persistent disk mount path `/var/data` bo'lsa:
+  `MOBILE_AUTH_DB_PATH=/var/data/mobile_auth.sqlite3`. Persistent disk
+  sozlanmagan bo'lsa, disk qayta yaratilganda sessiyalar yo'qolishi mumkin.
+- `/api/mobile/` yo'llarida oddiy IP asosidagi so'rov cheklovi bor. U bitta
+  Python jarayoni uchun; ko'p nusxali deploy'da reverse proxy yoki Redis
+  darajasida ham limit qo'ying.
+- Android sessiya tokeni Android Keystore orqali himoyalangan
+  `EncryptedSharedPreferences` da saqlanadi. Eski plaintext preference
+  qiymatlari birinchi ochilishda ko'chirilib, eski saqlash joyi tozalanadi.

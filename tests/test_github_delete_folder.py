@@ -39,6 +39,17 @@ class FakeGitHub:
         }
         # Rekursiv ko'rinish (papka o'z subtree'iga nisbatan yo'llar bilan)
         self.recursive = {
+            "ROOT": [
+                {"path": "app", "type": "tree", "mode": "040000", "sha": "T_APP"},
+                {"path": "app/main.py", "type": "blob", "mode": "100644", "sha": "B1"},
+                {"path": "app/ui", "type": "tree", "mode": "040000", "sha": "T_APP_UI"},
+                {"path": "app/ui/home.xml", "type": "blob", "mode": "100644", "sha": "B2"},
+                {"path": "app2", "type": "tree", "mode": "040000", "sha": "T_APP2"},
+                {"path": "app2/keep.py", "type": "blob", "mode": "100644", "sha": "B3"},
+                {"path": "handlers", "type": "tree", "mode": "040000", "sha": "T_HANDLERS"},
+                {"path": "handlers/menu.py", "type": "blob", "mode": "100644", "sha": "B4"},
+                {"path": "bot.py", "type": "blob", "mode": "100644", "sha": "B_BOT"},
+            ],
             "T_APP": [
                 {"path": "main.py", "type": "blob", "mode": "100644", "sha": "B1"},
                 {"path": "ui", "type": "tree", "mode": "040000", "sha": "T_APP_UI"},
@@ -90,7 +101,7 @@ class DeleteFolderTests(unittest.TestCase):
         )
         self.assertTrue(all(e["sha"] is None for e in entries))
         self.assertEqual(kw["json"]["base_tree"], "ROOT")
-        self.assertEqual(result["file_count"], 2)
+        self.assertEqual(result["deleted_files"], 2)
         self.assertEqual(result["commit_sha"], "NEW_COMMIT")
 
     def test_similar_named_sibling_and_other_files_untouched(self):

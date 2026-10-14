@@ -1,13 +1,12 @@
 name: Build debug APK
 
-# Bu workflow GitHub'ga push qilinganda avtomatik ravishda debug APK
-# yig'adi (Android Studio shart emas). Tayyor .apk fayl "Actions" bo'limi
-# > tanlangan run > "Artifacts" ostida yuklab olinadi.
-
 on:
   push:
     branches: [ "main" ]
   workflow_dispatch: {}
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -21,14 +20,20 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Gradle wrapper'ga ishga tushirish huquqi
-        run: chmod +x ./gradlew
+      # The source archive did not contain Gradle Wrapper scripts/JAR.
+      # Install the compatible Gradle version directly so CI does not depend
+      # on missing wrapper files.
+      - name: Gradle 8.7 o'rnatish
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
 
       - name: Debug APK yig'ish
-        run: ./gradlew assembleDebug --no-daemon
+        run: gradle assembleDebug --no-daemon
 
       - name: APK'ni artifact sifatida saqlash
         uses: actions/upload-artifact@v4
         with:
           name: student-ai-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
