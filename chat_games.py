@@ -20,27 +20,43 @@ def _players(room):
     return list(room.get("players", {}).items())
 
 
-MEMORY_SYMBOLS = {
-    "fruits": ["🍎","🍐","🍊","🍋","🍉","🍇","🍓","🍒","🥝","🍌","🍑","🥭","🍍","🥥","🥕","🍅","🍏","🫐"],
-    "emoji": ["😀","😂","😍","😎","🤩","🥳","🤖","👻","🐼","🦊","🐯","🐸","🐵","🦁","🐨","🐰","🐱","🐶"],
-    "numbers": ["1️⃣","2️⃣","3️⃣","4️⃣","5️⃣","6️⃣","7️⃣","8️⃣","9️⃣","🔟","🔢","0️⃣","🔣","🔠","🔡","➕","➖","✖️"],
-}
+MEMORY_SYMBOLS = game.MEMORY_SYMBOL_SETS
+MEMORY_SYMBOL_LABELS = game.MEMORY_SYMBOL_LABELS
+
 MEMORY_SIZES = {"4x4": (4,4), "4x6": (4,6), "6x6": (6,6)}
 
 def _memory_text(room):
-    lines=["🧠 <b>Aqil charxi</b>", "", f"📐 {room.get('memory_size','4x4')}  •  🎨 {room.get('memory_symbols','fruits')}"]
-    for uid,p in _players(room):
-        ready="✅" if room.get("memory_ready",{}).get(uid) else "⏳"
-        lines.append(f"{ready} {_name(p)}")
+    symbol_key=room.get("memory_symbols", "fruits")
+    symbol_label=MEMORY_SYMBOL_LABELS.get(symbol_key, symbol_key)
+    lines=["🧠 <b>Aqil charxi</b>", "", f"📐 {room.get('memory_size','4x4')}  •  🎨 {symbol_label}"]
+    if room.get("memory_mode") == "teams":
+        teams = room.get("teams", {"1": [], "2": []})
+        for team_id in ("1", "2"):
+            names = [_name(room.get("players", {}).get(uid, {})) for uid in teams.get(team_id, [])]
+            lines.append(f"🟦 {team_id}-guruh ({len(names)}/2): " + (", ".join(names) if names else "hali bo'sh"))
+    else:
+        for uid,p in _players(room):
+            ready="✅" if room.get("memory_ready",{}).get(uid) else "⏳"
+            lines.append(f"{ready} {_name(p)}")
     if room.get("status")=="lobby":
-        lines += ["", "Birinchi o‘yinchi ▶️ Boshlash tugmasini bir marta bosadi. Ikkinchi o‘yinchi qo‘shilishi shart emas."]
+        if room.get("memory_mode") == "teams":
+            lines += ["", "Har bir guruhga 1–2 kishi qo‘shilsin. Boshlash uchun ikkala guruhda ham kamida bittadan o‘yinchi bo‘lishi kerak."]
+        else:
+            lines += ["", "2 kishilik rejim: ikki o‘yinchi qo‘shilgach ▶️ Boshlash tugmasini bosing."]
     elif room.get("status")=="playing":
         uid=str(room.get("turn")); p=room.get("players",{}).get(uid)
         scores=room.get("scores",{})
-        lines += ["", f"🎯 Navbat: {_name(p) if p else uid}", "🏆 " + "  |  ".join(f"{_name(room['players'].get(k,{}))}: {v}" for k,v in scores.items())]
+        lines += ["", f"🎯 Navbat: {_name(p) if p else uid}"]
+        if room.get("memory_mode") == "teams":
+            lines.append("🏆 " + "  |  ".join(f"{team}-guruh: {scores.get(team, 0)}" for team in ("1", "2")))
+        else:
+            lines.append("🏆 " + "  |  ".join(f"{_name(room['players'].get(k,{}))}: {v}" for k, v in scores.items()))
     elif room.get("status")=="finished":
         win=room.get("winner"); p=room.get("players",{}).get(str(win)) if win else None
-        lines += ["", f"🏆 G‘olib: {_name(p) if p else 'Durrang'}"]
+        if room.get("memory_mode") == "teams":
+            lines += ["", f"🏆 Natija: {('1-guruh g‘olib' if win == '1' else '2-guruh g‘olib') if win in ('1','2') else 'Durrang'}"]
+        else:
+            lines += ["", f"🏆 G‘olib: {_name(p) if p else 'Durrang'}"]
     return "\n".join(lines)
 
 def _memory_kb(room):
@@ -54,16 +70,105 @@ def _memory_kb(room):
             label="⬜"
             if cell:
                 if cell.get("state") in ("revealed","pending"): label=cell.get("symbol","⬜")
-                elif cell.get("state") == "matched": label="⠀"
+                elif cell.get("state") == "matched": label=cell.get("symbol", "⬜")
             row.append(InlineKeyboardButton(label, callback_data=f"cg:mf:{room['id']}:{i}"))
         kb.append(row)
     if room.get("status")=="lobby":
         kb.append([InlineKeyboardButton("4×4",callback_data=f"cg:msize:{room['id']}:4x4"),InlineKeyboardButton("4×6",callback_data=f"cg:msize:{room['id']}:4x6"),InlineKeyboardButton("6×6",callback_data=f"cg:msize:{room['id']}:6x6")])
-        kb.append([InlineKeyboardButton("🍎 Meva",callback_data=f"cg:msym:{room['id']}:fruits"),InlineKeyboardButton("😀 Emoji",callback_data=f"cg:msym:{room['id']}:emoji"),InlineKeyboardButton("🔢 Raqam",callback_data=f"cg:msym:{room['id']}:numbers")])
-        if len(room.get("players",{}))<2: kb.append([InlineKeyboardButton("👥 Qo‘shilish",callback_data=f"cg:join:{room['id']}")])
-        if room.get("players"): kb.append([InlineKeyboardButton("▶️ Boshlash",callback_data=f"cg:mready:{room['id']}")])
+        kb.append([InlineKeyboardButton("🍒 Mevalar",callback_data=f"cg:msym:{room['id']}:fruits"),InlineKeyboardButton("🔢 Raqamlar",callback_data=f"cg:msym:{room['id']}:numbers"),InlineKeyboardButton("🙃 Emoji",callback_data=f"cg:msym:{room['id']}:faces")])
+        kb.append([InlineKeyboardButton("🐇 Hayvonlar",callback_data=f"cg:msym:{room['id']}:animals"),InlineKeyboardButton("🚀 Kosmos",callback_data=f"cg:msym:{room['id']}:space"),InlineKeyboardButton("⚽ Sport",callback_data=f"cg:msym:{room['id']}:sports")])
+        kb.append([InlineKeyboardButton("👤 2 kishilik",callback_data=f"cg:mmode:{room['id']}:duel"),InlineKeyboardButton("👥 Guruh bo‘lib",callback_data=f"cg:mmode:{room['id']}:teams")])
+        if room.get("memory_mode") == "teams":
+            kb.append([InlineKeyboardButton("1-guruh",callback_data=f"cg:mteam:{room['id']}:1"),InlineKeyboardButton("2-guruh",callback_data=f"cg:mteam:{room['id']}:2")])
+        elif len(room.get("players",{}))<2:
+            kb.append([InlineKeyboardButton("👥 Qo‘shilish",callback_data=f"cg:join:{room['id']}")])
+        if room.get("players"):
+            kb.append([InlineKeyboardButton("▶️ Boshlash",callback_data=f"cg:mready:{room['id']}")])
+    if room.get("status")=="finished":
+        kb.append([InlineKeyboardButton("🔄 Qayta boshlash",callback_data=f"cg:restart:{room['id']}")])
     kb.append([InlineKeyboardButton("🔄 Yangilash",callback_data=f"cg:refresh:{room['id']}")])
     return InlineKeyboardMarkup(kb)
+
+
+def memory_set_mode(room, uid, mode):
+    with game.LOCK:
+        uid=str(uid)
+        if room.get("status") != "lobby": return False, "O‘yin allaqachon boshlangan."
+        if uid not in room.get("players", {}): return False, "Avval o‘yinga qo‘shiling."
+        if mode not in ("duel", "teams"): return False, "Rejim noto‘g‘ri."
+        if mode == "duel" and len(room.get("players", {})) > 2:
+            return False, "2 kishilik rejim uchun xonada 2 tadan ortiq o‘yinchi bor. Yangi xona oching."
+        room["memory_mode"] = mode
+        room["teams"] = {"1": [], "2": []}
+        if mode == "teams":
+            # Xona yaratilganida birinchi o'yinchi allaqachon ro'yxatda bo'ladi;
+            # rejim tanlangach u guruhni tugma orqali aniq tanlaydi.
+            for p in room["players"].values(): p.pop("team", None)
+        else:
+            for p in room["players"].values(): p.pop("team", None)
+        room["updated_at"]=game.time.time(); room["version"]+=1; game._save()
+    return True, None
+
+
+def memory_join_team(room, uid, user, team_id):
+    uid=str(int(uid)); team_id=str(team_id)
+    with game.LOCK:
+        if room.get("status") != "lobby": return False, "O‘yin allaqachon boshlangan."
+        if room.get("memory_mode") != "teams": return False, "Avval guruh bo‘lib rejimini tanlang."
+        if team_id not in ("1", "2"): return False, "Guruh noto‘g‘ri."
+        teams=room.setdefault("teams", {"1": [], "2": []})
+        existing=room.get("players", {}).get(uid)
+        if existing and existing.get("team") == team_id:
+            return True, None
+        if len(teams.get(team_id, [])) >= 2:
+            return False, "Bu guruh to‘la (2 kishi)."
+        if existing and existing.get("team") in teams:
+            teams[existing["team"]]=[x for x in teams[existing["team"]] if x != uid]
+        room.setdefault("players", {})[uid] = {"name": user.full_name or user.username or uid,
+            "side": None, "mark": None, "team": team_id, "joined_at": game.time.time()}
+        teams.setdefault(team_id, []).append(uid)
+        room["updated_at"]=game.time.time(); room["version"]+=1; game._save()
+    return True, None
+
+
+def _memory_turn_order(room):
+    teams=room.get("teams", {"1": [], "2": []})
+    a=list(teams.get("1", [])); b=list(teams.get("2", []))
+    if not a or not b: return []
+    import math
+    rounds=math.lcm(len(a), len(b))
+    order=[]
+    for i in range(rounds):
+        order.append(a[i % len(a)])
+        order.append(b[i % len(b)])
+    return order
+
+
+def restart_room(room, uid):
+    uid=str(uid)
+    with game.LOCK:
+        if uid not in room.get("players", {}): return False, "Faqat o‘yin ishtirokchilari qayta boshlashi mumkin."
+        if room.get("status") != "finished": return False, "O‘yin hali tugamagan."
+        if room.get("game") == "memory":
+            room["board"]=[]; room["scores"]={}; room["winner"]=None; room["reason"]=None
+            room["memory_pending"]=[]; room["memory_waiting"]=False; room["last_mismatch"]=None
+            room["memory_ready"]={}; room["turn_order_index"]=0
+            if room.get("memory_mode") == "teams":
+                room["scores"]={"1":0,"2":0}; order=_memory_turn_order(room)
+                if not order: return False, "Har ikki guruhga kamida bitta o‘yinchi kerak."
+                room["turn_order"]=order; room["turn"]=order[0]
+            else:
+                ids=list(room.get("players", {})); room["scores"]={k:0 for k in ids}
+                room["turn"]=ids[0] if ids else None
+            room["status"]="lobby"
+        elif room.get("game") == "tictactoe":
+            room.update(board=[None]*9, status="playing", winner=None, reason=None, turn="x", win_line=None, last_move=None)
+        elif room.get("game") == "checkers":
+            room.update(board=game._initial_checkers(), status="playing", winner=None, reason=None, turn="w", forced_piece=None, last_move=None, history=[], chat_selected={})
+        else:
+            return False, "Bu o‘yin uchun qayta boshlash mavjud emas."
+        room["updated_at"]=game.time.time(); room["version"]+=1; game._save()
+    return True, None
 
 def memory_join(room, uid, user):
     return add_player(room,uid,user)
@@ -80,21 +185,27 @@ def memory_config(room, uid, key, value):
 def memory_ready(room, uid):
     with game.LOCK:
         uid=str(uid)
-        if uid not in room.get("players",{}): return False,"Avval o‘yinga qo‘shiling."
+        if uid not in room.get("players", {}): return False,"Avval o‘yinga qo‘shiling."
         if room.get("status")!="lobby": return False,"O‘yin allaqachon boshlangan."
+        mode=room.get("memory_mode", "duel")
+        if mode == "teams":
+            order=_memory_turn_order(room)
+            if not order: return False, "Boshlash uchun 1-guruh va 2-guruhga kamida bittadan o‘yinchi kerak."
+            room["turn_order"]=order; room["turn_order_index"]=0; room["turn"]=order[0]
+            room["scores"]={"1":0,"2":0}
+        else:
+            players=list(room.get("players", {}))
+            if len(players) < 2: return False, "2 kishilik o‘yinni boshlash uchun yana bir o‘yinchi qo‘shilsin."
+            room["turn_order"]=players; room["turn_order_index"]=0; room["turn"]=players[0]
+            room["scores"]={k:0 for k in players}
         rows,cols=MEMORY_SIZES.get(room.get("memory_size") or "4x4", MEMORY_SIZES["4x4"])
         pairs=rows*cols//2
         pool=MEMORY_SYMBOLS.get(room.get("memory_symbols") or "fruits", MEMORY_SYMBOLS["fruits"])
         chosen=(pool*((pairs//len(pool))+1))[:pairs]
-        deck=chosen*2
-        random.shuffle(deck)
+        deck=chosen*2; random.shuffle(deck)
         room["board"]=[{"symbol":x,"state":"hidden"} for x in deck]
-        room["turn"]=uid
-        room["scores"]={k:0 for k in room["players"]}
-        room["status"]="playing"
-        room["memory_pending"]=[]
-        room["memory_waiting"]=False
-        room["last_mismatch"]=None
+        room["status"]="playing"; room["memory_pending"]=[]
+        room["memory_waiting"]=False; room["last_mismatch"]=None
         room["memory_started_by"]=uid
         room["updated_at"]=game.time.time(); room["version"]+=1; game._save()
     return True,None
@@ -118,7 +229,8 @@ def memory_flip(room, uid, index):
             a,c=pending
             if b[a]["symbol"]==b[c]["symbol"]:
                 b[a]["state"]=b[c]["state"]="matched"
-                room["scores"][uid]=room["scores"].get(uid,0)+1
+                scorer = room.get("players", {}).get(uid, {}).get("team") if room.get("memory_mode") == "teams" else uid
+                room["scores"][str(scorer)]=room["scores"].get(str(scorer),0)+1
                 pending.clear()
             else:
                 # Juft bo'lmagan ikki karta qisqa vaqt ochiq turadi. Shu
@@ -130,7 +242,7 @@ def memory_flip(room, uid, index):
             if all(x["state"]=="matched" for x in b):
                 room["status"]="finished"
                 vals=list(room["scores"].items())
-                room["winner"] = max(vals,key=lambda x:x[1])[0] if vals and (len(vals)==1 or vals[0][1]!=vals[1][1]) else None
+                room["winner"] = max(vals,key=lambda x:x[1])[0] if vals and sum(1 for _,v in vals if v == max(x[1] for x in vals)) == 1 else None
         room["updated_at"]=game.time.time(); room["version"]+=1; game._save()
     return True,None
 
@@ -147,10 +259,16 @@ def memory_hide_mismatch(room):
         room["memory_pending"]=[]
         room["memory_waiting"]=False
         room["last_mismatch"]=None
-        players=list(room.get("players", {}))
-        current=str(room.get("turn"))
-        others=[x for x in players if x != current]
-        if others: room["turn"]=others[0]
+        stored_order=room.get("turn_order")
+        order=list(stored_order or room.get("players", {}).keys())
+        if order:
+            if stored_order:
+                idx=int(room.get("turn_order_index", 0))
+            else:
+                current=str(room.get("turn"))
+                idx=order.index(current) if current in order else -1
+            room["turn_order_index"]=(idx+1) % len(order)
+            room["turn"]=str(order[room["turn_order_index"]])
         room["updated_at"]=game.time.time(); room["version"]+=1; game._save()
         return True
 
@@ -196,6 +314,8 @@ def _checkers_kb(room, selected=None):
         kb.append(row)
     if room.get("status") == "lobby":
         kb.append([InlineKeyboardButton("⚪ Oq", callback_data=f"cg:side:{room['id']}:w"), InlineKeyboardButton("⚫ Qora", callback_data=f"cg:side:{room['id']}:b")])
+    if room.get("status") == "finished":
+        kb.append([InlineKeyboardButton("🔄 Qayta boshlash", callback_data=f"cg:restart:{room['id']}")])
     kb.append([InlineKeyboardButton("🔄 Yangilash", callback_data=f"cg:refresh:{room['id']}")])
     return InlineKeyboardMarkup(kb)
 
@@ -222,6 +342,8 @@ def _ttt_kb(room):
         kb.append([InlineKeyboardButton(icons[room["board"][r*3+c]], callback_data=f"cg:t:{room['id']}:{r*3+c}") for c in range(3)])
     if room.get("status")=="lobby":
         kb.append([InlineKeyboardButton("❌ X", callback_data=f"cg:mark:{room['id']}:x"), InlineKeyboardButton("⭕ O", callback_data=f"cg:mark:{room['id']}:o")])
+    if room.get("status")=="finished":
+        kb.append([InlineKeyboardButton("🔄 Qayta boshlash", callback_data=f"cg:restart:{room['id']}")])
     kb.append([InlineKeyboardButton("🔄 Yangilash", callback_data=f"cg:refresh:{room['id']}")])
     return InlineKeyboardMarkup(kb)
 

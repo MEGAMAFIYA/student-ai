@@ -181,6 +181,8 @@ _DEFAULT_DATA = {
     "features": dict(_DEFAULT_FEATURES),
     "audit_log": [],
     "reservations": {},         # {"<reservation_id>": {...}} — ko'rilsin: reserve_balance()
+    "registered_users": {},      # first-ever /start registry; survives account deletion/restart
+    "referrals": {},             # "<invitee_id>": {"referrer_id": str, "created_at": ISO}
 }
 
 MAX_TRANSACTIONS_PER_USER_SHOWN = 30   # "🧾 To'lovlar tarixi"da ko'rsatiladigan maksimal son
@@ -269,6 +271,69 @@ def log_audit(event: str, actor_id=None, payment_id: str | None = None,
 
 def get_audit_log(limit: int = 100) -> list:
     return list(reversed(_data["audit_log"]))[:limit]
+
+
+# ============================================================
+# 👥 Yangi foydalanuvchi va taklif (referral) tizimi
+# ============================================================
+
+WELCOME_BONUS = 10_000
+REFERRAL_BONUS = 5_000
+
+
+def register_start(user_id: int, referrer_id: int | None = None, previously_seen: bool = False) -> dict:
+    """Foydalanuvchini birinchi /start paytida bir marta ro'yxatdan o'tkazadi.
+
+    Qayta /start, akkauntni botdan o'chirib qayta kirish yoki eski referral
+    havoladan yana kirish bonusni takrorlamaydi. Wallet allaqachon mavjud
+    bo'lsa, legacy foydalanuvchi deb hisoblanadi va welcome bonus berilmaydi.
+    """
+    uid = str(int(user_id))
+    rid = str(int(referrer_id)) if referrer_id is not None else None
+    with _lock:
+        registered = _data.setdefault("registered_users", {})
+        referrals = _data.setdefault("referrals", {})
+        if uid in registered:
+            return {"is_new": False, "welcome_bonus": 0, "referral_bonus": 0}
+
+        # Oldingi versiyada ishlagan foydalanuvchining balansini nolga tushirmaslik
+        # va eski foydalanuvchiga noto'g'ri yangi bonus bermaslik.
+        legacy_wallet = bool(previously_seen) or uid in _data.get("wallets", {})
+        now = _now_iso()
+        registered[uid] = {"created_at": now, "source": "legacy" if legacy_wallet else "start"}
+        welcome = 0
+        referral_bonus = 0
+        if not legacy_wallet:
+            wallet_row = _data.setdefault("wallets", {}).setdefault(uid, {"balance": 0})
+            before = int(wallet_row.get("balance", 0))
+            wallet_row["balance"] = before + WELCOME_BONUS
+            welcome = WELCOME_BONUS
+            _new_tx_locked(int(user_id), "WELCOME_BONUS", welcome, before,
+                           wallet_row["balance"], description="Yangi foydalanuvchi bonusi")
+
+            if rid and rid != uid and rid in registered:
+                referrals[uid] = {"referrer_id": rid, "created_at": now}
+                ref_wallet = _data.setdefault("wallets", {}).setdefault(rid, {"balance": 0})
+                ref_before = int(ref_wallet.get("balance", 0))
+                ref_wallet["balance"] = ref_before + REFERRAL_BONUS
+                referral_bonus = REFERRAL_BONUS
+                _new_tx_locked(int(rid), "REFERRAL_BONUS", referral_bonus, ref_before,
+                               ref_wallet["balance"], description=f"Taklif bonusi: {uid}")
+                _log_audit_locked("REFERRAL_BONUS", actor_id=int(user_id), user_id=int(rid),
+                                  amount=REFERRAL_BONUS, details=f"invitee={uid}")
+        _log_audit_locked("USER_REGISTERED", user_id=int(user_id), amount=welcome,
+                          details=f"source={'legacy' if legacy_wallet else 'start'};referrer={rid or ''}")
+        _save()
+        return {"is_new": not legacy_wallet, "welcome_bonus": welcome,
+                "referral_bonus": referral_bonus}
+
+
+def referral_stats(user_id: int) -> dict:
+    uid = str(int(user_id))
+    with _lock:
+        invited = sum(1 for item in _data.get("referrals", {}).values()
+                      if str(item.get("referrer_id")) == uid)
+        return {"invited": invited, "bonus_total": invited * REFERRAL_BONUS}
 
 
 # ============================================================

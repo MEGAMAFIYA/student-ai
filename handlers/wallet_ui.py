@@ -39,6 +39,7 @@ import functools
 import json
 import logging
 import re
+from urllib.parse import quote
 from io import BytesIO
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, InputFile
@@ -107,13 +108,14 @@ def insufficient_balance_text(feature_name: str, required: int, available: int) 
         f"Funksiya: {feature_name}\n"
         f"Kerak: {_fmt_sum(required)}\n"
         f"Balans: {_fmt_sum(available)}\n\n"
-        "Balansni to'ldirish uchun pastdagi tugmani bosing."
+        "Balansni to'ldirish uchun pastdagi tugmani bosing yoki do'stlaringizni taklif qiling."
     )
 
 
 def insufficient_balance_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("➕ Balansni to'ldirish", callback_data="menu:wallet_topup")],
+        [InlineKeyboardButton("👥 Do'st taklif qilib to'ldirish", callback_data="menu:wallet_invite")],
         [InlineKeyboardButton("⬅️ Bosh menyu", callback_data="menu:back")],
     ])
 
@@ -185,10 +187,48 @@ async def entry_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("➕ Balansni to'ldirish", callback_data="menu:wallet_topup")],
+            [InlineKeyboardButton("👥 Do'st taklif qilish", callback_data="menu:wallet_invite")],
             [InlineKeyboardButton("🧾 To'lovlar tarixi", callback_data="menu:wallet_history")],
             [InlineKeyboardButton("⬅️ Bosh menyu", callback_data="menu:back")],
         ]),
     )
+
+
+# ============================================================
+# 👥 Do'st taklif qilish orqali balansni to'ldirish
+# ============================================================
+
+async def entry_invite(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user = update.effective_user
+    await query.answer()
+    if not user:
+        return
+    # Botning eski foydalanuvchisi ham referral egasi sifatida tanilishi kerak;
+    # oldindan ko'rilgan deb qayd etamiz, shunda welcome bonusi takrorlanmaydi.
+    try:
+        wallet.register_start(user.id, previously_seen=True)
+    except Exception:
+        logger.exception("Referral egasini ro'yxatdan o'tkazishda xato: %s", user.id)
+    username = str(getattr(__import__("config"), "BOT_USERNAME_FALLBACK", "Student_ai_uz_bot")).lstrip("@")
+    link = f"https://t.me/{username}?start=ref_{user.id}"
+    stats = wallet.referral_stats(user.id)
+    text = (
+        "👥 <b>Do‘stlarni taklif qilib balansni to‘ldirish</b>\n\n"
+        "Sizning maxsus havolangiz:\n"
+        f"<code>{link}</code>\n\n"
+        "Do‘stingiz ushbu havola orqali botga birinchi marta kirib <code>/start</code> bossa, "
+        "sizga <b>5 000 so‘m</b>, unga esa <b>10 000 so‘m</b> boshlang‘ich bonus beriladi.\n\n"
+        "⚠️ Har bir Telegram akkaunti uchun bonus faqat bir marta beriladi. "
+        "Avval botdan foydalangan odam qayta kirsa, bonus berilmaydi.\n\n"
+        f"👤 Takliflaringiz: <b>{stats['invited']}</b>\n"
+        f"💰 Takliflardan olganingiz: <b>{stats['bonus_total']:,} so‘m</b>"
+    )
+    await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([
+        [InlineKeyboardButton("📤 Havolani ulashish", url=f"https://t.me/share/url?url={quote(link, safe='')}")],
+        [InlineKeyboardButton("💰 Balansim", callback_data="menu:wallet_balance")],
+        [InlineKeyboardButton("⬅️ Bosh menyu", callback_data="menu:back")],
+    ]))
 
 
 # ============================================================

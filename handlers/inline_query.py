@@ -374,12 +374,15 @@ async def on_inline_query(
                             "Har bir yurish shu xabardagi tugmalar orqali qilinadi.\n"
                             "Avval belgini tanlang, sherigingiz qo‘shilsin.")
                 else:
-                    kb = [[InlineKeyboardButton("4×4", callback_data=f"cg:msize:{rid}:4x4"), InlineKeyboardButton("4×6", callback_data=f"cg:msize:{rid}:4x6"), InlineKeyboardButton("6×6", callback_data=f"cg:msize:{rid}:6x6")],
-                          [InlineKeyboardButton("🍎 Mevalar", callback_data=f"cg:msym:{rid}:fruits"), InlineKeyboardButton("😀 Emoji", callback_data=f"cg:msym:{rid}:emoji"), InlineKeyboardButton("🔢 Raqamlar", callback_data=f"cg:msym:{rid}:numbers")],
+                    kb = [[InlineKeyboardButton("👤 2 kishilik", callback_data=f"cg:mmode:{rid}:duel"),
+                           InlineKeyboardButton("👥 Guruh bo‘lib", callback_data=f"cg:mmode:{rid}:teams")],
+                          [InlineKeyboardButton("4×4", callback_data=f"cg:msize:{rid}:4x4"), InlineKeyboardButton("4×6", callback_data=f"cg:msize:{rid}:4x6"), InlineKeyboardButton("6×6", callback_data=f"cg:msize:{rid}:6x6")],
+                          [InlineKeyboardButton("🍒 Mevalar", callback_data=f"cg:msym:{rid}:fruits"), InlineKeyboardButton("🔢 Raqamlar", callback_data=f"cg:msym:{rid}:numbers"), InlineKeyboardButton("🙃 Emoji", callback_data=f"cg:msym:{rid}:faces")],
+                          [InlineKeyboardButton("🐇 Hayvonlar", callback_data=f"cg:msym:{rid}:animals"), InlineKeyboardButton("🚀 Kosmos", callback_data=f"cg:msym:{rid}:space"), InlineKeyboardButton("⚽ Sport", callback_data=f"cg:msym:{rid}:sports")],
                           [InlineKeyboardButton("👥 Qo‘shilish", callback_data=f"cg:join:{rid}")]]
                     text = ("🧠 <b>Aqil charxi</b>\n\n"
-                            "👥 2 kishi chatning o‘zida o‘ynaydi.\n"
-                            "Katak o‘lchami va belgilar turini tanlang, keyin ikkala o‘yinchi <b>▶️ Boshlash</b> tugmasini bosadi.")
+                            "O‘yin Telegram chatining o‘zida, Mini App’siz ishlaydi.\n"
+                            "Avval 2 kishilik yoki guruh rejimini tanlang, katak va emoji turini sozlang, keyin <b>▶️ Boshlash</b> tugmasini bosing.")
                 results.append(InlineQueryResultArticle(
                     id=f"game_{gkey}_{uuid.uuid4().hex}", title=title, description=desc,
                     input_message_content=InputTextMessageContent(text, parse_mode="HTML"),

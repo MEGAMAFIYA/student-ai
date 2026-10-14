@@ -77,6 +77,32 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.warning("📱 Mobile login payload xatosi: %s", e)
 
+    # Har bir Telegram akkaunti faqat birinchi /start'da ro'yxatdan o'tadi.
+    # Referral payload: ref_<telegram_user_id>; login payload yuqorida alohida qayta ishlanadi.
+    start_result = None
+    if user:
+        referrer_id = None
+        if payload.startswith("ref_"):
+            try:
+                candidate = int(payload[4:])
+                if candidate > 0 and candidate != user.id:
+                    referrer_id = candidate
+            except (TypeError, ValueError):
+                referrer_id = None
+        try:
+            previously_seen = user.id in storage.get_all_users()
+            start_result = wallet.register_start(user.id, referrer_id=referrer_id, previously_seen=previously_seen)
+        except Exception:
+            logger.exception("Foydalanuvchini ro'yxatdan o'tkazish/referral xatosi: %s", user.id)
+        # /start yangi foydalanuvchi bo'lsa ham profil ro'yxatiga qo'shiladi;
+        # lekin bu yozuv welcome/referral qarori qabul qilingandan keyin qilinadi.
+        try:
+            storage.record_user(user.id, getattr(user, "username", "") or "",
+                                getattr(user, "first_name", "") or "",
+                                getattr(user, "last_name", "") or "")
+        except Exception:
+            logger.debug("/start foydalanuvchi profilini saqlashda xato", exc_info=True)
+
     context.user_data.clear()
     await update.message.reply_text(
         "🤖 *Talaba AI botiga xush kelibsiz!*\n\n"
@@ -88,6 +114,12 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=main_menu_keyboard(),
     )
+    if start_result and start_result.get("welcome_bonus"):
+        await update.message.reply_text(
+            "🎁 Sizga yangi foydalanuvchi bonusi berildi: *10 000 so'm*!\n"
+            "💰 Balansingizni ‘💰 Balansim’ tugmasidan ko‘rishingiz mumkin.",
+            parse_mode=ParseMode.MARKDOWN,
+        )
 
 
 async def universal_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):

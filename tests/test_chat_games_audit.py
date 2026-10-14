@@ -189,5 +189,71 @@ class ChatGamesAuditTests(unittest.TestCase):
             self.assertEqual(len(set(symbols)), rows*cols//2)
             self.assertEqual(sorted(symbols.count(x) for x in set(symbols)), [2]*(rows*cols//2))
 
+
+    def test_memory_team_turn_order_for_two_vs_one(self):
+        room={'id':'teamtest','game':'memory','status':'lobby',
+              'players':{'1':{'name':'Ali'},'2':{'name':'Vali'},'3':{'name':'Husan'}},
+              'teams':{'1':['1','2'],'2':['3']},'memory_mode':'teams',
+              'memory_size':'4x4','memory_symbols':'fruits','memory_ready':{},
+              'board':[],'scores':{},'version':0,'updated_at':0}
+        self.assertTrue(chat_games.memory_ready(room,'1')[0])
+        self.assertEqual(room['turn_order'], ['1','3','2','3'])
+        self.assertEqual(room['turn'], '1')
+
+    def test_memory_team_turn_order_for_two_vs_two(self):
+        room={'id':'teamtest','game':'memory','status':'lobby',
+              'players':{'1':{'name':'Ali'},'2':{'name':'Vali'},'3':{'name':'Husan'},'4':{'name':'Olim'}},
+              'teams':{'1':['1','2'],'2':['3','4']},'memory_mode':'teams',
+              'memory_size':'4x4','memory_symbols':'fruits','memory_ready':{},
+              'board':[],'scores':{},'version':0,'updated_at':0}
+        self.assertTrue(chat_games.memory_ready(room,'1')[0])
+        self.assertEqual(room['turn_order'], ['1','3','2','4'])
+
+    def test_memory_team_mismatch_advances_to_next_scheduled_player(self):
+        room={'id':'teamtest','game':'memory','status':'playing',
+              'players':{'1':{'name':'Ali','team':'1'},'2':{'name':'Vali','team':'1'},'3':{'name':'Husan','team':'2'}},
+              'teams':{'1':['1','2'],'2':['3']},'memory_mode':'teams',
+              'turn_order':['1','3','2','3'],'turn_order_index':0,'turn':'1',
+              'board':[{'symbol':'🍎','state':'hidden'},{'symbol':'🍐','state':'hidden'}],
+              'scores':{'1':0,'2':0},'memory_pending':[],'memory_waiting':False,
+              'last_mismatch':None,'version':0,'updated_at':0}
+        self.assertTrue(chat_games.memory_flip(room,'1',0)[0])
+        self.assertTrue(chat_games.memory_flip(room,'1',1)[0])
+        self.assertTrue(chat_games.memory_hide_mismatch(room))
+        self.assertEqual(room['turn'],'3')
+
+    def test_finished_memory_has_restart_button(self):
+        room={'id':'restarttest','game':'memory','status':'finished','players':{'1':{'name':'Ali'},'2':{'name':'Vali'}},
+              'memory_mode':'duel','memory_size':'4x4','memory_symbols':'fruits','board':[], 'turn':'1',
+              'scores':{'1':8,'2':0},'winner':'1','version':0,'updated_at':0}
+        _,markup=chat_games.render(room)
+        self.assertIn('🔄 Qayta boshlash',[b.text for row in markup.inline_keyboard for b in row])
+        self.assertTrue(chat_games.restart_room(room,1)[0])
+        self.assertEqual(room['status'],'lobby')
+        self.assertEqual(room['board'],[])
+
+
+    def test_finished_tictactoe_has_restart_button_and_resets_board(self):
+        room=make_room('tictactoe')
+        room.update(status='finished', board=['x','x','x','o','o',None,None,None,None], winner='1')
+        room['players']={'1':{'name':'Ali','mark':'x'},'2':{'name':'Vali','mark':'o'}}
+        _,markup=chat_games.render(room)
+        self.assertIn('🔄 Qayta boshlash',[b.text for row in markup.inline_keyboard for b in row])
+        self.assertTrue(chat_games.restart_room(room,1)[0])
+        self.assertEqual(room['status'],'playing')
+        self.assertEqual(room['board'],[None]*9)
+        self.assertEqual(room['turn'],'x')
+
+    def test_finished_checkers_has_restart_button_and_resets_board(self):
+        room=make_room('checkers')
+        room.update(status='finished', winner='w')
+        room['players']={'1':{'name':'Ali','side':'w'},'2':{'name':'Vali','side':'b'}}
+        _,markup=chat_games.render(room)
+        self.assertIn('🔄 Qayta boshlash',[b.text for row in markup.inline_keyboard for b in row])
+        self.assertTrue(chat_games.restart_room(room,1)[0])
+        self.assertEqual(room['status'],'playing')
+        self.assertEqual(room['board'],game._initial_checkers())
+        self.assertEqual(room['turn'],'w')
+
 if __name__ == '__main__':
     unittest.main()

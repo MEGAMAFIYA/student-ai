@@ -736,3 +736,48 @@ class DuplicatePaymentApprovalRefundAndConcurrencyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReferralRegistrationTests(unittest.TestCase):
+    def setUp(self):
+        _reset_wallet_state()
+
+    def test_new_user_gets_welcome_bonus_only_once(self):
+        result = wallet.register_start(101)
+        self.assertEqual(result["welcome_bonus"], 10000)
+        self.assertEqual(wallet.get_balance(101), 10000)
+        again = wallet.register_start(101)
+        self.assertEqual(again["welcome_bonus"], 0)
+        self.assertEqual(wallet.get_balance(101), 10000)
+
+    def test_referral_credits_inviter_once_and_invitee_gets_welcome(self):
+        wallet.register_start(201)
+        first = wallet.register_start(202, referrer_id=201)
+        self.assertEqual(first["welcome_bonus"], 10000)
+        self.assertEqual(first["referral_bonus"], 5000)
+        self.assertEqual(wallet.get_balance(201), 15000)
+        self.assertEqual(wallet.get_balance(202), 10000)
+        wallet.register_start(202, referrer_id=201)
+        self.assertEqual(wallet.get_balance(201), 15000)
+        self.assertEqual(wallet.referral_stats(201)["invited"], 1)
+
+    def test_self_referral_and_unregistered_referrer_are_ignored(self):
+        self_result = wallet.register_start(301, referrer_id=301)
+        self.assertEqual(self_result["referral_bonus"], 0)
+        wallet.register_start(302, referrer_id=999)
+        self.assertEqual(wallet.get_balance(999), 0)
+
+    def test_legacy_wallet_does_not_get_new_user_bonus(self):
+        wallet.credit_balance(401, 2500, "legacy")
+        result = wallet.register_start(401)
+        self.assertEqual(result["welcome_bonus"], 0)
+        self.assertEqual(wallet.get_balance(401), 2500)
+
+    def test_previously_seen_user_does_not_get_welcome_or_referral_bonus(self):
+        wallet.register_start(501)
+        wallet.register_start(502, previously_seen=True)
+        result = wallet.register_start(502, referrer_id=501)
+        self.assertEqual(result["welcome_bonus"], 0)
+        self.assertEqual(result["referral_bonus"], 0)
+        self.assertEqual(wallet.get_balance(501), 10000)
+        self.assertEqual(wallet.get_balance(502), 0)

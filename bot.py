@@ -79,6 +79,12 @@ async def _track_user_message(update, context):
     user = getattr(update, "effective_user", None)
     if not user:
         return
+    # /start oldidan ro'yxatni tekshirish imkonini beramiz: shu sababli
+    # /start xabari aynan shu handlerda oldindan qayd etilmaydi.
+    message = getattr(update, "message", None)
+    first_token = str(getattr(message, "text", "") or "").split(maxsplit=1)[:1]
+    if message and first_token and (first_token[0].lower() == "/start" or first_token[0].lower().startswith("/start@")):
+        return
     try:
         storage.record_user(
             user.id,
@@ -1056,8 +1062,11 @@ async def _chat_game_callback(update, context):
         elif action == "t": ok,err=chat_games.ttt_move(room,user.id,int(parts[3]))
         elif action == "msize": ok,err=chat_games.memory_config(room,user.id,"size",parts[3])
         elif action == "msym": ok,err=chat_games.memory_config(room,user.id,"symbols",parts[3])
+        elif action == "mmode": ok,err=chat_games.memory_set_mode(room,user.id,parts[3])
+        elif action == "mteam": ok,err=chat_games.memory_join_team(room,user.id,user,parts[3])
         elif action == "mready": ok,err=chat_games.memory_ready(room,user.id)
         elif action == "mf": ok,err=chat_games.memory_flip(room,user.id,int(parts[3]))
+        elif action == "restart": ok,err=chat_games.restart_room(room,user.id)
         elif action == "refresh": ok,err=True,None
         else: ok,err=False,"Noma’lum o‘yin tugmasi."
     except Exception:
@@ -1551,6 +1560,7 @@ def main():
     # 💰 Balansim / 🧾 To'lovlar tarixi — conversation emas, oddiy callback
     app.add_handler(CallbackQueryHandler(wallet_ui.entry_balance, pattern="^menu:wallet_balance$"))
     app.add_handler(CallbackQueryHandler(wallet_ui.entry_history, pattern="^menu:wallet_history$"))
+    app.add_handler(CallbackQueryHandler(wallet_ui.entry_invite, pattern="^menu:wallet_invite$"))
 
     # 🗂 Mening fayllarim — conversation emas, oddiy callback (ro'yxat + qayta yuborish)
     app.add_handler(CallbackQueryHandler(my_files.entry, pattern="^menu:myfiles$"))
