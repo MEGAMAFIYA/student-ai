@@ -115,12 +115,12 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=main_menu_keyboard(),
     )
     if start_result and start_result.get("welcome_bonus"):
+        credited = int(start_result["welcome_bonus"])
         await update.message.reply_text(
-            "🎁 Sizga yangi foydalanuvchi bonusi berildi: *10 000 so'm*!\n"
+            f"🎁 Boshlang‘ich bonus hisobingizga qo‘shildi: *{credited:,} so‘m*!\\n"
             "💰 Balansingizni ‘💰 Balansim’ tugmasidan ko‘rishingiz mumkin.",
             parse_mode=ParseMode.MARKDOWN,
         )
-
 
 async def universal_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query

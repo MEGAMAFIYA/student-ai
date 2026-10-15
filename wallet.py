@@ -282,38 +282,42 @@ REFERRAL_BONUS = 5_000
 
 
 def register_start(user_id: int, referrer_id: int | None = None, previously_seen: bool = False) -> dict:
-    """Foydalanuvchini birinchi /start paytida bir marta ro'yxatdan o'tkazadi.
+    """Birinchi /start'ni idempotent ro'yxatdan o'tkazadi.
 
-    Qayta /start, akkauntni botdan o'chirib qayta kirish yoki eski referral
-    havoladan yana kirish bonusni takrorlamaydi. Wallet allaqachon mavjud
-    bo'lsa, legacy foydalanuvchi deb hisoblanadi va welcome bonus berilmaydi.
+    Yangi foydalanuvchining balansini kamida WELCOME_BONUS miqdoriga yetkazadi.
+    Oldindan 8 000 mavjud bo'lsa, faqat 2 000 qo'shiladi. Eski foydalanuvchi
+    previously_seen orqali belgilanadi; takroriy /start bonusni takrorlamaydi.
     """
     uid = str(int(user_id))
     rid = str(int(referrer_id)) if referrer_id is not None else None
     with _lock:
         registered = _data.setdefault("registered_users", {})
         referrals = _data.setdefault("referrals", {})
+        wallets = _data.setdefault("wallets", {})
         if uid in registered:
             return {"is_new": False, "welcome_bonus": 0, "referral_bonus": 0}
 
-        # Oldingi versiyada ishlagan foydalanuvchining balansini nolga tushirmaslik
-        # va eski foydalanuvchiga noto'g'ri yangi bonus bermaslik.
-        legacy_wallet = bool(previously_seen) or uid in _data.get("wallets", {})
         now = _now_iso()
-        registered[uid] = {"created_at": now, "source": "legacy" if legacy_wallet else "start"}
+        # Balans yozuvi boshqa modul tomonidan /start'dan oldin yaratilgan
+        # bo'lishi mumkin. Eski foydalanuvchini storage registri aniqlaydi.
+        valid_referral = bool(rid and rid != uid and rid in registered)
+        legacy_user = bool(previously_seen) or (uid in wallets and not valid_referral)
+        registered[uid] = {"created_at": now, "source": "legacy" if legacy_user else "start"}
         welcome = 0
         referral_bonus = 0
-        if not legacy_wallet:
-            wallet_row = _data.setdefault("wallets", {}).setdefault(uid, {"balance": 0})
-            before = int(wallet_row.get("balance", 0))
-            wallet_row["balance"] = before + WELCOME_BONUS
-            welcome = WELCOME_BONUS
-            _new_tx_locked(int(user_id), "WELCOME_BONUS", welcome, before,
-                           wallet_row["balance"], description="Yangi foydalanuvchi bonusi")
 
-            if rid and rid != uid and rid in registered:
+        if not legacy_user:
+            wallet_row = wallets.setdefault(uid, {"balance": 0})
+            before = int(wallet_row.get("balance", 0))
+            welcome = max(0, WELCOME_BONUS - before)
+            if welcome:
+                wallet_row["balance"] = before + welcome
+                _new_tx_locked(int(user_id), "WELCOME_BONUS", welcome, before,
+                               wallet_row["balance"], description="Yangi foydalanuvchi boshlang'ich balansini to'ldirish")
+
+            if valid_referral:
                 referrals[uid] = {"referrer_id": rid, "created_at": now}
-                ref_wallet = _data.setdefault("wallets", {}).setdefault(rid, {"balance": 0})
+                ref_wallet = wallets.setdefault(rid, {"balance": 0})
                 ref_before = int(ref_wallet.get("balance", 0))
                 ref_wallet["balance"] = ref_before + REFERRAL_BONUS
                 referral_bonus = REFERRAL_BONUS
@@ -321,10 +325,11 @@ def register_start(user_id: int, referrer_id: int | None = None, previously_seen
                                ref_wallet["balance"], description=f"Taklif bonusi: {uid}")
                 _log_audit_locked("REFERRAL_BONUS", actor_id=int(user_id), user_id=int(rid),
                                   amount=REFERRAL_BONUS, details=f"invitee={uid}")
+
         _log_audit_locked("USER_REGISTERED", user_id=int(user_id), amount=welcome,
-                          details=f"source={'legacy' if legacy_wallet else 'start'};referrer={rid or ''}")
+                          details=f"source={'legacy' if legacy_user else 'start'};referrer={rid or ''}")
         _save()
-        return {"is_new": not legacy_wallet, "welcome_bonus": welcome,
+        return {"is_new": not legacy_user, "welcome_bonus": welcome,
                 "referral_bonus": referral_bonus}
 
 

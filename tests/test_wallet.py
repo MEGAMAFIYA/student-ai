@@ -81,8 +81,47 @@ def _reset_wallet_state():
         "features": {k: dict(v) for k, v in wallet._DEFAULT_FEATURES.items()},
         "audit_log": [],
         "reservations": {},
+        "registered_users": {},
+        "referrals": {},
     }
     _FAKE_STORE.clear()
+
+
+class WalletReferralTests(unittest.TestCase):
+    def setUp(self):
+        _reset_wallet_state()
+
+    def test_referral_gives_inviter_5000_and_invitee_10000(self):
+        wallet.register_start(100, previously_seen=True)
+        result = wallet.register_start(200, referrer_id=100)
+        self.assertEqual(result["welcome_bonus"], 10000)
+        self.assertEqual(result["referral_bonus"], 5000)
+        self.assertEqual(wallet.get_balance(200), 10000)
+        self.assertEqual(wallet.get_balance(100), 5000)
+
+    def test_existing_prestart_balance_is_topped_up_to_10000(self):
+        wallet._data["wallets"]["200"] = {"balance": 8000}
+        wallet.register_start(100, previously_seen=True)
+        result = wallet.register_start(200, referrer_id=100)
+        self.assertEqual(result["welcome_bonus"], 2000)
+        self.assertEqual(result["referral_bonus"], 5000)
+        self.assertEqual(wallet.get_balance(200), 10000)
+        self.assertEqual(wallet.get_balance(100), 5000)
+
+    def test_repeat_start_does_not_duplicate_any_bonus(self):
+        wallet.register_start(100, previously_seen=True)
+        wallet.register_start(200, referrer_id=100)
+        result = wallet.register_start(200, referrer_id=100)
+        self.assertEqual(result["welcome_bonus"], 0)
+        self.assertEqual(result["referral_bonus"], 0)
+        self.assertEqual(wallet.get_balance(200), 10000)
+        self.assertEqual(wallet.get_balance(100), 5000)
+
+    def test_known_legacy_user_does_not_receive_bonus(self):
+        wallet._data["wallets"]["200"] = {"balance": 8000}
+        result = wallet.register_start(200, referrer_id=100, previously_seen=True)
+        self.assertEqual(result["welcome_bonus"], 0)
+        self.assertEqual(wallet.get_balance(200), 8000)
 
 
 class WalletBalanceTests(unittest.TestCase):
