@@ -28,10 +28,30 @@ jobs:
         with:
           gradle-version: '8.7'
 
-      - name: Debug APK yig'ish
-        run: gradle assembleDebug --no-daemon
+      - name: Debug APK yig'ish (to'liq log bilan)
+        id: build_apk
+        shell: bash
+        run: |
+          set +e
+          gradle assembleDebug --no-daemon --stacktrace --warning-mode all 2>&1 | tee build-apk.log
+          build_status=${PIPESTATUS[0]}
+          echo "exit_code=$build_status" >> "$GITHUB_OUTPUT"
+          exit "$build_status"
+
+      - name: Build logini saqlash (xato bo'lsa ham)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: student-ai-build-diagnostics
+          path: |
+            build-apk.log
+            app/build/reports/
+            app/build/outputs/logs/
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: APK'ni artifact sifatida saqlash
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: student-ai-debug-apk

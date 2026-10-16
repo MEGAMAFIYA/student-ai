@@ -97,6 +97,13 @@ interface ApiService {
     @GET("api/mobile/auth/poll")
     suspend fun authPoll(@Query("token") token: String): PollResponse
 
+    // Generic feature actions used by FeatureActivity.
+    @POST("api/mobile/task")
+    suspend fun task(@Body body: MobileTaskRequest): Response<MobileTaskResponse>
+
+    @POST("api/mobile/file-task")
+    suspend fun fileTask(@Body body: MobileFileTaskRequest): Response<MobileTaskResponse>
+
     @POST("api/mobile/chat")
     suspend fun chat(@Body body: ChatRequest): Response<ChatResponse>
 
