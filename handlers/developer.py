@@ -40,6 +40,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 
 import ai_clients
 import render_api
+import render_keepalive
 import config
 import pro_subscription
 import storage
@@ -1017,6 +1018,7 @@ def _render_service_text(service: dict) -> str:
         url = service.get("url") or "—"
     acc_label = service.get("_render_account_label")
     acc_line = f"👤 Hisob: <code>{_esc(acc_label)}</code>\n" if acc_label else ""
+    keep_line = "😴 Uxlamaslik: <b>yoqilgan</b> (har 5 daqiqada)\n" if storage.get_keepalive(sid) else ""
     return (
         f"☁️ <b>{_esc(_render_service_name(service))}</b>\n\n"
         f"{acc_line}"
@@ -1026,7 +1028,8 @@ def _render_service_text(service: dict) -> str:
         f"🌿 Branch: <code>{_esc(branch)}</code>\n"
         f"🔄 Auto Deploy: <code>{_esc(auto if auto is not None else '—')}</code>\n"
         f"🔗 Repo: <code>{_esc(repo)}</code>\n"
-        f"🌐 URL: <code>{_esc(url)}</code>\n\n"
+        f"🌐 URL: <code>{_esc(url)}</code>\n"
+        f"{keep_line}\n"
         "Kerakli amalni tanlang:"
     )
 
@@ -1049,6 +1052,10 @@ def _render_service_keyboard_for(service: dict) -> InlineKeyboardMarkup:
         ],
         [InlineKeyboardButton("🟡 O'rta log", callback_data=f"dev:rlogs:{sid}:medium")],
         [InlineKeyboardButton("📄 Loglarni ko'chirish (PDF)", callback_data=f"dev:rpdf:{sid}")],
+        [InlineKeyboardButton(
+            "😴 Uxlamaslik ✅ (yoqilgan)" if storage.get_keepalive(sid) else "😴 Uxlamaslik",
+            callback_data=f"dev:rkeep:{sid}",
+        )],
         [
             InlineKeyboardButton("⏸️ Resume" if suspended else "⏸️ Suspend", callback_data=f"dev:r{'resume' if suspended else 'suspend'}:{sid}"),
             InlineKeyboardButton("🔄 Yangilash", callback_data=f"dev:rsvc:{sid}"),
@@ -1202,6 +1209,39 @@ def _render_log_keyboard(service_id: str, category: str) -> InlineKeyboardMarkup
         [InlineKeyboardButton("⬅️ Servis", callback_data=f"dev:rsvc:{service_id}")],
     ]
     return InlineKeyboardMarkup(rows)
+
+
+def _render_ago(ts) -> str:
+    """Vaqt tamg'asidan "N daqiqa oldin" ko'rinishidagi matn."""
+    import time as _time
+    try:
+        seconds = max(0, int(_time.time() - float(ts)))
+    except (TypeError, ValueError):
+        return "—"
+    if seconds < 60:
+        return f"{seconds} soniya oldin"
+    if seconds < 3600:
+        return f"{seconds // 60} daqiqa oldin"
+    if seconds < 86400:
+        return f"{seconds // 3600} soat oldin"
+    return f"{seconds // 86400} kun oldin"
+
+
+def _render_keepalive_status_text(service_id: str, item: dict) -> str:
+    last = render_keepalive.get_last_ping(service_id)
+    if last:
+        icon = "✅" if last.get("ok") else "⚠️"
+        last_line = f"{icon} Oxirgi so'rov: {_render_ago(last.get('ts'))} — <code>{_esc(last.get('detail') or '—')}</code>"
+    else:
+        last_line = "⏳ Oxirgi so'rov: hali yuborilmagan (birinchisi 5 daqiqa ichida)"
+    return (
+        f"😴 <b>Uxlamaslik — {_esc(item.get('name') or service_id)}</b>\n\n"
+        "Holat: <b>yoqilgan</b>\n"
+        f"🌐 URL: <code>{_esc(item.get('url') or '—')}</code>\n"
+        f"🕒 Yoqilgan: {_render_ago(item.get('enabled_ts'))}\n"
+        f"{last_line}\n\n"
+        "Bot bu manzilga har 5 daqiqada so'rov yuborib turadi."
+    )
 
 
 async def _render_api_error(query, exc: Exception, back_callback: str = "dev:render"):
@@ -2167,6 +2207,144 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _safe_edit_query(query, "✅ <b>Servis resume qilindi.</b>", reply_markup=_back_keyboard(f"dev:rsvc:{service_id}"), parse_mode="HTML")
         except Exception as exc:
             await _render_api_error(query, exc, f"dev:rsvc:{service_id}")
+        return DEV_MENU
+
+    # ---------- 😴 Uxlamaslik (keep-alive) ----------
+    if action == "rkeep":
+        service_id = parts[2]
+        existing = storage.get_keepalive(service_id)
+        if existing:
+            await _safe_edit_query(
+                query, _render_keepalive_status_text(service_id, existing),
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔔 Hozir tekshirish", callback_data=f"dev:rkeeptest:{service_id}")],
+                    [InlineKeyboardButton("🛑 O'chirish", callback_data=f"dev:rkeepoff:{service_id}")],
+                    [InlineKeyboardButton("⬅️ Servis", callback_data=f"dev:rsvc:{service_id}")],
+                ]),
+                parse_mode="HTML",
+            )
+            return DEV_MENU
+        await _safe_edit_query(query, "😴 Servis ma'lumotlari olinmoqda...", parse_mode="HTML")
+        try:
+            api_key = _render_api_key_for_service(context, service_id)
+            service = await render_api.get_service(api_key, service_id)
+            name = _render_service_name(service)
+            url = render_api.get_public_url(service)
+            back_kb = _back_keyboard(f"dev:rsvc:{service_id}")
+            if not url:
+                await _safe_edit_query(
+                    query,
+                    f"😴 <b>{_esc(name)}</b>\n\n"
+                    "❌ Bu servisning umumiy (public) URL manzili yo'q (background worker, cron job yoki "
+                    "private servis bo'lishi mumkin), shuning uchun uni tashqaridan uyg'otib bo'lmaydi.",
+                    reply_markup=back_kb, parse_mode="HTML",
+                )
+                return DEV_MENU
+            if str(service.get("suspended", "")).lower() == "suspended":
+                await _safe_edit_query(
+                    query,
+                    f"😴 <b>{_esc(name)}</b>\n\n"
+                    "⏸️ Servis suspend qilingan. So'rov yuborish uni tiklamaydi — avval <b>Resume</b> qiling.",
+                    reply_markup=back_kb, parse_mode="HTML",
+                )
+                return DEV_MENU
+            plan = render_api.get_plan(service)
+            plan_note = (
+                f"\nℹ️ Servis tarifi: <code>{_esc(plan)}</code> — pullik tarifda servis odatda uxlamaydi.\n"
+                if plan and plan != "free" else ""
+            )
+            await _safe_edit_query(
+                query,
+                f"😴 <b>Uxlamaslik — {_esc(name)}</b>\n\n"
+                f"Bot <code>{_esc(url)}</code> manziliga <b>har 5 daqiqada</b> so'rov yuborib turadi, "
+                "shunda Render bu servisni 15 daqiqalik harakatsizlikdan keyin uxlatib qo'ymaydi.\n"
+                f"{plan_note}\n"
+                "⚠️ Bepul tarifda har bir workspace'ga oyiga 750 soat beriladi. Uyg'oq turgan servis butun oy "
+                "davomida ~720 soat sarflaydi, shuning uchun bitta workspace'da bittadan ortiq servisni "
+                "uyg'oq tutsangiz soatlar tugab, servislar oy oxirigacha suspend bo'lishi mumkin.\n\n"
+                "Yoqilsinmi?",
+                reply_markup=InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton("✅ Ha, yoqish", callback_data=f"dev:rkeepon:{service_id}"),
+                        InlineKeyboardButton("❌ Yo'q", callback_data=f"dev:rsvc:{service_id}"),
+                    ],
+                ]),
+                parse_mode="HTML",
+            )
+        except Exception as exc:
+            await _render_api_error(query, exc, f"dev:rsvc:{service_id}")
+        return DEV_MENU
+
+    if action == "rkeepon":
+        service_id = parts[2]
+        await _safe_edit_query(query, "😴 Yoqilmoqda va birinchi so'rov yuborilmoqda...", parse_mode="HTML")
+        try:
+            api_key = _render_api_key_for_service(context, service_id)
+            service = await render_api.get_service(api_key, service_id)
+            url = render_api.get_public_url(service)
+            if not url:
+                raise render_api.RenderAPIError(400, "Servisning umumiy URL manzili topilmadi.")
+            name = _render_service_name(service)
+            storage.set_keepalive(service_id, name, url)
+            result = await render_keepalive.ping_url(url)
+            render_keepalive._last_ping[str(service_id)] = result
+            icon = "✅" if result["ok"] else "⚠️"
+            note = (
+                "" if result["ok"]
+                else "\n\nBirinchi so'rov muvaffaqiyatsiz bo'ldi (servis hali uyg'onayotgan bo'lishi mumkin). "
+                     "Bot 5 daqiqadan keyin qayta urinadi."
+            )
+            await _safe_edit_query(
+                query,
+                f"✅ <b>Uxlamaslik yoqildi — {_esc(name)}</b>\n\n"
+                f"{icon} Birinchi so'rov: <code>{_esc(result.get('detail') or '—')}</code>\n"
+                "Endi bot har 5 daqiqada shu servisga murojaat qilib turadi."
+                f"{note}",
+                reply_markup=_back_keyboard(f"dev:rsvc:{service_id}"), parse_mode="HTML",
+            )
+        except Exception as exc:
+            await _render_api_error(query, exc, f"dev:rsvc:{service_id}")
+        return DEV_MENU
+
+    if action == "rkeepoff":
+        service_id = parts[2]
+        item = storage.get_keepalive(service_id)
+        storage.remove_keepalive(service_id)
+        render_keepalive.forget(service_id)
+        name = (item or {}).get("name") or service_id
+        await _safe_edit_query(
+            query,
+            f"🛑 <b>Uxlamaslik o'chirildi — {_esc(name)}</b>\n\n"
+            "Bot bu servisga endi so'rov yubormaydi; Render uni odatdagidek 15 daqiqadan keyin uxlatishi mumkin.",
+            reply_markup=_back_keyboard(f"dev:rsvc:{service_id}"), parse_mode="HTML",
+        )
+        return DEV_MENU
+
+    if action == "rkeeptest":
+        service_id = parts[2]
+        item = storage.get_keepalive(service_id)
+        if not item:
+            await _safe_edit_query(
+                query, "😴 Bu servis uchun Uxlamaslik yoqilmagan.",
+                reply_markup=_back_keyboard(f"dev:rsvc:{service_id}"), parse_mode="HTML",
+            )
+            return DEV_MENU
+        await _safe_edit_query(query, "🔔 So'rov yuborilmoqda (uxlab yotgan bo'lsa 1 daqiqagacha ketishi mumkin)...", parse_mode="HTML")
+        try:
+            result = await render_keepalive.ping_url(item["url"])
+            render_keepalive._last_ping[str(service_id)] = result
+        except Exception as exc:
+            await _render_api_error(query, exc, f"dev:rkeep:{service_id}")
+            return DEV_MENU
+        await _safe_edit_query(
+            query, _render_keepalive_status_text(service_id, item),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔔 Yana tekshirish", callback_data=f"dev:rkeeptest:{service_id}")],
+                [InlineKeyboardButton("🛑 O'chirish", callback_data=f"dev:rkeepoff:{service_id}")],
+                [InlineKeyboardButton("⬅️ Servis", callback_data=f"dev:rsvc:{service_id}")],
+            ]),
+            parse_mode="HTML",
+        )
         return DEV_MENU
 
     if action == "rsettings":

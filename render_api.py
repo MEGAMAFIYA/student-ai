@@ -214,6 +214,24 @@ async def update_service(api_key: str, service_id: str, changes: dict[str, Any])
     return dict(await _request("PATCH", f"/services/{service_id}", api_key=api_key, json=body))
 
 
+def get_public_url(service: dict[str, Any]) -> str:
+    """Servisning umumiy (public) URL manzili. Background worker, cron job va
+    private servislarda bunday URL yo'q — u holda bo'sh satr qaytadi."""
+    details = service.get("serviceDetails")
+    url = details.get("url") if isinstance(details, dict) else None
+    url = url or service.get("url") or ""
+    url = str(url).strip()
+    if url and not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    return url
+
+
+def get_plan(service: dict[str, Any]) -> str:
+    details = service.get("serviceDetails")
+    plan = details.get("plan") if isinstance(details, dict) else None
+    return str(plan or "").lower()
+
+
 def _iso_z(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 

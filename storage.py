@@ -51,6 +51,7 @@ _DEFAULT_DATA = {
     "groups": {},      # {"<chat_id>": {"active": bool}} — guruhda Universal chat holati
     "inline_logs": [],  # [{"ts","user_id","username","query","status","detail"}] — inline (@Bot ...) jurnali
     "movies": {},      # {"<movie_id>": {"id","title","file_id","mime_type","file_name","size","uploaded_by","created_ts"}} — kino katalogi
+    "keepalive": {},   # {"<render_service_id>": {"name","url","enabled_ts"}} — 😴 Render "Uxlamaslik" ro'yxati
 }
 
 
@@ -312,6 +313,41 @@ def remove_reminder(reminder_id: str) -> bool:
     if changed:
         logger.info(f"⏰ Eslatma o'chirildi: id={reminder_id}.")
     return changed
+
+
+# ============================================================
+# 😴 Render "Uxlamaslik" (keep-alive) ro'yxati
+# ============================================================
+# /developer > RENDER > servis > 😴 Uxlamaslik orqali yoqilgan servislar.
+# render_keepalive.py shu ro'yxatdagi URL larga har 5 daqiqada so'rov yuboradi.
+# Faqat yoqish/o'chirish saqlanadi (oxirgi ping natijasi xotirada turadi).
+
+def set_keepalive(service_id: str, name: str, url: str) -> dict:
+    with _lock:
+        item = {"name": str(name)[:120], "url": str(url), "enabled_ts": time.time()}
+        _data["keepalive"][str(service_id)] = item
+        _save()
+    logger.info(f"😴 Uxlamaslik yoqildi: {name} ({service_id}).")
+    return dict(item)
+
+
+def remove_keepalive(service_id: str) -> bool:
+    with _lock:
+        removed = _data["keepalive"].pop(str(service_id), None) is not None
+        if removed:
+            _save()
+    if removed:
+        logger.info(f"😴 Uxlamaslik o'chirildi: {service_id}.")
+    return removed
+
+
+def get_keepalive(service_id: str) -> dict | None:
+    item = _data["keepalive"].get(str(service_id))
+    return dict(item) if item else None
+
+
+def get_all_keepalive() -> dict:
+    return {sid: dict(item) for sid, item in _data["keepalive"].items()}
 
 
 # ============================================================

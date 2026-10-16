@@ -47,6 +47,7 @@ import mobile_auth
 import mobile_api
 import inline_media
 import movie_watch
+import render_keepalive
 import game
 import chat_games
 import drawing_game
@@ -160,6 +161,14 @@ async def _post_init(application):
         reminders.reschedule_all(application)
     except Exception as e:
         logger.error(f"⏰ Eslatmalarni qayta rejalashtirishda xato: {type(e).__name__}: {e}", exc_info=True)
+
+    # 😴 Render "Uxlamaslik": /developer > RENDER orqali yoqilgan servislarga
+    # har 5 daqiqada so'rov yuborib turadigan fon tsikli (ro'yxat storage'da
+    # saqlanadi, shuning uchun deploy/restartdan keyin ham davom etadi).
+    try:
+        render_keepalive.start()
+    except Exception as e:
+        logger.error(f"😴 Render keep-alive tsiklini ishga tushirishda xato: {type(e).__name__}: {e}", exc_info=True)
 
     # 🤖 Bot ishga tushganda (har qayta deployda ham) storage'da saqlangan
     # BARCHA 'auto_hold' to'lovlarni qayta rejalashtiramiz — shu orqali
