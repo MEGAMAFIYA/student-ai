@@ -31,6 +31,9 @@ data class PollResponse(
     val session_token: String? = null,
     val user: UserDto? = null,
 )
+data class TelegramCodeRequest(val telegram_id: Long)
+data class TelegramCodeVerifyRequest(val telegram_id: Long, val code: String)
+data class TelegramCodeSentResponse(val sent: Boolean = false, val expires_in: Int? = null, val error: String? = null, val message: String? = null)
 
 // ---- Chat ----
 data class ChatMessageDto(val role: String, val content: String)
@@ -96,6 +99,12 @@ interface ApiService {
 
     @GET("api/mobile/auth/poll")
     suspend fun authPoll(@Query("token") token: String): PollResponse
+
+    @POST("api/mobile/auth/code/request")
+    suspend fun requestTelegramCode(@Body body: TelegramCodeRequest): Response<TelegramCodeSentResponse>
+
+    @POST("api/mobile/auth/code/verify")
+    suspend fun verifyTelegramCode(@Body body: TelegramCodeVerifyRequest): Response<PollResponse>
 
     // Generic feature actions used by FeatureActivity.
     @POST("api/mobile/task")

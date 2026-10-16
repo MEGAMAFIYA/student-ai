@@ -9,6 +9,7 @@ import hashlib
 import json
 from contextlib import contextmanager
 import os
+import re
 import secrets
 import sqlite3
 import threading
@@ -72,6 +73,14 @@ def _init_db() -> None:
             )
         """)
         conn.execute("""
+            CREATE TABLE IF NOT EXISTS mobile_code_challenges (
+                telegram_id INTEGER PRIMARY KEY,
+                code_hash TEXT NOT NULL,
+                expires_at REAL NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS mobile_sessions (
                 token_hash TEXT PRIMARY KEY,
                 user_json TEXT NOT NULL,
@@ -87,6 +96,7 @@ def _cleanup(now: float | None = None) -> None:
     now = time.time() if now is None else now
     with _connection() as conn:
         conn.execute("DELETE FROM mobile_login_challenges WHERE expires_at <= ?", (now,))
+        conn.execute("DELETE FROM mobile_code_challenges WHERE expires_at <= ?", (now,))
         conn.execute("DELETE FROM mobile_sessions WHERE expires_at <= ?", (now,))
 
 
@@ -171,3 +181,51 @@ def revoke_session(session_token: str | None) -> bool:
     with _lock, _connect() as conn:
         cur = conn.execute("DELETE FROM mobile_sessions WHERE token_hash = ?", (_token_hash(session_token),))
         return cur.rowcount == 1
+
+
+def create_code_challenge(telegram_id: int) -> str:
+    """Create a short-lived one-time code for an existing Telegram bot user."""
+    if int(telegram_id) <= 0:
+        raise ValueError("invalid_telegram_id")
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    now = time.time()
+    with _lock, _connection() as conn:
+        conn.execute(
+            """INSERT INTO mobile_code_challenges(telegram_id, code_hash, expires_at, attempts)
+               VALUES (?, ?, ?, 0)
+               ON CONFLICT(telegram_id) DO UPDATE SET
+                 code_hash=excluded.code_hash, expires_at=excluded.expires_at, attempts=0""",
+            (int(telegram_id), _token_hash(code), now + 300),
+        )
+    return code
+
+
+def verify_code(telegram_id: int, code: str) -> dict | None:
+    """Verify once, rate-limit guesses, then create the same kind of app session."""
+    try:
+        telegram_id = int(telegram_id)
+    except (TypeError, ValueError):
+        return None
+    if not re.fullmatch(r"\d{6}", str(code or "")):
+        return None
+    now = time.time()
+    with _lock, _connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT code_hash, expires_at, attempts FROM mobile_code_challenges WHERE telegram_id=?",
+            (telegram_id,),
+        ).fetchone()
+        if row is None or row["expires_at"] <= now or row["attempts"] >= 5:
+            conn.execute("DELETE FROM mobile_code_challenges WHERE telegram_id=?", (telegram_id,))
+            return None
+        if not secrets.compare_digest(row["code_hash"], _token_hash(str(code))):
+            conn.execute("UPDATE mobile_code_challenges SET attempts=attempts+1 WHERE telegram_id=?", (telegram_id,))
+            return None
+        conn.execute("DELETE FROM mobile_code_challenges WHERE telegram_id=?", (telegram_id,))
+        user = {"id": telegram_id, "username": None, "first_name": None}
+        session_token = secrets.token_urlsafe(36)
+        conn.execute(
+            "INSERT INTO mobile_sessions(token_hash, user_json, expires_at, created_at) VALUES (?, ?, ?, ?)",
+            (_token_hash(session_token), json.dumps(user), now + _SESSION_TTL, now),
+        )
+        return {"status": "ok", "session_token": session_token, "user": user}

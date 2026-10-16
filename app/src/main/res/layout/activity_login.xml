@@ -36,6 +36,38 @@
         app:icon="@android:drawable/ic_dialog_email"
         app:cornerRadius="16dp" />
 
+    <EditText
+        android:id="@+id/telegramIdInput"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="18dp"
+        android:hint="Telegram ID (muqobil usul)"
+        android:inputType="number"
+        android:singleLine="true" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/sendCodeButton"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:text="Telegram ID orqali kod yuborish"
+        app:cornerRadius="14dp" />
+
+    <EditText
+        android:id="@+id/telegramCodeInput"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="Bot yuborgan 6 xonali kod"
+        android:inputType="number"
+        android:maxLength="6"
+        android:singleLine="true" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/verifyCodeButton"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:text="Kodni tasdiqlash"
+        app:cornerRadius="14dp" />
+
     <ProgressBar
         android:id="@+id/waitingProgress"
         android:layout_width="wrap_content"

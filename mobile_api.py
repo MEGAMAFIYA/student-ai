@@ -346,6 +346,46 @@ def handle_post(handler) -> bool:
         start = mobile_auth.start_login()
         _json(handler, 200, {"login_token": start.login_token, "deep_link": start.deep_link, "expires_in": start.expires_in})
         return True
+    if path == "/api/mobile/auth/code/request":
+        try:
+            body = _read_json(handler)
+            telegram_id = int(body.get("telegram_id", 0))
+            if telegram_id <= 0:
+                _json(handler, 400, {"error": "invalid_telegram_id"}); return True
+            if _APPLICATION is None:
+                _json(handler, 503, {"error": "telegram_bot_unavailable"}); return True
+            code = mobile_auth.create_code_challenge(telegram_id)
+            async def _send_code():
+                await _APPLICATION.bot.send_message(
+                    chat_id=telegram_id,
+                    text=f"🔐 Student AI ilovasiga ulanish kodi: {code}\\n\\nKod 5 daqiqa amal qiladi. Agar bu so‘rov sizniki bo‘lmasa, e’tiborsiz qoldiring."
+                )
+            import asyncio
+            try:
+                asyncio.run(_send_code())
+            except Exception:
+                logger.exception("Mobile login code delivery failed for Telegram ID %s", telegram_id)
+                _json(handler, 400, {"error": "cannot_message_user", "message": "Avval botda /start bosing, so‘ng qayta urinib ko‘ring."})
+                return True
+            _json(handler, 200, {"sent": True, "expires_in": 300})
+        except (ValueError, TypeError):
+            _json(handler, 400, {"error": "invalid_telegram_id"})
+        except Exception:
+            logger.exception("Mobile login code request failed")
+            _json(handler, 500, {"error": "code_request_failed"})
+        return True
+    if path == "/api/mobile/auth/code/verify":
+        try:
+            body = _read_json(handler)
+            result = mobile_auth.verify_code(body.get("telegram_id"), str(body.get("code", "")))
+            if result is None:
+                _json(handler, 401, {"error": "invalid_or_expired_code"})
+            else:
+                _json(handler, 200, result)
+        except Exception:
+            logger.exception("Mobile login code verification failed")
+            _json(handler, 400, {"error": "invalid_request"})
+        return True
     user = _auth(handler)
     if user is None:
         return True

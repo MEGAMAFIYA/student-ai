@@ -12,7 +12,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import uz.studentai.mobile.R
 import uz.studentai.mobile.databinding.ActivityLoginBinding
-import uz.studentai.mobile.network.ApiClient
+import uz.studentai.mobile.network.ApiClient\nimport uz.studentai.mobile.network.TelegramCodeRequest\nimport uz.studentai.mobile.network.TelegramCodeVerifyRequest
 import uz.studentai.mobile.util.SessionManager
 
 /**
@@ -37,6 +37,68 @@ class LoginActivity : AppCompatActivity() {
 
         binding.loginButton.setOnClickListener { startLogin() }
         binding.retryButton.setOnClickListener { startLogin() }
+        binding.sendCodeButton.setOnClickListener { requestTelegramCode() }
+        binding.verifyCodeButton.setOnClickListener { verifyTelegramCode() }
+    }
+
+
+    private fun requestTelegramCode() {
+        val rawId = binding.telegramIdInput.text?.toString()?.trim().orEmpty()
+        val telegramId = rawId.toLongOrNull()
+        if (telegramId == null || telegramId <= 0L) {
+            Toast.makeText(this, "Telegram ID raqamini to‘g‘ri kiriting.", Toast.LENGTH_LONG).show()
+            return
+        }
+        binding.sendCodeButton.isEnabled = false
+        lifecycleScope.launch {
+            try {
+                val response = ApiClient.get(this@LoginActivity)
+                    .requestTelegramCode(TelegramCodeRequest(telegramId))
+                if (response.isSuccessful && response.body()?.sent == true) {
+                    Toast.makeText(this@LoginActivity, "Kod botdagi shaxsiy chatga yuborildi. 5 daqiqa amal qiladi.", Toast.LENGTH_LONG).show()
+                } else {
+                    val msg = response.body()?.message ?: when (response.code()) {
+                        400 -> "Botda avval /start bosing, Telegram ID ni tekshiring."
+                        429 -> "Juda ko‘p urinish. Biroz kuting."
+                        else -> "Kod yuborilmadi (${response.code()}). Asosiy usulni sinab ko‘ring."
+                    }
+                    Toast.makeText(this@LoginActivity, msg, Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                Toast.makeText(this@LoginActivity, "Ulanish xatosi: ${e.message ?: "tarmoq mavjud emas"}", Toast.LENGTH_LONG).show()
+            } finally {
+                binding.sendCodeButton.isEnabled = true
+            }
+        }
+    }
+
+    private fun verifyTelegramCode() {
+        val telegramId = binding.telegramIdInput.text?.toString()?.trim()?.toLongOrNull()
+        val code = binding.telegramCodeInput.text?.toString()?.trim().orEmpty()
+        if (telegramId == null || telegramId <= 0L || !code.matches(Regex("\\d{6}"))) {
+            Toast.makeText(this, "Telegram ID va 6 xonali kodni kiriting.", Toast.LENGTH_LONG).show()
+            return
+        }
+        binding.verifyCodeButton.isEnabled = false
+        lifecycleScope.launch {
+            try {
+                val response = ApiClient.get(this@LoginActivity)
+                    .verifyTelegramCode(TelegramCodeVerifyRequest(telegramId, code))
+                val result = response.body()
+                if (response.isSuccessful && result?.status == "ok" && !result.session_token.isNullOrBlank()) {
+                    session.sessionToken = result.session_token
+                    session.userId = result.user?.id ?: telegramId
+                    session.userFirstName = result.user?.first_name
+                    goHome()
+                } else {
+                    Toast.makeText(this@LoginActivity, "Kod noto‘g‘ri yoki muddati tugagan. Qayta kod oling.", Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                Toast.makeText(this@LoginActivity, "Tasdiqlash xatosi: ${e.message ?: "tarmoq xatosi"}", Toast.LENGTH_LONG).show()
+            } finally {
+                binding.verifyCodeButton.isEnabled = true
+            }
+        }
     }
 
     private fun startLogin() {

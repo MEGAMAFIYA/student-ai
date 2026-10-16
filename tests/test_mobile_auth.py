@@ -31,6 +31,19 @@ class MobileAuthPersistenceTests(unittest.TestCase):
         self.assertEqual(mobile_auth.get_user(result["session_token"])["username"], "tester")
         self.assertEqual(mobile_auth.poll(start.login_token)["status"], "expired")
 
+
+    def test_code_login_creates_same_user_session_and_code_is_one_time(self):
+        code = mobile_auth.create_code_challenge(12345)
+        result = mobile_auth.verify_code(12345, code)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(mobile_auth.get_user(result["session_token"])["id"], 12345)
+        self.assertIsNone(mobile_auth.verify_code(12345, code))
+
+    def test_wrong_code_is_rejected(self):
+        mobile_auth.create_code_challenge(555)
+        self.assertIsNone(mobile_auth.verify_code(555, "000000"))
+
     def test_session_can_be_revoked(self):
         start = mobile_auth.start_login()
         self.assertTrue(mobile_auth.complete_login(start.login_token, SimpleNamespace(id=7, username=None, first_name="A")))
