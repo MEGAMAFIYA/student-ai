@@ -12,7 +12,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import uz.studentai.mobile.R
 import uz.studentai.mobile.databinding.ActivityLoginBinding
-import uz.studentai.mobile.network.ApiClient\nimport uz.studentai.mobile.network.TelegramCodeRequest\nimport uz.studentai.mobile.network.TelegramCodeVerifyRequest
+import uz.studentai.mobile.network.ApiClient
+import uz.studentai.mobile.network.TelegramCodeRequest
+import uz.studentai.mobile.network.TelegramCodeVerifyRequest
 import uz.studentai.mobile.util.SessionManager
 
 /**
