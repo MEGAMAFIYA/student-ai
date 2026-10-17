@@ -132,5 +132,13 @@
                 app:cornerRadius="14dp" />
         </LinearLayout>
 
+        <TextView
+            android:id="@+id/versionText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:textColor="@color/text_secondary"
+            android:textSize="11sp" />
+
     </LinearLayout>
 </ScrollView>

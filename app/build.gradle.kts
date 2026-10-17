@@ -11,8 +11,8 @@ android {
         applicationId = "uz.studentai.mobile"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0-phase1"
+        versionCode = 2
+        versionName = "1.1-login-fix"
 
         // 🔧 Botning HTTP serveri (bot.py) qaysi manzilda ochiq bo'lsa,
         // ilova SHU manzilga ulanadi. Render'ga deploy qilingandan keyin

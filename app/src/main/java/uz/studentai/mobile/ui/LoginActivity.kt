@@ -40,6 +40,7 @@ class LoginActivity : AppCompatActivity() {
         binding = ActivityLoginBinding.inflate(layoutInflater)
         setContentView(binding.root)
         session = SessionManager(this)
+        binding.versionText.text = "v" + uz.studentai.mobile.BuildConfig.VERSION_NAME
 
         binding.loginButton.setOnClickListener { startLogin() }
         binding.retryButton.setOnClickListener { startLogin() }
