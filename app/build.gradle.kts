@@ -22,7 +22,7 @@ android {
         // CI'da GitHub repo Variables (Settings > Secrets and variables > Actions > Variables)
         // ichida BASE_URL=https://SIZNING-SERVIS.onrender.com qilib berilsa, shu ishlatiladi.
         val baseUrl = (System.getenv("BASE_URL")?.trim()?.takeIf { it.startsWith("http") }
-            ?: "https://student-ai-uz.onrender.com").trimEnd('/') + "/"
+            ?: "https://student-flah.onrender.com").trimEnd('/') + "/"
         buildConfigField("String", "BASE_URL", "\"$baseUrl\"")
     }
 
