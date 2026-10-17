@@ -13,7 +13,7 @@ android {
         targetSdk = 34
         // CI'da build raqami va commit qo'shiladi: APK qaysi koddan chiqqanini aniq bilish uchun.
         versionCode = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()?.plus(100) ?: 2
-        versionName = "1.1-login-fix" + (System.getenv("GITHUB_SHA")?.take(7)?.let { "-$it" } ?: "")
+        versionName = "1.1." + (System.getenv("GITHUB_RUN_NUMBER") ?: "0") + (System.getenv("GITHUB_SHA")?.take(7)?.let { "-$it" } ?: "")
 
         // 🔧 Botning HTTP serveri (bot.py) qaysi manzilda ochiq bo'lsa,
         // ilova SHU manzilga ulanadi. Render'ga deploy qilingandan keyin

@@ -6,7 +6,7 @@ on:
   workflow_dispatch: {}
 
 permissions:
-  contents: read
+  contents: write   # Release yaratish uchun
 
 jobs:
   build:
@@ -84,3 +84,18 @@ jobs:
           name: student-ai-apk-run${{ github.run_number }}
           path: Talaba-AI-*.apk
           if-no-files-found: error
+
+      # Telefonda APK odatda GitHub > Releases dan yuklab olinadi. Avval workflow Release'ni
+      # yangilamasdi, shuning uchun "Latest" 1 oy oldingi v1.0.5 bo'lib qolgandi.
+      - name: Release yaratish (Latest) va APK'ni biriktirish
+        if: success()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v1.1.${{ github.run_number }}"
+          gh release create "$TAG" Talaba-AI-*.apk \
+            --target "$GITHUB_SHA" \
+            --title "Eng so'nggi build $TAG" \
+            --notes "Commit: ${GITHUB_SHA::7}. Telegram ID orqali kirish tuzatilgan versiya." \
+            --latest
