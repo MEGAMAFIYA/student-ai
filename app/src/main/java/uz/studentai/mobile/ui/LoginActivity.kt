@@ -40,7 +40,7 @@ class LoginActivity : AppCompatActivity() {
         binding = ActivityLoginBinding.inflate(layoutInflater)
         setContentView(binding.root)
         session = SessionManager(this)
-        binding.versionText.text = "v" + uz.studentai.mobile.BuildConfig.VERSION_NAME
+        binding.versionText.text = "v" + uz.studentai.mobile.BuildConfig.VERSION_NAME + " · " + uz.studentai.mobile.BuildConfig.BASE_URL
 
         binding.loginButton.setOnClickListener { startLogin() }
         binding.retryButton.setOnClickListener { startLogin() }
@@ -87,8 +87,10 @@ class LoginActivity : AppCompatActivity() {
                     )
                     if (response.code() == 429) cooldown = 30
                 }
+            } catch (e: java.net.SocketTimeoutException) {
+                toast("Server javob bermadi (u uxlab qolgan bo‘lishi mumkin). 1 daqiqadan so‘ng qayta urinib ko‘ring.")
             } catch (e: Exception) {
-                toast("Ulanish xatosi: ${e.message ?: "tarmoq mavjud emas"}")
+                toast("Ulanish xatosi: ${e.message ?: "tarmoq mavjud emas"}. Manzil: ${uz.studentai.mobile.BuildConfig.BASE_URL}")
             } finally {
                 startSendCooldown(cooldown)
             }

@@ -18,7 +18,11 @@ android {
         // ilova SHU manzilga ulanadi. Render'ga deploy qilingandan keyin
         // BASE_URL'ni haqiqiy https manzilga almashtiring (masalan
         // "https://student-ai-uz.onrender.com/"). Oxirida "/" bo'lishi shart.
-        buildConfigField("String", "BASE_URL", "\"https://student-ai-uz.onrender.com/\"")
+        // CI'da GitHub repo Variables (Settings > Secrets and variables > Actions > Variables)
+        // ichida BASE_URL=https://SIZNING-SERVIS.onrender.com qilib berilsa, shu ishlatiladi.
+        val baseUrl = (System.getenv("BASE_URL")?.trim()?.takeIf { it.startsWith("http") }
+            ?: "https://student-ai-uz.onrender.com").trimEnd('/') + "/"
+        buildConfigField("String", "BASE_URL", "\"$baseUrl\"")
     }
 
     buildTypes {

@@ -44,7 +44,7 @@ object ApiClient {
         val client = OkHttpClient.Builder()
             .addInterceptor(authInterceptor)
             .addInterceptor(logging)
-            .connectTimeout(20, TimeUnit.SECONDS)
+            .connectTimeout(75, TimeUnit.SECONDS) // Render Free uxlab qolgan serverni uyg'otish ~50 soniya oladi
             .readTimeout(60, TimeUnit.SECONDS) // AI javobi biroz vaqt olishi mumkin
             .writeTimeout(20, TimeUnit.SECONDS)
             .build()

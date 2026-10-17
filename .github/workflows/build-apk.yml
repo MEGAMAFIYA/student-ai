@@ -31,6 +31,8 @@ jobs:
       - name: Debug APK yig'ish (to'liq log bilan)
         id: build_apk
         shell: bash
+        env:
+          BASE_URL: ${{ vars.BASE_URL }}
         run: |
           set +e
           gradle assembleDebug --no-daemon --stacktrace --warning-mode all 2>&1 | tee build-apk.log
