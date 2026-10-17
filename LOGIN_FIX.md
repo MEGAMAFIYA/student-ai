@@ -17,3 +17,9 @@
 9. Eski `tests/test_kino_watch.py` testi xavfsiz kod bilan ziddiyatda edi -> moslashtirildi. Yangi: `tests/test_mobile_login_api.py`.
 
 MUHIM: `.env` ichidagi Neon `DATABASE_URL` paroli zip'da ochiq edi — uni Neon'da almashtiring va .env ni repoga qo'ymang.
+
+## APK yig'ilmayotgan edi (ID maydoni ko'rinmasligi sababi)
+- Kotlin 1.9 `catch (_: Exception)` ni qabul qilmaydi (FeatureActivity.kt, SessionManager.kt) -> `gradle assembleDebug` xato bilan
+  tugardi, GitHub'da yangi APK chiqmasdi va eski APK yuklab olinardi. Hammasi `catch (e: Exception)` ga almashtirildi.
+- FeatureActivity manifest'da ro'yxatdan o'tmagan edi -> qo'shildi.
+- APK artifact nomi endi `student-ai-debug-apk-run<N>` (qaysi build ekanini ko'rish uchun). Login ekranida `v1.1-login-fix` ko'rinishi kerak.

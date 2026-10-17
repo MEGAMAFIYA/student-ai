@@ -196,7 +196,7 @@ class FeatureActivity : AppCompatActivity() {
             while (true) { val n = input.read(buf); if (n <= 0) break; out.write(buf, 0, n) }
             out.toByteArray()
         }
-    } catch (_: Exception) { null }
+    } catch (e: Exception) { null }
 
     private fun queryName(uri: Uri): String {
         contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->

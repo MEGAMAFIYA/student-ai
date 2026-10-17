@@ -31,7 +31,7 @@ class SessionManager(context: Context) {
                         load(null)
                         deleteEntry(MasterKey.DEFAULT_MASTER_KEY_ALIAS)
                     }
-                } catch (_: Exception) { }
+                } catch (e: Exception) { }
                 createEncrypted()
             } catch (e2: Exception) {
                 // Oxirgi chora: shifrlanmagan, lekin ishlaydigan xotira (ilova yiqilmasin).

@@ -34,6 +34,7 @@
         <activity android:name=".ui.SimpleAiToolActivity" android:exported="false" />
         <activity android:name=".ui.CitationActivity" android:exported="false" />
         <activity android:name=".ui.ComingSoonActivity" android:exported="false" />
+        <activity android:name=".ui.FeatureActivity" android:exported="false" />
 
     </application>
 </manifest>
