@@ -49,6 +49,24 @@ class CodeLoginApiTests(unittest.TestCase):
         self.assertTrue(self.api.handle_post(h))
         return h
 
+    def test_chat_uses_bot_ai_with_message_field(self):
+        session = mobile_auth.verify_code.__globals__["_new_session"]
+        with mobile_auth._connection() as c:
+            tok = session(c, {"id": 7, "username": None, "first_name": "A"}, __import__("time").time())
+        captured = {}
+        async def fake_ask(cfg, prompt, system, allow_fallback=True, history=None):
+            captured.update(cfg=cfg, prompt=prompt, history=history)
+            return "salom!"
+        with mock.patch.object(self.api, "ask_ai", fake_ask), \
+             mock.patch.object(self.api.storage, "record_usage", lambda *a, **k: None):
+            h = self._post("/api/mobile/chat",
+                           {"message": "Salom", "history": [{"role": "user", "content": "x"}, {"role": "assistant", "content": "y"}]},
+                           headers={"Authorization": "Bearer " + tok})
+        self.assertEqual(h.status, 200)
+        self.assertEqual(h.json()["reply"], "salom!")
+        self.assertEqual(captured["prompt"], "Salom")
+        self.assertEqual(len(captured["history"]), 2)
+
     def test_request_sends_code_and_verify_logs_in(self):
         sent = {}
         def fake_send(chat_id, text):

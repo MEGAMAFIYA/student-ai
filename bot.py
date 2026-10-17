@@ -1459,7 +1459,7 @@ def main():
     global _MAIN_LOOP, _BOT_INSTANCE
     _MAIN_LOOP = loop
     _BOT_INSTANCE = app.bot
-    mobile_api.set_application(app)
+    mobile_api.set_application(app, loop)
 
     # 👥 Moliya > Foydalanuvchilar uchun barcha bot foydalanuvchilarini
     # doimiy qayd etamiz. Profil (username/ism) keyinchalik admin ro'yxatida

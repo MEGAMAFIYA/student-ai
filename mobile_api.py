@@ -92,9 +92,27 @@ def _rate_limited(handler, method: str) -> bool:
 
 
 
-def set_application(application) -> None:
-    global _APPLICATION
+_MAIN_LOOP = None
+
+
+def set_application(application, loop=None) -> None:
+    global _APPLICATION, _MAIN_LOOP
     _APPLICATION = application
+    if loop is not None:
+        _MAIN_LOOP = loop
+
+
+def _run_async(coro, timeout: float = 170):
+    """HTTP thread'dan coroutine'ni botning ASOSIY event loop'ida bajaradi.
+
+    ai_clients'dagi asyncio.Lock va keshlar shu loop'ga bog'langan, shuning
+    uchun har so'rovda asyncio.run (yangi loop) ishlatish xato beradi.
+    """
+    import asyncio
+    loop = _MAIN_LOOP
+    if loop is not None and loop.is_running():
+        return asyncio.run_coroutine_threadsafe(coro, loop).result(timeout)
+    return asyncio.run(coro)
 
 _TASKS = {
     "universal": (config.UNIVERSAL_CHAT_AI, "Siz Talaba AI universal yordamchisisiz. O'zbek tilida foydali va aniq javob bering."),
@@ -203,8 +221,14 @@ def _flatten_essay(sections: dict) -> str:
 
 async def _task(user: dict, body: dict) -> dict:
     feature = str(body.get("feature", "universal"))
-    text = str(body.get("text", "")).strip()
-    history = body.get("history") or []
+    text = str(body.get("text") or body.get("message") or "").strip()
+    history = []
+    for h in (body.get("history") or [])[-20:]:
+        if isinstance(h, dict) and str(h.get("content") or "").strip():
+            role = "assistant" if h.get("role") in ("assistant", "model", "bot") else "user"
+            history.append({"role": role, "content": str(h["content"])})
+    if feature == "universal" and not text:
+        return {"reply": "❌ Xabar bo'sh."}
     if feature == "my":
         return {"reply": f"👤 {user.get('first_name') or 'Foydalanuvchi'}\n🆔 {user['id']}\n💰 Balans: {wallet.get_balance(user['id'])}"}
     if feature == "wallet_balance":
@@ -479,13 +503,11 @@ def handle_post(handler) -> bool:
         body = _read_json(handler)
         if path == "/api/mobile/chat":
             body["feature"] = "universal"
-        if path == "/api/mobile/task":
-            import asyncio
-            _json(handler, 200, asyncio.run(_task(user, body)))
+        if path in ("/api/mobile/task", "/api/mobile/chat"):
+            _json(handler, 200, _run_async(_task(user, body)))
             return True
         if path == "/api/mobile/file-task":
-            import asyncio
-            _json(handler, 200, asyncio.run(_file_task(user, body)))
+            _json(handler, 200, _run_async(_file_task(user, body)))
             return True
         if path == "/api/mobile/quiz/start":
             return _quiz_start(handler, user, body)
