@@ -67,6 +67,29 @@ class CodeLoginApiTests(unittest.TestCase):
         self.assertEqual(captured["prompt"], "Salom")
         self.assertEqual(len(captured["history"]), 2)
 
+    def test_course_work_runs_as_job(self):
+        import time as _t
+        with mobile_auth._connection() as c:
+            tok = mobile_auth._new_session(c, {"id": 9, "username": None, "first_name": "B"}, _t.time())
+        hdr = {"Authorization": "Bearer " + tok}
+        async def fake_cw(topic, pages, status_msg=None, user_id=None, source_tracker=None):
+            return {"kirish": "k"}, io.BytesIO(b"%PDF-x"), pages
+        with mock.patch.object(self.api.course_work, "generate_course_work", fake_cw), \
+             mock.patch.object(self.api.storage, "record_usage", lambda *a, **k: None):
+            h = self._post("/api/mobile/task", {"feature": "course_work", "text": "AI", "pages": 4}, headers=hdr)
+            jid = h.json()["job_id"]
+            res = None
+            for _ in range(50):
+                g = FakeHandler("/api/mobile/job?id=" + jid, headers=hdr)
+                self.assertTrue(self.api.handle_get(g))
+                res = g.json()
+                if res["status"] != "pending":
+                    break
+                _t.sleep(0.1)
+        self.assertEqual(res["status"], "done")
+        self.assertIn("4 bet", res["reply"])
+        self.assertTrue(res["file_base64"])
+
     def test_request_sends_code_and_verify_logs_in(self):
         sent = {}
         def fake_send(chat_id, text):

@@ -11,8 +11,11 @@ import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.button.MaterialButton
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import uz.studentai.mobile.network.ApiClient
+import uz.studentai.mobile.network.ApiService
+import uz.studentai.mobile.network.MobileTaskResponse
 import uz.studentai.mobile.network.MobileFileItem
 import uz.studentai.mobile.network.MobileFileTaskRequest
 import uz.studentai.mobile.network.MobileTaskRequest
@@ -29,6 +32,7 @@ class FeatureActivity : AppCompatActivity() {
     private lateinit var progress: ProgressBar
     private lateinit var action: MaterialButton
     private lateinit var pick: MaterialButton
+    private var pagesInput: EditText? = null
     private val picked = mutableListOf<MobileFileItem>()
     private var pendingFileBytes: ByteArray? = null
     private var pendingFileName: String = "student_ai_file"
@@ -62,6 +66,16 @@ class FeatureActivity : AppCompatActivity() {
         }
         if (feature != "my" && feature != "wallet_balance" && feature != "wallet_history") {
             root.addView(input, LinearLayout.LayoutParams(-1, 0, 1f))
+        }
+
+        if (feature in LONG_FEATURES) {
+            pagesInput = EditText(this).apply {
+                hint = if (feature == "pptx") "Slaydlar soni (3-20)" else "Betlar soni (1-15)"
+                inputType = android.text.InputType.TYPE_CLASS_NUMBER
+                setText(if (feature == "pptx") "8" else "5")
+                setPadding(dp(12), dp(8), dp(12), dp(8))
+            }
+            root.addView(pagesInput, LinearLayout.LayoutParams(-1, dp(52)))
         }
 
         pick = MaterialButton(this).apply {
@@ -157,13 +171,23 @@ class FeatureActivity : AppCompatActivity() {
                 val response = if (picked.isNotEmpty() && feature in setOf("images_pdf", "edit_pdf", "solve", "translate", "summarize")) {
                     api.fileTask(MobileFileTaskRequest(feature, text, picked.toList()))
                 } else {
-                    api.task(MobileTaskRequest(feature = feature, text = text, pages = 3, count = 8))
+                    val n = pagesInput?.text?.toString()?.trim()?.toIntOrNull()
+                    api.task(MobileTaskRequest(
+                        feature = feature, text = text,
+                        pages = (n ?: 5).coerceIn(1, 15),
+                        count = (n ?: 8).coerceIn(3, 20),
+                    ))
                 }
                 if (response.code() == 401) {
                     SessionManager(this@FeatureActivity).clear()
                     startActivity(Intent(this@FeatureActivity, LoginActivity::class.java)); finish(); return@launch
                 }
-                val body = response.body()
+                var body = response.body()
+                val jobId = body?.job_id
+                if (response.isSuccessful && jobId != null) {
+                    output.text = "⏳ Tayyorlanmoqda... Bu bir necha daqiqa olishi mumkin, ilovani yopmang."
+                    body = waitForJob(api, jobId)
+                }
                 if (response.isSuccessful && body != null) {
                     output.text = body.reply ?: body.text ?: body.error ?: "Tayyor."
                     if (!body.file_base64.isNullOrBlank()) saveFile(body.file_base64!!, body.filename ?: "student_ai_file", body.mime ?: "application/octet-stream")
@@ -175,6 +199,30 @@ class FeatureActivity : AppCompatActivity() {
                 action.isEnabled = true
             }
         }
+    }
+
+    private suspend fun waitForJob(api: ApiService, jobId: String): MobileTaskResponse {
+        var failures = 0
+        val deadline = System.currentTimeMillis() + 30 * 60 * 1000L
+        while (System.currentTimeMillis() < deadline) {
+            delay(5000)
+            try {
+                val r = api.job(jobId)
+                if (r.code() == 401) {
+                    SessionManager(this).clear()
+                    startActivity(Intent(this, LoginActivity::class.java)); finish()
+                    return MobileTaskResponse(error = "Sessiya tugadi")
+                }
+                if (r.code() == 404) return MobileTaskResponse(reply = "❌ Vazifa topilmadi (server qayta ishga tushgan bo'lishi mumkin). Qaytadan urinib ko'ring.")
+                val b = r.body()
+                if (r.isSuccessful && b != null && b.status != "pending") return b
+                failures = 0
+            } catch (e: Exception) {
+                failures++
+                if (failures >= 12) return MobileTaskResponse(reply = "❌ Tarmoq xatosi. Qaytadan urinib ko'ring.")
+            }
+        }
+        return MobileTaskResponse(reply = "❌ Vaqt tugadi. Kichikroq hajm bilan urinib ko'ring.")
     }
 
     private fun saveFile(base64: String, filename: String, mime: String) {
@@ -210,6 +258,7 @@ class FeatureActivity : AppCompatActivity() {
     companion object {
         const val EXTRA_FEATURE = "feature"
         const val EXTRA_TITLE = "title"
+        private val LONG_FEATURES = setOf("course_work", "essay", "pptx")
         private const val REQUEST_FILES = 1201
         private const val REQUEST_SAVE = 1202
     }

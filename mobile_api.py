@@ -129,6 +129,67 @@ _TASKS = {
 }
 
 
+# ── Uzoq davom etadigan vazifalar (kurs ishi, referat, taqdimot) ──────────────
+# Generatsiya daqiqalar oladi, HTTP so'rov esa proksi/ilova timeout'iga uchraydi.
+# Shuning uchun vazifa fonda (botning asosiy loop'ida) bajariladi, ilova esa
+# /api/mobile/job?id=... orqali natijani so'rab turadi.
+import threading as _threading
+
+_LONG_FEATURES = {"course_work", "essay", "pptx"}
+_JOBS: dict = {}
+_JOBS_LOCK = _threading.Lock()
+_JOB_TTL = 60 * 60
+
+
+def _jobs_cleanup(now: float) -> None:
+    for jid in [k for k, v in _JOBS.items() if now - v["created"] > _JOB_TTL]:
+        _JOBS.pop(jid, None)
+
+
+def _start_job(user: dict, body: dict) -> dict:
+    import asyncio
+    now = time.time()
+    with _JOBS_LOCK:
+        _jobs_cleanup(now)
+        for jid, j in _JOBS.items():
+            if j["user_id"] == user["id"] and j["status"] == "pending":
+                return {"job_id": jid, "status": "pending", "reply": "⏳ Oldingi vazifangiz hali tayyorlanmoqda..."}
+        job_id = uuid.uuid4().hex
+        _JOBS[job_id] = {"user_id": user["id"], "status": "pending", "created": now, "result": None}
+
+    async def _runner():
+        try:
+            result = await asyncio.wait_for(_task(user, body), timeout=25 * 60)
+            status = "done"
+        except asyncio.TimeoutError:
+            result, status = {"reply": "❌ Vaqt tugadi. Kichikroq hajm bilan qayta urinib ko'ring."}, "error"
+        except Exception as e:
+            logger.exception("mobile job xatosi")
+            result, status = {"reply": f"❌ Xatolik: {type(e).__name__}"}, "error"
+        with _JOBS_LOCK:
+            if job_id in _JOBS:
+                _JOBS[job_id].update(status=status, result=result)
+
+    loop = _MAIN_LOOP
+    if loop is not None and loop.is_running():
+        asyncio.run_coroutine_threadsafe(_runner(), loop)
+    else:
+        _threading.Thread(target=lambda: asyncio.run(_runner()), daemon=True).start()
+    return {"job_id": job_id, "status": "pending", "reply": "⏳ Tayyorlanmoqda..."}
+
+
+def _job_status(user: dict, job_id: str) -> tuple[int, dict]:
+    with _JOBS_LOCK:
+        job = _JOBS.get(job_id)
+        if not job or job["user_id"] != user["id"]:
+            return 404, {"error": "job_not_found", "status": "expired"}
+        if job["status"] == "pending":
+            return 200, {"status": "pending"}
+        result = dict(job["result"] or {})
+    result["status"] = job["status"]
+    return 200, result
+
+
 def _json(handler, status: int, payload: dict):
     raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     handler.send_response(status)
@@ -292,8 +353,8 @@ async def _task(user: dict, body: dict) -> dict:
 
     if feature == "course_work":
         topic = text or "Sun'iy intellekt"
-        pages = max(1, min(int(body.get("pages", 3) or 3), 12))
-        result = await course_work.generate_course_work(topic, pages, user_id=user["id"], source_tracker={})
+        pages = max(1, min(int(body.get("pages") or 3), 15))
+        result = await course_work.generate_course_work(topic, pages)
         if not result:
             return {"reply": "❌ Kurs ishini yaratib bo'lmadi."}
         sections, pdf_buf, actual_pages = result
@@ -303,9 +364,11 @@ async def _task(user: dict, body: dict) -> dict:
 
     if feature == "essay":
         topic = text or "Ta'lim"
-        pages = max(1, min(int(body.get("pages", 3) or 3), 12))
+        pages = max(1, min(int(body.get("pages") or 3), 15))
         work_type = body.get("work_type", "referat")
         result = await essay.generate_essay(topic, pages, work_type)
+        if not result:
+            return {"reply": "❌ Yaratib bo'lmadi. Qayta urinib ko'ring."}
         sections, pdf_buf, actual_pages = result
         storage.record_usage("essay", user["id"])
         data = base64.b64encode(pdf_buf.getvalue()).decode("ascii")
@@ -378,6 +441,11 @@ def handle_get(handler) -> bool:
         return True
     user = _auth(handler)
     if user is None:
+        return True
+    if path == "/api/mobile/job":
+        jid = parse_qs(urlparse(handler.path).query).get("id", [""])[0]
+        code, payload = _job_status(user, jid)
+        _json(handler, code, payload)
         return True
     if path == "/api/mobile/my/files":
         _json(handler, 200, {"files": storage.get_user_files(user["id"])})
@@ -503,6 +571,9 @@ def handle_post(handler) -> bool:
         body = _read_json(handler)
         if path == "/api/mobile/chat":
             body["feature"] = "universal"
+        if path == "/api/mobile/task" and str(body.get("feature", "")) in _LONG_FEATURES:
+            _json(handler, 200, _start_job(user, body))
+            return True
         if path in ("/api/mobile/task", "/api/mobile/chat"):
             _json(handler, 200, _run_async(_task(user, body)))
             return True

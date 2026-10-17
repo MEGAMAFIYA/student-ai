@@ -113,6 +113,9 @@ interface ApiService {
     @POST("api/mobile/file-task")
     suspend fun fileTask(@Body body: MobileFileTaskRequest): Response<MobileTaskResponse>
 
+    @GET("api/mobile/job")
+    suspend fun job(@Query("id") id: String): Response<MobileTaskResponse>
+
     @POST("api/mobile/chat")
     suspend fun chat(@Body body: ChatRequest): Response<ChatResponse>
 

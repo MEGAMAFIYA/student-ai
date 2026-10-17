@@ -17,6 +17,8 @@ data class MobileTaskResponse(
     val filename: String? = null,
     val mime: String? = null,
     val error: String? = null,
+    val job_id: String? = null,
+    val status: String? = null,
 )
 
 data class MobileFileItem(
