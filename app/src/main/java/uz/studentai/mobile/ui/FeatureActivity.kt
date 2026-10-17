@@ -43,7 +43,7 @@ class FeatureActivity : AppCompatActivity() {
         feature = intent.getStringExtra(EXTRA_FEATURE).orEmpty()
         titleText = intent.getStringExtra(EXTRA_TITLE) ?: feature
         setContentView(buildUi())
-        if (feature == "my" || feature == "wallet_balance" || feature == "wallet_history") sendTask() 
+        if (feature in AUTO_FEATURES) sendTask() 
     }
 
     private fun buildUi(): View {
@@ -64,7 +64,7 @@ class FeatureActivity : AppCompatActivity() {
             gravity = android.view.Gravity.TOP
             setPadding(dp(12), dp(12), dp(12), dp(12))
         }
-        if (feature != "my" && feature != "wallet_balance" && feature != "wallet_history") {
+        if (feature !in AUTO_FEATURES) {
             root.addView(input, LinearLayout.LayoutParams(-1, 0, 1f))
         }
 
@@ -87,7 +87,7 @@ class FeatureActivity : AppCompatActivity() {
 
         action = MaterialButton(this).apply {
             text = "Bajarish"
-            visibility = if (feature == "my" || feature == "wallet_balance" || feature == "wallet_history") View.GONE else View.VISIBLE
+            visibility = if (feature in AUTO_FEATURES) View.GONE else View.VISIBLE
             setOnClickListener { sendTask() }
         }
         root.addView(action, LinearLayout.LayoutParams(-1, dp(52)))
@@ -162,7 +162,7 @@ class FeatureActivity : AppCompatActivity() {
 
     private fun sendTask() {
         val text = input.text?.toString()?.trim().orEmpty()
-        if (feature !in setOf("my", "wallet_balance", "wallet_history") && picked.isEmpty() && text.isEmpty()) return
+        if (feature !in AUTO_FEATURES && picked.isEmpty() && text.isEmpty()) return
         progress.visibility = View.VISIBLE
         action.isEnabled = false
         lifecycleScope.launch {
@@ -258,6 +258,7 @@ class FeatureActivity : AppCompatActivity() {
     companion object {
         const val EXTRA_FEATURE = "feature"
         const val EXTRA_TITLE = "title"
+        private val AUTO_FEATURES = setOf("my", "wallet_balance", "wallet_history", "myfiles")
         private val LONG_FEATURES = setOf("course_work", "essay", "pptx")
         private const val REQUEST_FILES = 1201
         private const val REQUEST_SAVE = 1202

@@ -25,8 +25,9 @@ class StudentMenuActivity : AppCompatActivity() {
                 "solve" -> openSimpleTool(SimpleToolKind.SOLVE)
                 "citation" -> startActivity(Intent(this, CitationActivity::class.java))
                 else -> {
-                    val i = Intent(this, ComingSoonActivity::class.java)
-                    i.putExtra(ComingSoonActivity.EXTRA_TITLE, item.label)
+                    val i = Intent(this, FeatureActivity::class.java)
+                    i.putExtra(FeatureActivity.EXTRA_FEATURE, item.key)
+                    i.putExtra(FeatureActivity.EXTRA_TITLE, item.label)
                     startActivity(i)
                 }
             }
