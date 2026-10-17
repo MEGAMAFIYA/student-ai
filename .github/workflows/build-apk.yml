@@ -1,4 +1,4 @@
-name: Build debug APK
+name: Build APK
 
 on:
   push:
@@ -11,6 +11,9 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      BASE_URL: ${{ vars.BASE_URL }}
+      KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
     steps:
       - uses: actions/checkout@v4
 
@@ -20,25 +23,41 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # The source archive did not contain Gradle Wrapper scripts/JAR.
-      # Install the compatible Gradle version directly so CI does not depend
-      # on missing wrapper files.
       - name: Gradle 8.7 o'rnatish
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
 
-      - name: Debug APK yig'ish (to'liq log bilan)
-        id: build_apk
+      - name: Keystore'ni tayyorlash (secrets bo'lsa)
+        id: ks
         shell: bash
         env:
-          BASE_URL: ${{ vars.BASE_URL }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KS_B64" ] && [ -n "$ANDROID_KEYSTORE_PASSWORD" ] && [ -n "$ANDROID_KEY_ALIAS" ] && [ -n "$ANDROID_KEY_PASSWORD" ]; then
+            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+            echo "Doimiy kalit topildi: signed RELEASE APK yig'iladi (eski ilova ustiga o'rnatiladi)."
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Keystore secrets topilmadi: DEBUG APK yig'iladi (eski ilovani avval o'chirish kerak)."
+          fi
+
+      - name: APK yig'ish (to'liq log bilan)
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set +e
-          gradle assembleDebug --no-daemon --stacktrace --warning-mode all 2>&1 | tee build-apk.log
-          build_status=${PIPESTATUS[0]}
-          echo "exit_code=$build_status" >> "$GITHUB_OUTPUT"
-          exit "$build_status"
+          if [ "${{ steps.ks.outputs.signed }}" = "true" ]; then TASK=assembleRelease; else TASK=assembleDebug; fi
+          gradle $TASK --no-daemon --stacktrace --warning-mode all 2>&1 | tee build-apk.log
+          status=${PIPESTATUS[0]}
+          exit "$status"
 
       - name: Build logini saqlash (xato bo'lsa ham)
         if: always()
@@ -48,14 +67,20 @@ jobs:
           path: |
             build-apk.log
             app/build/reports/
-            app/build/outputs/logs/
           if-no-files-found: warn
           retention-days: 14
+
+      - name: APK nomini build raqami va commit bilan belgilash
+        if: success()
+        shell: bash
+        run: |
+          if [ "${{ steps.ks.outputs.signed }}" = "true" ]; then SRC=app/build/outputs/apk/release/app-release.apk; KIND=signed; else SRC=app/build/outputs/apk/debug/app-debug.apk; KIND=debug; fi
+          cp "$SRC" "Talaba-AI-$KIND-run${{ github.run_number }}-${GITHUB_SHA::7}.apk"
 
       - name: APK'ni artifact sifatida saqlash
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: student-ai-debug-apk-run${{ github.run_number }}
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: student-ai-apk-run${{ github.run_number }}
+          path: Talaba-AI-*.apk
           if-no-files-found: error
