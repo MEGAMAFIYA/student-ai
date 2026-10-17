@@ -52,6 +52,35 @@ class MobileAuthPersistenceTests(unittest.TestCase):
         self.assertIsNone(mobile_auth.get_user(token))
         self.assertFalse(mobile_auth.revoke_session(token))
 
+    def test_code_cooldown_blocks_rapid_resend_and_discard_resets(self):
+        mobile_auth.create_code_challenge(900)
+        with self.assertRaises(mobile_auth.CodeCooldown) as ctx:
+            mobile_auth.create_code_challenge(900)
+        self.assertGreater(ctx.exception.retry_after, 0)
+        mobile_auth.discard_code_challenge(900)
+        self.assertEqual(len(mobile_auth.create_code_challenge(900)), 6)
+
+    def test_code_locked_after_max_attempts(self):
+        code = mobile_auth.create_code_challenge(901)
+        wrong = "000000" if code != "000000" else "111111"
+        for _ in range(5):
+            self.assertIsNone(mobile_auth.verify_code(901, wrong))
+        self.assertIsNone(mobile_auth.verify_code(901, code))
+
+    def test_verify_code_keeps_profile(self):
+        code = mobile_auth.create_code_challenge(902)
+        res = mobile_auth.verify_code(902, code, profile={"username": "u", "first_name": "Ali"})
+        self.assertEqual(res["user"]["first_name"], "Ali")
+
+    def test_unwritable_db_path_falls_back(self):
+        with patch.dict(os.environ, {"MOBILE_AUTH_DB_PATH": "/proc/nope/x.sqlite3"}):
+            self.path_patch.stop()
+            try:
+                path = mobile_auth._db_path()
+                self.assertNotEqual(path, "/proc/nope/x.sqlite3")
+            finally:
+                self.path_patch.start()
+
 
 if __name__ == "__main__":
     unittest.main()

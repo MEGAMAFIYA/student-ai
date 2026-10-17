@@ -6,6 +6,12 @@
     <string name="login_subtitle">Kirish uchun Telegram akkauntingizdan foydalaning — parol shart emas.</string>
     <string name="login_waiting">Telegram\'da \"START\" tugmasini bosishingizni kutyapmiz\u2026</string>
     <string name="login_expired">Kirish havolasining muddati o\'tdi. Qaytadan urinib ko\'ring.</string>
+    <string name="login_alt_title">yoki Telegram ID orqali kiring</string>
+    <string name="login_id_hint">Telegram ID raqamingiz</string>
+    <string name="login_id_help">ID ni bilmasangiz, Telegramda @userinfobot ga /start yuboring. Avval botimizda ham /start bosgan bo\'lishingiz kerak.</string>
+    <string name="login_send_code">Kod yuborish</string>
+    <string name="login_code_hint">Bot yuborgan 6 xonali kod</string>
+    <string name="login_verify_code">Kodni tasdiqlash</string>
     <string name="login_open_telegram">Telegramni ochish</string>
 
     <string name="home_student">STUDENT</string>

@@ -67,15 +67,22 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     payload = ""
     if context.args:
         payload = str(context.args[0]).strip()
-    if payload.startswith("login_"):
+    if payload.startswith("login_") and user:
+        # MUHIM: bu yerda return QILINMAYDI. Ilovadan kirgan yangi foydalanuvchi
+        # ham quyida botda ro'yxatdan o'tishi (hamyon, profil, bonus) va asosiy
+        # menyuni olishi kerak — aks holda "ro'yxatdan o'tish" ishlamay qoladi.
         try:
             import mobile_auth
             if mobile_auth.complete_login(payload[6:], user):
                 await update.message.reply_text("✅ Talaba AI ilovasiga kirish tasdiqlandi. Ilovaga qayting.")
                 logger.info("📱 Mobile login tasdiqlandi: user_id=%s", user.id)
-                return
+            else:
+                await update.message.reply_text(
+                    "⚠️ Kirish havolasi eskirgan yoki allaqachon ishlatilgan. "
+                    "Ilovada «Telegramda kirish» tugmasini qaytadan bosing."
+                )
         except Exception as e:
-            logger.warning("📱 Mobile login payload xatosi: %s", e)
+            logger.warning("📱 Mobile login payload xatosi: %s", e, exc_info=True)
 
     # Har bir Telegram akkaunti faqat birinchi /start'da ro'yxatdan o'tadi.
     # Referral payload: ref_<telegram_user_id>; login payload yuqorida alohida qayta ishlanadi.
@@ -117,7 +124,7 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if start_result and start_result.get("welcome_bonus"):
         credited = int(start_result["welcome_bonus"])
         await update.message.reply_text(
-            f"🎁 Boshlang‘ich bonus hisobingizga qo‘shildi: *{credited:,} so‘m*!\\n"
+            f"🎁 Boshlang‘ich bonus hisobingizga qo‘shildi: *{credited:,} so‘m*!\n"
             "💰 Balansingizni ‘💰 Balansim’ tugmasidan ko‘rishingiz mumkin.",
             parse_mode=ParseMode.MARKDOWN,
         )

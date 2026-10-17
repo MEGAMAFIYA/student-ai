@@ -7,29 +7,33 @@ import android.view.View
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import com.google.gson.Gson
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import retrofit2.Response
 import uz.studentai.mobile.R
 import uz.studentai.mobile.databinding.ActivityLoginBinding
 import uz.studentai.mobile.network.ApiClient
+import uz.studentai.mobile.network.PollResponse
 import uz.studentai.mobile.network.TelegramCodeRequest
+import uz.studentai.mobile.network.TelegramCodeSentResponse
 import uz.studentai.mobile.network.TelegramCodeVerifyRequest
 import uz.studentai.mobile.util.SessionManager
 
 /**
- * Login oqimi (parol/SMS SHART EMAS):
- *  1. "Telegramda kirish" bosiladi -> backend /api/mobile/auth/start
- *     chaqiriladi -> login_token + deep_link olinadi.
- *  2. Telegram ilovasi ochiladi (deep_link), foydalanuvchi shunchaki
- *     botning shaxsiy chatida "START" bosadi.
- *  3. Ilova fonda /api/mobile/auth/poll'ni har 2 soniyada so'raydi, toki
- *     status="ok" (session_token olinadi) yoki "expired" bo'lguncha.
+ * Login oqimi (parol/SMS SHART EMAS). Ikki usul:
+ *
+ * 1) "Telegramda kirish": /api/mobile/auth/start -> deep_link -> Telegram'da
+ *    START bosiladi -> ilova /auth/poll'ni so'raydi, status="ok" bo'lguncha.
+ * 2) Telegram ID + kod: ID kiritiladi, bot shaxsiy chatga 6 xonali kod yuboradi,
+ *    kod ilovaga kiritiladi (/auth/code/request va /auth/code/verify).
  */
 class LoginActivity : AppCompatActivity() {
     private lateinit var binding: ActivityLoginBinding
     private lateinit var session: SessionManager
     private var pollJob: Job? = null
+    private var cooldownJob: Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -43,34 +47,69 @@ class LoginActivity : AppCompatActivity() {
         binding.verifyCodeButton.setOnClickListener { verifyTelegramCode() }
     }
 
+    private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+
+    /** Xato javobidan serverning "message" maydonini o'qiydi (Retrofit body=null bo'lganda). */
+    private fun errorMessage(response: Response<*>): String? = try {
+        val raw = response.errorBody()?.string()
+        if (raw.isNullOrBlank()) null
+        else Gson().fromJson(raw, TelegramCodeSentResponse::class.java)?.message
+    } catch (e: Exception) {
+        null
+    }
 
     private fun requestTelegramCode() {
-        val rawId = binding.telegramIdInput.text?.toString()?.trim().orEmpty()
-        val telegramId = rawId.toLongOrNull()
+        val telegramId = binding.telegramIdInput.text?.toString()?.trim()?.toLongOrNull()
         if (telegramId == null || telegramId <= 0L) {
-            Toast.makeText(this, "Telegram ID raqamini to‘g‘ri kiriting.", Toast.LENGTH_LONG).show()
+            toast("Telegram ID raqamini to‘g‘ri kiriting.")
             return
         }
         binding.sendCodeButton.isEnabled = false
         lifecycleScope.launch {
+            var cooldown = 0
             try {
                 val response = ApiClient.get(this@LoginActivity)
                     .requestTelegramCode(TelegramCodeRequest(telegramId))
                 if (response.isSuccessful && response.body()?.sent == true) {
-                    Toast.makeText(this@LoginActivity, "Kod botdagi shaxsiy chatga yuborildi. 5 daqiqa amal qiladi.", Toast.LENGTH_LONG).show()
+                    toast("Kod botdagi shaxsiy chatga yuborildi. 5 daqiqa amal qiladi.")
+                    binding.codeSection.visibility = View.VISIBLE
+                    binding.telegramCodeInput.requestFocus()
+                    cooldown = 45
                 } else {
-                    val msg = response.body()?.message ?: when (response.code()) {
-                        400 -> "Botda avval /start bosing, Telegram ID ni tekshiring."
-                        429 -> "Juda ko‘p urinish. Biroz kuting."
-                        else -> "Kod yuborilmadi (${response.code()}). Asosiy usulni sinab ko‘ring."
-                    }
-                    Toast.makeText(this@LoginActivity, msg, Toast.LENGTH_LONG).show()
+                    toast(
+                        errorMessage(response) ?: when (response.code()) {
+                            400 -> "Botda avval /start bosing va Telegram ID ni tekshiring."
+                            429 -> "Juda ko‘p urinish. Biroz kutib qayta urining."
+                            503 -> "Server hozir tayyor emas. Keyinroq urinib ko‘ring."
+                            else -> "Kod yuborilmadi (${response.code()}). Telegramda kirish usulini sinab ko‘ring."
+                        }
+                    )
+                    if (response.code() == 429) cooldown = 30
                 }
             } catch (e: Exception) {
-                Toast.makeText(this@LoginActivity, "Ulanish xatosi: ${e.message ?: "tarmoq mavjud emas"}", Toast.LENGTH_LONG).show()
+                toast("Ulanish xatosi: ${e.message ?: "tarmoq mavjud emas"}")
             } finally {
-                binding.sendCodeButton.isEnabled = true
+                startSendCooldown(cooldown)
             }
+        }
+    }
+
+    /** "Kod yuborish" tugmasini bir necha soniya o'chirib qo'yadi (spam va 429 oldini olish). */
+    private fun startSendCooldown(seconds: Int) {
+        cooldownJob?.cancel()
+        if (seconds <= 0) {
+            binding.sendCodeButton.isEnabled = true
+            binding.sendCodeButton.setText(R.string.login_send_code)
+            return
+        }
+        cooldownJob = lifecycleScope.launch {
+            for (left in seconds downTo 1) {
+                binding.sendCodeButton.isEnabled = false
+                binding.sendCodeButton.text = "${getString(R.string.login_send_code)} ($left)"
+                delay(1000)
+            }
+            binding.sendCodeButton.isEnabled = true
+            binding.sendCodeButton.setText(R.string.login_send_code)
         }
     }
 
@@ -78,7 +117,7 @@ class LoginActivity : AppCompatActivity() {
         val telegramId = binding.telegramIdInput.text?.toString()?.trim()?.toLongOrNull()
         val code = binding.telegramCodeInput.text?.toString()?.trim().orEmpty()
         if (telegramId == null || telegramId <= 0L || !code.matches(Regex("\\d{6}"))) {
-            Toast.makeText(this, "Telegram ID va 6 xonali kodni kiriting.", Toast.LENGTH_LONG).show()
+            toast("Telegram ID va 6 xonali kodni kiriting.")
             return
         }
         binding.verifyCodeButton.isEnabled = false
@@ -88,19 +127,28 @@ class LoginActivity : AppCompatActivity() {
                     .verifyTelegramCode(TelegramCodeVerifyRequest(telegramId, code))
                 val result = response.body()
                 if (response.isSuccessful && result?.status == "ok" && !result.session_token.isNullOrBlank()) {
-                    session.sessionToken = result.session_token
-                    session.userId = result.user?.id ?: telegramId
-                    session.userFirstName = result.user?.first_name
-                    goHome()
+                    saveSessionAndGoHome(result, telegramId)
+                } else if (response.code() == 429) {
+                    toast("Juda ko‘p urinish. Biroz kuting.")
+                } else if (response.code() == 401) {
+                    toast("Kod noto‘g‘ri yoki muddati tugagan. Qayta kod oling.")
                 } else {
-                    Toast.makeText(this@LoginActivity, "Kod noto‘g‘ri yoki muddati tugagan. Qayta kod oling.", Toast.LENGTH_LONG).show()
+                    toast("Tasdiqlab bo‘lmadi (${response.code()}). Qayta urinib ko‘ring.")
                 }
             } catch (e: Exception) {
-                Toast.makeText(this@LoginActivity, "Tasdiqlash xatosi: ${e.message ?: "tarmoq xatosi"}", Toast.LENGTH_LONG).show()
+                toast("Tasdiqlash xatosi: ${e.message ?: "tarmoq xatosi"}")
             } finally {
                 binding.verifyCodeButton.isEnabled = true
             }
         }
+    }
+
+    private fun saveSessionAndGoHome(result: PollResponse, fallbackId: Long = 0L) {
+        session.sessionToken = result.session_token
+        session.userId = result.user?.id ?: fallbackId
+        session.userFirstName = result.user?.first_name
+        startActivity(Intent(this, HomeActivity::class.java))
+        finish()
     }
 
     private fun startLogin() {
@@ -115,8 +163,14 @@ class LoginActivity : AppCompatActivity() {
             try {
                 val api = ApiClient.get(this@LoginActivity)
                 val start = api.authStart()
-                openTelegram(start.deep_link)
+                if (!openTelegram(start.deep_link)) {
+                    resetToInitialState()
+                    return@launch
+                }
                 pollLogin(start.login_token, start.expires_in)
+            } catch (e: retrofit2.HttpException) {
+                toast(if (e.code() == 429) "Juda ko‘p urinish. Biroz kutib qayta urining." else "Server xatosi (${e.code()}). Keyinroq urinib ko‘ring.")
+                resetToInitialState()
             } catch (e: Exception) {
                 Toast.makeText(this@LoginActivity, R.string.error_network, Toast.LENGTH_SHORT).show()
                 resetToInitialState()
@@ -124,11 +178,13 @@ class LoginActivity : AppCompatActivity() {
         }
     }
 
-    private fun openTelegram(deepLink: String) {
-        try {
+    private fun openTelegram(deepLink: String): Boolean {
+        return try {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(deepLink)))
+            true
         } catch (e: Exception) {
-            Toast.makeText(this, "Telegram ilovasi topilmadi. Iltimos, o'rnating.", Toast.LENGTH_LONG).show()
+            toast("Telegram ilovasi yoki brauzer topilmadi. Telegramni o‘rnating.")
+            false
         }
     }
 
@@ -142,20 +198,18 @@ class LoginActivity : AppCompatActivity() {
                     val result = api.authPoll(token)
                     when (result.status) {
                         "ok" -> {
-                            session.sessionToken = result.session_token
-                            session.userId = result.user?.id ?: 0L
-                            session.userFirstName = result.user?.first_name
-                            goHome()
+                            if (result.session_token.isNullOrBlank()) continue
+                            saveSessionAndGoHome(result)
                             return@launch
                         }
                         "expired" -> {
                             showExpired()
                             return@launch
                         }
-                        // "pending" -> davom etamiz, hech narsa qilinmaydi
+                        // "pending" -> davom etamiz
                     }
                 } catch (e: Exception) {
-                    // Vaqtinchalik tarmoq xatosi bo'lishi mumkin — pollingni davom ettiramiz.
+                    // Vaqtinchalik tarmoq xatosi yoki 429 — pollingni davom ettiramiz.
                 }
             }
             showExpired()
@@ -175,13 +229,9 @@ class LoginActivity : AppCompatActivity() {
         binding.loginButton.isEnabled = true
     }
 
-    private fun goHome() {
-        startActivity(Intent(this, HomeActivity::class.java))
-        finish()
-    }
-
     override fun onDestroy() {
         super.onDestroy()
         pollJob?.cancel()
+        cooldownJob?.cancel()
     }
 }

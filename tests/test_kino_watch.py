@@ -539,7 +539,7 @@ class MobileBaseUrlTest(unittest.TestCase):
             import os
             os.environ.pop("RENDER_EXTERNAL_URL", None)
             h = self._h(**{"Host": "app.example.com", "X-Forwarded-Proto": "http"})
-            self.assertEqual(self.api._public_base_url(h), "https://app.example.com")   # ochiq host -> https
+            self.assertEqual(self.api._public_base_url(h), "")   # soxta Host'ga ishonilmaydi (xavfsizlik)
             self.assertEqual(self.api._public_base_url(self._h(Host="10.0.2.2:8080")), "http://10.0.2.2:8080")
             self.assertEqual(self.api._public_base_url(self._h()), "")
             self.assertEqual(self.api._public_base_url(self._h(Host="evil.com/<x>")), "")

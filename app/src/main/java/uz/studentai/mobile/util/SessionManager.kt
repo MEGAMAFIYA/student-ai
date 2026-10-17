@@ -1,6 +1,7 @@
 package uz.studentai.mobile.util
 
 import android.content.Context
+import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 
@@ -10,7 +11,36 @@ import androidx.security.crypto.MasterKey
  */
 class SessionManager(context: Context) {
     private val appContext = context.applicationContext
-    private val prefs by lazy {
+    private val prefs by lazy { openPrefs() }
+
+    /**
+     * Keystore ba'zi qurilmalarda (zaxira/qayta tiklash, tizim yangilanishi,
+     * ayrim ishlab chiqaruvchilar) kalitni yo'qotadi va EncryptedSharedPreferences
+     * yaratishda AEADBadTag/KeyStore xatosi beradi — bu ilovani ochilishida
+     * yiqitardi. Bunday holda eski shifrlangan fayl va kalit o'chirilib, qaytadan
+     * yaratiladi (foydalanuvchi oddiygina qayta kiradi).
+     */
+    private fun openPrefs(): SharedPreferences {
+        return try {
+            createEncrypted()
+        } catch (e: Exception) {
+            try {
+                appContext.deleteSharedPreferences(PREFS_NAME)
+                try {
+                    java.security.KeyStore.getInstance("AndroidKeyStore").apply {
+                        load(null)
+                        deleteEntry(MasterKey.DEFAULT_MASTER_KEY_ALIAS)
+                    }
+                } catch (_: Exception) { }
+                createEncrypted()
+            } catch (e2: Exception) {
+                // Oxirgi chora: shifrlanmagan, lekin ishlaydigan xotira (ilova yiqilmasin).
+                appContext.getSharedPreferences(LEGACY_PREFS_NAME, Context.MODE_PRIVATE)
+            }
+        }
+    }
+
+    private fun createEncrypted(): SharedPreferences {
         val masterKey = MasterKey.Builder(appContext)
             .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
             .build()
@@ -32,7 +62,7 @@ class SessionManager(context: Context) {
             }.apply()
             legacy.edit().clear().apply()
         }
-        encrypted
+        return encrypted
     }
 
     var sessionToken: String?

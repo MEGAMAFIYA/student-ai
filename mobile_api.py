@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import base64
 import io
+import ipaddress
 import json
 import logging
 import os
 import re
 import time
+import urllib.error
+import urllib.request
 import uuid
 from collections import deque
 from urllib.parse import urlparse, parse_qs, quote
@@ -36,11 +39,35 @@ _RATE_LIMITS_PER_WINDOW = {"GET": 90, "POST": 30}
 
 
 def _client_ip(handler) -> str:
-    # Do not trust forwarded headers here; client_address is the direct peer.
+    """Haqiqiy mijoz IP'si.
+
+    Render kabi hostinglarda bot reverse-proxy ortida ishlaydi: to'g'ridan-to'g'ri
+    peer (client_address) HAR DOIM proksining ichki IP'si bo'ladi, shuning uchun
+    barcha foydalanuvchilar BITTA rate-limit chelagiga tushib, login/poll 429
+    qaytarib qolardi. Peer ichki (private/loopback) bo'lgandagina, proksi
+    qo'shgan X-Forwarded-For'ning ENG O'NG (ishonchli) yozuvi olinadi — chap
+    tomondagi qiymatlarni mijoz soxtalashtirishi mumkin.
+    """
     try:
-        return str(handler.client_address[0])
+        peer = str(handler.client_address[0])
     except (AttributeError, IndexError, TypeError):
         return "unknown"
+    try:
+        peer_ip = ipaddress.ip_address(peer)
+    except ValueError:
+        return peer
+    if not (peer_ip.is_private or peer_ip.is_loopback):
+        return peer
+    headers = getattr(handler, "headers", None)
+    forwarded = (headers.get("X-Forwarded-For", "") if headers else "") or ""
+    for part in reversed([p.strip() for p in forwarded.split(",") if p.strip()]):
+        try:
+            ip = ipaddress.ip_address(part)
+        except ValueError:
+            continue
+        if not (ip.is_private or ip.is_loopback):
+            return str(ip)
+    return peer
 
 
 def _rate_limited(handler, method: str) -> bool:
@@ -284,6 +311,37 @@ async def _task(user: dict, body: dict) -> dict:
     return {"reply": result}
 
 
+def _send_telegram_text(chat_id: int, text: str) -> tuple[str, str]:
+    """Bot API'ga to'g'ridan-to'g'ri (sinxron) sendMessage yuboradi.
+
+    Eski kod HTTP thread ichida asyncio.run(application.bot.send_message(...))
+    chaqirardi: PTB Bot'ining httpx klienti asosiy event loop'ga bog'langan,
+    yangi loop'dan chaqirilganda "Event loop is closed" xatosi chiqib, kod HECH
+    QACHON yetib bormasdi. Bu yerda esa event loop'ga bog'liq bo'lmagan oddiy
+    HTTPS so'rov ishlatiladi.
+
+    Qaytaradi: ("ok"|"blocked"|"error", tafsilot). "blocked" — foydalanuvchi
+    botni hali ishga tushirmagan/bloklagan yoki ID noto'g'ri.
+    """
+    url = f"https://api.telegram.org/bot{config.TELEGRAM_TOKEN}/sendMessage"
+    payload = json.dumps({"chat_id": int(chat_id), "text": text}).encode("utf-8")
+    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            data = json.loads(resp.read().decode("utf-8") or "{}")
+        return ("ok", "") if data.get("ok") else ("error", str(data)[:200])
+    except urllib.error.HTTPError as exc:
+        try:
+            desc = json.loads(exc.read().decode("utf-8")).get("description", "")
+        except Exception:
+            desc = ""
+        if exc.code in (400, 403):
+            return "blocked", desc or str(exc.code)
+        return "error", f"HTTP {exc.code}: {desc}"
+    except Exception as exc:  # tarmoq/timeout
+        return "error", f"{type(exc).__name__}: {exc}"
+
+
 def handle_get(handler) -> bool:
     path = urlparse(handler.path).path
     if not path.startswith("/api/mobile/"):
@@ -349,42 +407,70 @@ def handle_post(handler) -> bool:
     if path == "/api/mobile/auth/code/request":
         try:
             body = _read_json(handler)
-            telegram_id = int(body.get("telegram_id", 0))
-            if telegram_id <= 0:
-                _json(handler, 400, {"error": "invalid_telegram_id"}); return True
-            if _APPLICATION is None:
-                _json(handler, 503, {"error": "telegram_bot_unavailable"}); return True
-            code = mobile_auth.create_code_challenge(telegram_id)
-            async def _send_code():
-                await _APPLICATION.bot.send_message(
-                    chat_id=telegram_id,
-                    text=f"🔐 Student AI ilovasiga ulanish kodi: {code}\\n\\nKod 5 daqiqa amal qiladi. Agar bu so‘rov sizniki bo‘lmasa, e’tiborsiz qoldiring."
-                )
-            import asyncio
-            try:
-                asyncio.run(_send_code())
-            except Exception:
-                logger.exception("Mobile login code delivery failed for Telegram ID %s", telegram_id)
-                _json(handler, 400, {"error": "cannot_message_user", "message": "Avval botda /start bosing, so‘ng qayta urinib ko‘ring."})
-                return True
-            _json(handler, 200, {"sent": True, "expires_in": 300})
+            telegram_id = int(str(body.get("telegram_id", "")).strip())
         except (ValueError, TypeError):
-            _json(handler, 400, {"error": "invalid_telegram_id"})
+            _json(handler, 400, {"error": "invalid_telegram_id", "message": "Telegram ID raqamini to‘g‘ri kiriting."})
+            return True
+        if telegram_id <= 0 or telegram_id > 10**13:
+            _json(handler, 400, {"error": "invalid_telegram_id", "message": "Telegram ID raqamini to‘g‘ri kiriting."})
+            return True
+        if not config.TELEGRAM_TOKEN:
+            _json(handler, 503, {"error": "telegram_bot_unavailable", "message": "Bot sozlanmagan. Keyinroq urinib ko‘ring."})
+            return True
+        try:
+            code = mobile_auth.create_code_challenge(telegram_id)
+        except mobile_auth.CodeCooldown as exc:
+            _json(handler, 429, {
+                "error": "code_cooldown",
+                "retry_after_seconds": exc.retry_after,
+                "message": f"Kod yaqinda yuborilgan. {exc.retry_after} soniyadan so‘ng qayta urinib ko‘ring.",
+            })
+            return True
         except Exception:
-            logger.exception("Mobile login code request failed")
-            _json(handler, 500, {"error": "code_request_failed"})
+            logger.exception("Mobile login code creation failed")
+            _json(handler, 500, {"error": "code_request_failed", "message": "Server xatosi. Qayta urinib ko‘ring."})
+            return True
+        status, detail = _send_telegram_text(
+            telegram_id,
+            f"🔐 Student AI ilovasiga kirish kodi: {code}\n\n"
+            "Kod 5 daqiqa amal qiladi. Agar bu so‘rov sizniki bo‘lmasa, e’tiborsiz qoldiring.",
+        )
+        if status == "ok":
+            _json(handler, 200, {"sent": True, "expires_in": 300})
+        else:
+            # Kod yetib bormadi — qayta urinish cooldown'ga tushmasligi uchun bekor qilamiz.
+            mobile_auth.discard_code_challenge(telegram_id)
+            if status == "blocked":
+                _json(handler, 400, {
+                    "error": "cannot_message_user",
+                    "message": "Bot sizga yoza olmadi. Avval Telegramda botni oching va /start bosing, ID ni tekshiring.",
+                })
+            else:
+                logger.warning("Mobile login code delivery failed for %s: %s", telegram_id, detail)
+                _json(handler, 502, {"error": "telegram_unreachable", "message": "Telegram bilan bog‘lanib bo‘lmadi. Birozdan so‘ng qayta urinib ko‘ring."})
         return True
     if path == "/api/mobile/auth/code/verify":
         try:
             body = _read_json(handler)
-            result = mobile_auth.verify_code(body.get("telegram_id"), str(body.get("code", "")))
-            if result is None:
-                _json(handler, 401, {"error": "invalid_or_expired_code"})
-            else:
-                _json(handler, 200, result)
+            telegram_id = int(str(body.get("telegram_id", "")).strip())
+        except (ValueError, TypeError):
+            _json(handler, 400, {"error": "invalid_request"})
+            return True
+        try:
+            profile = {}
+            try:
+                profile = storage.get_user_profile(telegram_id)
+            except Exception:
+                logger.debug("Profil o'qilmadi", exc_info=True)
+            result = mobile_auth.verify_code(telegram_id, str(body.get("code", "")), profile=profile)
         except Exception:
             logger.exception("Mobile login code verification failed")
-            _json(handler, 400, {"error": "invalid_request"})
+            _json(handler, 500, {"error": "verify_failed"})
+            return True
+        if result is None:
+            _json(handler, 401, {"error": "invalid_or_expired_code"})
+        else:
+            _json(handler, 200, result)
         return True
     user = _auth(handler)
     if user is None:
