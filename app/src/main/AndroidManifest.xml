@@ -25,6 +25,7 @@
 
         <activity android:name=".ui.LoginActivity" android:exported="false" />
         <activity android:name=".ui.HomeActivity" android:exported="false" />
+        <activity android:name=".ui.ModelSettingsActivity" android:exported="false" />
         <activity android:name=".ui.StudentMenuActivity" android:exported="false" />
         <activity android:name=".ui.ChatActivity" android:exported="false" />
         <activity android:name=".ui.QuizSetupActivity" android:exported="false" />

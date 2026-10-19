@@ -24,6 +24,7 @@ class HomeActivity : AppCompatActivity() {
         setContentView(binding.root)
         setSupportActionBar(binding.toolbar)
 
+        binding.btnSettings.setOnClickListener { startActivity(Intent(this, ModelSettingsActivity::class.java)) }
         binding.btnStudent.setOnClickListener { startActivity(Intent(this, StudentMenuActivity::class.java)) }
         binding.btnKino.setOnClickListener { startActivity(Intent(this, KinoListActivity::class.java)) }
 
