@@ -16,6 +16,7 @@ class StudentMenuActivity : AppCompatActivity() {
 
         binding.menuList.layoutManager = LinearLayoutManager(this)
         binding.menuList.adapter = StudentMenuAdapter(STUDENT_MENU_ITEMS) { item ->
+            uz.studentai.mobile.util.AppLog.info(this, "Menyu", "Ochildi: ${item.label}")
             when (item.key) {
                 "universal" -> startActivity(Intent(this, ChatActivity::class.java))
                 "quiz" -> startActivity(Intent(this, QuizSetupActivity::class.java))

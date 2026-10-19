@@ -24,6 +24,7 @@ class HomeActivity : AppCompatActivity() {
         setContentView(binding.root)
         setSupportActionBar(binding.toolbar)
 
+        binding.btnSettings.setOnClickListener { startActivity(Intent(this, ModelSettingsActivity::class.java)) }
         binding.btnStudent.setOnClickListener { startActivity(Intent(this, StudentMenuActivity::class.java)) }
         binding.btnKino.setOnClickListener { startActivity(Intent(this, KinoListActivity::class.java)) }
 
@@ -34,7 +35,10 @@ class HomeActivity : AppCompatActivity() {
         binding.btnPro.setOnClickListener { openFeature("pro", getString(uz.studentai.mobile.R.string.home_pro)) }
         binding.btnMy.setOnClickListener { openFeature("my", getString(uz.studentai.mobile.R.string.home_my)) }
 
+        binding.btnLog.setOnClickListener { startActivity(Intent(this, LogActivity::class.java)) }
+
         binding.btnLogout.setOnClickListener {
+            uz.studentai.mobile.util.AppLog.info(this, "Kirish", "Foydalanuvchi ilovadan chiqdi (sessiya o'chirildi).")
             SessionManager(this).clear()
             startActivity(Intent(this, LoginActivity::class.java))
             finish()
@@ -42,6 +46,7 @@ class HomeActivity : AppCompatActivity() {
     }
 
     private fun openFeature(key: String, title: String) {
+        uz.studentai.mobile.util.AppLog.info(this, "Menyu", "Ochildi: $title")
         val intent = Intent(this, FeatureActivity::class.java)
         intent.putExtra(FeatureActivity.EXTRA_FEATURE, key)
         intent.putExtra(FeatureActivity.EXTRA_TITLE, title)

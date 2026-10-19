@@ -15,6 +15,7 @@ import retrofit2.Response
 import uz.studentai.mobile.R
 import uz.studentai.mobile.databinding.ActivityLoginBinding
 import uz.studentai.mobile.network.ApiClient
+import uz.studentai.mobile.util.AppLog
 import uz.studentai.mobile.network.PollResponse
 import uz.studentai.mobile.network.TelegramCodeRequest
 import uz.studentai.mobile.network.TelegramCodeSentResponse
@@ -72,11 +73,14 @@ class LoginActivity : AppCompatActivity() {
                 val response = ApiClient.get(this@LoginActivity)
                     .requestTelegramCode(TelegramCodeRequest(telegramId))
                 if (response.isSuccessful && response.body()?.sent == true) {
+                    AppLog.ok(this@LoginActivity, "Kirish", "Telegram ID $telegramId uchun kod botga yuborildi.")
                     toast("Kod botdagi shaxsiy chatga yuborildi. 5 daqiqa amal qiladi.")
                     binding.codeSection.visibility = View.VISIBLE
                     binding.telegramCodeInput.requestFocus()
                     cooldown = 45
                 } else {
+                    AppLog.error(this@LoginActivity, "Kirish", "Kod yuborilmadi (Telegram ID $telegramId)",
+                        AppLog.explainHttp(response.code(), errorMessage(response)))
                     toast(
                         errorMessage(response) ?: when (response.code()) {
                             400 -> "Botda avval /start bosing va Telegram ID ni tekshiring."
@@ -130,10 +134,12 @@ class LoginActivity : AppCompatActivity() {
                     .verifyTelegramCode(TelegramCodeVerifyRequest(telegramId, code))
                 val result = response.body()
                 if (response.isSuccessful && result?.status == "ok" && !result.session_token.isNullOrBlank()) {
+                    AppLog.ok(this@LoginActivity, "Kirish", "Kod tasdiqlandi, tizimga kirildi (ID $telegramId).")
                     saveSessionAndGoHome(result, telegramId)
                 } else if (response.code() == 429) {
                     toast("Juda ko‘p urinish. Biroz kuting.")
                 } else if (response.code() == 401) {
+                    AppLog.error(this@LoginActivity, "Kirish", "Kod tasdiqlanmadi", "Kod noto'g'ri yoki muddati (5 daqiqa) tugagan.")
                     toast("Kod noto‘g‘ri yoki muddati tugagan. Qayta kod oling.")
                 } else {
                     toast("Tasdiqlab bo‘lmadi (${response.code()}). Qayta urinib ko‘ring.")
@@ -172,13 +178,7 @@ class LoginActivity : AppCompatActivity() {
                 }
                 pollLogin(start.login_token, start.expires_in)
             } catch (e: retrofit2.HttpException) {
-                toast(
-                    when (e.code()) {
-                        429 -> "Juda ko‘p urinish. Biroz kutib qayta urining."
-                        404 -> "Server topilmadi yoki yangilanmagan (404). Manzil: ${uz.studentai.mobile.BuildConfig.BASE_URL}"
-                        else -> "Server xatosi (${e.code()}). Keyinroq urinib ko‘ring."
-                    }
-                )
+                toast(if (e.code() == 429) "Juda ko‘p urinish. Biroz kutib qayta urining." else "Server xatosi (${e.code()}). Keyinroq urinib ko‘ring.")
                 resetToInitialState()
             } catch (e: Exception) {
                 Toast.makeText(this@LoginActivity, R.string.error_network, Toast.LENGTH_SHORT).show()

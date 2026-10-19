@@ -19,6 +19,7 @@ import uz.studentai.mobile.network.MobileTaskResponse
 import uz.studentai.mobile.network.MobileFileItem
 import uz.studentai.mobile.network.MobileFileTaskRequest
 import uz.studentai.mobile.network.MobileTaskRequest
+import uz.studentai.mobile.util.AppLog
 import uz.studentai.mobile.util.SessionManager
 import java.io.ByteArrayOutputStream
 
@@ -43,6 +44,7 @@ class FeatureActivity : AppCompatActivity() {
         feature = intent.getStringExtra(EXTRA_FEATURE).orEmpty()
         titleText = intent.getStringExtra(EXTRA_TITLE) ?: feature
         setContentView(buildUi())
+        AppLog.info(this, titleText, "Ekran ochildi")
         if (feature in AUTO_FEATURES) sendTask() 
     }
 
@@ -141,8 +143,10 @@ class FeatureActivity : AppCompatActivity() {
                 try {
                     contentResolver.openOutputStream(data.data!!)?.use { it.write(bytes) }
                     output.append("\n\n✅ Fayl saqlandi: $pendingFileName")
+                    AppLog.ok(this, titleText, "Fayl telefonga saqlandi: $pendingFileName")
                 } catch (e: Exception) {
                     output.append("\n\n❌ Faylni saqlab bo'lmadi: ${e.message}")
+                    AppLog.error(this, titleText, "Fayl saqlanmadi", AppLog.explain(e))
                 }
             }
             pendingFileBytes = null
@@ -168,6 +172,7 @@ class FeatureActivity : AppCompatActivity() {
         lifecycleScope.launch {
             try {
                 val api = ApiClient.get(this@FeatureActivity)
+                AppLog.info(this@FeatureActivity, titleText, "Vazifa yuborildi (${if (text.length > 60) text.take(60) + "…" else text})")
                 val response = if (picked.isNotEmpty() && feature in setOf("images_pdf", "edit_pdf", "solve", "translate", "summarize")) {
                     api.fileTask(MobileFileTaskRequest(feature, text, picked.toList()))
                 } else {
@@ -190,10 +195,20 @@ class FeatureActivity : AppCompatActivity() {
                 }
                 if (response.isSuccessful && body != null) {
                     output.text = body.reply ?: body.text ?: body.error ?: "Tayyor."
+                    val replyText = body.reply.orEmpty()
+                    if (replyText.startsWith("❌") || replyText.startsWith("❗") || body.status == "error" || body.error != null) {
+                        AppLog.error(this@FeatureActivity, titleText, "Natija xato bilan qaytdi", replyText.ifBlank { body.error.orEmpty() })
+                    } else {
+                        AppLog.ok(this@FeatureActivity, titleText, "Tayyor bo'ldi" + if (!body.file_base64.isNullOrBlank()) " (fayl: ${body.filename})" else "")
+                    }
                     if (!body.file_base64.isNullOrBlank()) saveFile(body.file_base64!!, body.filename ?: "student_ai_file", body.mime ?: "application/octet-stream")
-                } else output.text = "❌ Server xatosi: ${response.code()}"
+                } else {
+                    output.text = "❌ Server xatosi: ${response.code()}"
+                    AppLog.error(this@FeatureActivity, titleText, "Vazifa bajarilmadi", AppLog.explainHttp(response.code(), null))
+                }
             } catch (e: Exception) {
-                output.text = "❌ Tarmoq xatosi. Qaytadan urinib ko'ring.\n\n${e.message ?: ""}"
+                output.text = "❌ Tarmoq xatosi. Qaytadan urinib ko'ring.\n\n${AppLog.explain(e)}"
+                AppLog.error(this@FeatureActivity, titleText, "Vazifa bajarilmadi", AppLog.explain(e))
             } finally {
                 progress.visibility = View.GONE
                 action.isEnabled = true
