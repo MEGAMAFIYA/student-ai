@@ -6,6 +6,9 @@ import android.view.View
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import uz.studentai.mobile.local.LocalLlamaEngine
 import androidx.recyclerview.widget.LinearLayoutManager
 import kotlinx.coroutines.launch
 import uz.studentai.mobile.R
@@ -15,8 +18,8 @@ import uz.studentai.mobile.network.ChatMessageDto
 import uz.studentai.mobile.network.ChatRequest
 import uz.studentai.mobile.util.SessionManager
 
-/** STUDENT > 💬 UNIVERSAL CHAT — botdagi bilan bir xil AI (ask_ai) bilan
- * suhbat, backend /api/mobile/chat orqali. */
+/** STUDENT universal chat. Tanlangan GGUF model mavjud bo'lsa lokal ishlaydi;
+ * model tanlanmagan bo'lsa avvalgi backend /api/mobile/chat ishlatiladi. */
 class ChatActivity : AppCompatActivity() {
     private lateinit var binding: ActivityChatBinding
     private val messages = mutableListOf<ChatUiMessage>()
@@ -51,17 +54,35 @@ class ChatActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             try {
-                val api = ApiClient.get(this@ChatActivity)
-                val response = api.chat(ChatRequest(message = text, history = history))
-                when {
-                    response.isSuccessful && response.body()?.reply != null -> {
-                        adapter.add(ChatUiMessage("assistant", response.body()!!.reply!!))
+                val localModel = LocalLlamaEngine.selectedModel(this@ChatActivity)
+                if (localModel != null) {
+                    // Model tanlangan bo'lsa, internet/serverga umuman murojaat qilmaymiz.
+                    val recentContext = messages.dropLast(1).takeLast(8).joinToString("\n") {
+                        if (it.role == "assistant") "Yordamchi: ${it.text}" else "Foydalanuvchi: ${it.text}"
                     }
-                    response.code() == 401 -> handleUnauthorized()
-                    else -> adapter.add(ChatUiMessage("assistant", getString(R.string.error_network)))
+                    val localPrompt = listOf(recentContext, "Foydalanuvchi: $text")
+                        .filter { it.isNotBlank() }.joinToString("\n")
+                    val reply = withContext(Dispatchers.IO) {
+                        LocalLlamaEngine.generate(this@ChatActivity, localPrompt)
+                    }
+                    adapter.add(ChatUiMessage("assistant", reply))
+                } else {
+                    // Model tanlanmagan bo'lsa, avvalgi server rejimi o'z holicha qoladi.
+                    val api = ApiClient.get(this@ChatActivity)
+                    val response = api.chat(ChatRequest(message = text, history = history))
+                    when {
+                        response.isSuccessful && response.body()?.reply != null -> {
+                            adapter.add(ChatUiMessage("assistant", response.body()!!.reply!!))
+                        }
+                        response.code() == 401 -> handleUnauthorized()
+                        else -> adapter.add(ChatUiMessage("assistant", getString(R.string.error_network)))
+                    }
                 }
             } catch (e: Exception) {
-                adapter.add(ChatUiMessage("assistant", getString(R.string.error_network)))
+                val message = e.message?.takeIf { it.isNotBlank() } ?: getString(R.string.error_network)
+                adapter.add(ChatUiMessage("assistant", "Xatolik: $message"))
+            } catch (e: LinkageError) {
+                adapter.add(ChatUiMessage("assistant", "Lokal AI dvigateli yuklanmadi. APKning yangi versiyasini o'rnating."))
             } finally {
                 binding.typingProgress.visibility = View.GONE
                 binding.sendButton.isEnabled = true

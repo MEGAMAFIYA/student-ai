@@ -6,6 +6,7 @@ plugins {
 android {
     namespace = "uz.studentai.mobile"
     compileSdk = 34
+    ndkVersion = "27.2.12479018"
 
     defaultConfig {
         applicationId = "uz.studentai.mobile"
@@ -13,6 +14,8 @@ android {
         targetSdk = 34
         // CI'da build raqami va commit qo'shiladi: APK qaysi koddan chiqqanini aniq bilish uchun.
         versionCode = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()?.plus(100) ?: 2
+        ndk { abiFilters += listOf("arm64-v8a") }
+
         versionName = "1.1." + (System.getenv("GITHUB_RUN_NUMBER") ?: "0") + (System.getenv("GITHUB_SHA")?.take(7)?.let { "-$it" } ?: "")
 
         // 🔧 Botning HTTP serveri (bot.py) qaysi manzilda ochiq bo'lsa,
@@ -54,6 +57,22 @@ android {
     buildFeatures {
         viewBinding = true
         buildConfig = true
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+            arguments += listOf(
+                "-DLLAMA_CPP_SOURCE_DIR=${rootProject.projectDir.resolve("llama.cpp").absolutePath}",
+                "-DGGML_OPENMP=OFF",
+                "-DGGML_LLAMAFILE=OFF",
+                "-DGGML_NATIVE=OFF",
+                "-DLLAMA_BUILD_TESTS=OFF",
+                "-DLLAMA_BUILD_EXAMPLES=OFF",
+                "-DLLAMA_BUILD_SERVER=OFF"
+            )
+        }
     }
 
     compileOptions {

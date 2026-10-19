@@ -47,7 +47,7 @@ class ModelSettingsActivity : AppCompatActivity() {
         val name = prefs.getString(KEY_MODEL_NAME, null)
         val path = prefs.getString(KEY_MODEL_PATH, null)
         binding.modelStatus.text = if (name != null && path != null && File(path).exists()) {
-            "Tanlangan model: $name\nFayl tayyorlandi.\n\nLokal javob yaratish dvigateli hali ulanmagan."
+            "Tanlangan model: $name\nFayl tayyor.\n\nChat bo‘limida internetni o‘chirib, lokal AI’ni sinab ko‘rishingiz mumkin."
         } else "Model tanlanmagan. GGUF model papkasini tanlang."
     }
 
