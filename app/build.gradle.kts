@@ -14,21 +14,8 @@ android {
         targetSdk = 34
         // CI'da build raqami va commit qo'shiladi: APK qaysi koddan chiqqanini aniq bilish uchun.
         versionCode = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()?.plus(100) ?: 2
-        ndk { abiFilters += listOf("arm64-v8a") }
-
-        externalNativeBuild {
-            cmake {
-                arguments += listOf(
-                    "-DLLAMA_CPP_SOURCE_DIR=${rootProject.projectDir.resolve("llama.cpp").absolutePath}",
-                    "-DGGML_OPENMP=OFF",
-                    "-DGGML_LLAMAFILE=OFF",
-                    "-DGGML_NATIVE=OFF",
-                    "-DLLAMA_BUILD_TESTS=OFF",
-                    "-DLLAMA_BUILD_EXAMPLES=OFF",
-                    "-DLLAMA_BUILD_SERVER=OFF"
-                )
-            }
-        }
+        // Ko'proq Android telefonlariga mos universal APK.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
 
         versionName = "1.1." + (System.getenv("GITHUB_RUN_NUMBER") ?: "0") + (System.getenv("GITHUB_SHA")?.take(7)?.let { "-$it" } ?: "")
 
@@ -77,6 +64,15 @@ android {
         cmake {
             path = file("src/main/cpp/CMakeLists.txt")
             version = "3.22.1"
+            arguments += listOf(
+                "-DLLAMA_CPP_SOURCE_DIR=${rootProject.projectDir.resolve("llama.cpp").absolutePath}",
+                "-DGGML_OPENMP=OFF",
+                "-DGGML_LLAMAFILE=OFF",
+                "-DGGML_NATIVE=OFF",
+                "-DLLAMA_BUILD_TESTS=OFF",
+                "-DLLAMA_BUILD_EXAMPLES=OFF",
+                "-DLLAMA_BUILD_SERVER=OFF"
+            )
         }
     }
 

@@ -28,25 +28,14 @@ jobs:
         with:
           gradle-version: '8.7'
 
-      # ubuntu-latest'da Android SDK ALLAQACHON o'rnatilgan. Alohida setup-android
-      # action'i ba'zan 8 soniyada yiqilardi; shuning uchun tayyor SDK'dan foydalanamiz
-      # va kerakli NDK/CMake'ni o'zimiz o'rnatamiz.
-      - name: Android SDK, NDK va CMake tayyorlash
+      - name: Android SDK tayyorlash
+        uses: android-actions/setup-android@v3
+
+      - name: Android platformasi, NDK va CMake o'rnatish
         shell: bash
         run: |
-          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
-          if [ ! -d "$SDK" ]; then echo "::error::Android SDK topilmadi: $SDK"; exit 1; fi
-          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
-          SM="$(ls "$SDK"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -n1)"
-          if [ -z "$SM" ]; then echo "::error::sdkmanager topilmadi ($SDK/cmdline-tools)"; exit 1; fi
-          echo "sdkmanager: $SM"
-          set +e
-          yes | "$SM" --licenses > /dev/null 2>&1
-          "$SM" --install "platforms;android-34" "build-tools;34.0.0" "ndk;27.2.12479018" "cmake;3.22.1" > sdk-install.log 2>&1
-          code=$?
-          tail -n 25 sdk-install.log
-          if [ $code -ne 0 ]; then echo "::error::SDK/NDK/CMake o'rnatilmadi (kod $code). Yuqoridagi oxirgi qatorlarga qarang."; exit $code; fi
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager --install "platforms;android-34" "build-tools;34.0.0" "ndk;27.2.12479018" "cmake;3.22.1"
 
       - name: llama.cpp manbasini olish
         run: git clone --depth 1 https://github.com/ggml-org/llama.cpp.git llama.cpp
@@ -92,6 +81,15 @@ jobs:
             app/build/reports/
           if-no-files-found: warn
           retention-days: 14
+
+      - name: APK faylini tekshirish
+        if: success()
+        shell: bash
+        run: |
+          if [ "${{ steps.ks.outputs.signed }}" = "true" ]; then APK=app/build/outputs/apk/release/app-release.apk; else APK=app/build/outputs/apk/debug/app-debug.apk; fi
+          test -s "$APK" || { echo "::error::APK topilmadi yoki bo'sh: $APK"; exit 1; }
+          "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --verbose "$APK"
+          unzip -l "$APK" | grep -E 'lib/(arm64-v8a|armeabi-v7a)/' || { echo "::error::APK ichida native kutubxonalar yo'q"; exit 1; }
 
       - name: APK nomini build raqami va commit bilan belgilash
         if: success()
