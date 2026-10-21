@@ -30,8 +30,6 @@ jobs:
 
       - name: Android SDK tayyorlash
         uses: android-actions/setup-android@v3
-        with:
-          packages: ''
 
       - name: Android platformasi, NDK va CMake o'rnatish
         shell: bash

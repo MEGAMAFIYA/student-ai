@@ -17,6 +17,21 @@ android {
         // Ko'proq Android telefonlariga mos universal APK.
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
 
+        // CMake arguments belong under defaultConfig.externalNativeBuild.cmake.
+        externalNativeBuild {
+            cmake {
+                arguments += listOf(
+                    "-DLLAMA_CPP_SOURCE_DIR=${rootProject.projectDir.resolve("llama.cpp").absolutePath}",
+                    "-DGGML_OPENMP=OFF",
+                    "-DGGML_LLAMAFILE=OFF",
+                    "-DGGML_NATIVE=OFF",
+                    "-DLLAMA_BUILD_TESTS=OFF",
+                    "-DLLAMA_BUILD_EXAMPLES=OFF",
+                    "-DLLAMA_BUILD_SERVER=OFF"
+                )
+            }
+        }
+
         versionName = "1.1." + (System.getenv("GITHUB_RUN_NUMBER") ?: "0") + (System.getenv("GITHUB_SHA")?.take(7)?.let { "-$it" } ?: "")
 
         // 🔧 Botning HTTP serveri (bot.py) qaysi manzilda ochiq bo'lsa,
@@ -64,15 +79,6 @@ android {
         cmake {
             path = file("src/main/cpp/CMakeLists.txt")
             version = "3.22.1"
-            arguments += listOf(
-                "-DLLAMA_CPP_SOURCE_DIR=${rootProject.projectDir.resolve("llama.cpp").absolutePath}",
-                "-DGGML_OPENMP=OFF",
-                "-DGGML_LLAMAFILE=OFF",
-                "-DGGML_NATIVE=OFF",
-                "-DLLAMA_BUILD_TESTS=OFF",
-                "-DLLAMA_BUILD_EXAMPLES=OFF",
-                "-DLLAMA_BUILD_SERVER=OFF"
-            )
         }
     }
 
