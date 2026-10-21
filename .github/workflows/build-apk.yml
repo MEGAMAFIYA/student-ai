@@ -28,14 +28,43 @@ jobs:
         with:
           gradle-version: '8.7'
 
-      - name: Android SDK tayyorlash
-        uses: android-actions/setup-android@v3
-
-      - name: Android platformasi, NDK va CMake o'rnatish
+      # GitHub-hosted ubuntu-latest runner already includes Android SDK.
+      # Avoid android-actions/setup-android@v3 here: it may call the removed
+      # legacy "tools" package and fail before the actual Gradle build starts.
+      - name: Android SDK, NDK va CMake tayyorlash
         shell: bash
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager --install "platforms;android-34" "build-tools;34.0.0" "ndk;27.2.12479018" "cmake;3.22.1"
+          set -euo pipefail
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          if [ ! -d "$SDK" ]; then
+            echo "::error::Android SDK topilmadi: $SDK"
+            exit 1
+          fi
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+
+          SM="$(find "$SDK/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort -V | tail -n1)"
+          if [ -z "$SM" ]; then
+            echo "::error::sdkmanager topilmadi: $SDK/cmdline-tools"
+            find "$SDK" -maxdepth 4 -type f -name sdkmanager -print || true
+            exit 1
+          fi
+          echo "SDK manager: $SM"
+
+          set +o pipefail
+          yes | "$SM" --licenses >/dev/null 2>&1 || true
+          set -o pipefail
+
+          "$SM" --install \
+            "platforms;android-34" \
+            "build-tools;34.0.0" \
+            "ndk;27.2.12479018" \
+            "cmake;3.22.1" 2>&1 | tee sdk-install.log
+
+          test -d "$SDK/platforms/android-34"
+          test -x "$SDK/build-tools/34.0.0/apksigner"
+          test -d "$SDK/ndk/27.2.12479018"
+          test -d "$SDK/cmake/3.22.1"
 
       - name: llama.cpp manbasini olish
         run: git clone --depth 1 https://github.com/ggml-org/llama.cpp.git llama.cpp
@@ -78,6 +107,7 @@ jobs:
           name: student-ai-build-diagnostics
           path: |
             build-apk.log
+            sdk-install.log
             app/build/reports/
           if-no-files-found: warn
           retention-days: 14
@@ -114,7 +144,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="v1.1.${{ github.run_number }}"
+          TAG="v1.1.${{ github.run_number }}-${{ github.run_attempt }}"
           gh release create "$TAG" Talaba-AI-*.apk \
             --target "$GITHUB_SHA" \
             --title "Eng so'nggi build $TAG" \
