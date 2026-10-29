@@ -29,3 +29,4 @@ mening_kabinetim/
 mobile_auth.sqlite3
 mobile_auth.sqlite3-shm
 mobile_auth.sqlite3-wal
+backups/

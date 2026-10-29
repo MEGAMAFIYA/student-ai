@@ -36,7 +36,7 @@ _UPSTASH_KEY = "student_ai_app_data"
 # funksiyalar ham sinxron (httpx.Client) ishlaydi va aiogram/PTB bir nechta
 # haqiqiy thread'da chaqirilishi mumkin bo'lgan sinxron kod ichida ishga
 # tushishi mumkin).
-_lock = threading.Lock()
+_lock = threading.RLock()
 
 MAX_FILES_PER_USER = 30      # har bir foydalanuvchi uchun saqlanadigan fayllar tarixi chegarasi
 MAX_USAGE_DATES = 60         # statistikada saqlanadigan kunlar soni (eskilari siqiladi)
@@ -84,9 +84,16 @@ def _load() -> dict:
 _data = _load()
 
 
+def _snapshot() -> str:
+    with _lock:
+        return json.dumps(_data, ensure_ascii=False)
+
+
 def _save() -> None:
-    raw = json.dumps(_data, ensure_ascii=False)
-    config.persist_write(_DATA_FILENAME, _UPSTASH_KEY, raw, commit_message="📊 Foydalanuvchi fayllari/statistika/eslatmalar yangilandi")
+    """Kechiktirilgan yozish: handler (event loop) tashqi bazani kutib qotmaydi.
+    Bir necha o'zgarish bitta yozuvga birlashadi; chiqishda oxirgi holat yoziladi."""
+    config.persist_write_deferred(_DATA_FILENAME, _UPSTASH_KEY, _snapshot,
+                                  commit_message="📊 Foydalanuvchi fayllari/statistika/eslatmalar yangilandi")
 
 
 # ============================================================

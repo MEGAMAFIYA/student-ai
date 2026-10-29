@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
 
+import cache
 import config
 
 logger = logging.getLogger(__name__)
@@ -83,14 +84,23 @@ def _db_path() -> str:
     return fallback
 
 
+_wal_ready: set[str] = set()
+
+
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path(), timeout=10)
+    path = _db_path()
+    conn = sqlite3.connect(path, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout=10000")
-    try:
-        conn.execute("PRAGMA journal_mode=WAL")
-    except sqlite3.DatabaseError:
-        pass
+    conn.execute("PRAGMA synchronous=NORMAL")      # WAL bilan xavfsiz; har commit'da fsync kutmaydi
+    conn.execute("PRAGMA temp_store=MEMORY")
+    if path not in _wal_ready:
+        # journal_mode faylda doimiy saqlanadi — har ulanishda qayta o'rnatish shart emas.
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            _wal_ready.add(path)
+        except sqlite3.DatabaseError:
+            pass
     return conn
 
 
@@ -144,8 +154,20 @@ def _init_db() -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_mobile_session_expiry ON mobile_sessions(expires_at)")
 
 
-def _cleanup(now: float | None = None) -> None:
+_CLEANUP_EVERY = 60.0
+_last_cleanup = 0.0
+
+
+def _cleanup(now: float | None = None, force: bool = False) -> None:
+    """Muddati o'tgan yozuvlarni o'chiradi. Hamma so'rovlarda emas, daqiqada
+    bir marta (har so'rovdagi 3 ta DELETE = yozuv-tranzaksiya = ortiqcha lock).
+    To'g'rilikka ta'sir qilmaydi: har bir SELECT/UPDATE o'zi `expires_at > now`
+    ni tekshiradi."""
+    global _last_cleanup
     now = time.time() if now is None else now
+    if not force and 0 <= now - _last_cleanup < _CLEANUP_EVERY:
+        return
+    _last_cleanup = now
     with _connection() as conn:
         conn.execute("DELETE FROM mobile_login_challenges WHERE expires_at <= ?", (now,))
         conn.execute("DELETE FROM mobile_code_challenges WHERE expires_at <= ?", (now,))
@@ -222,27 +244,47 @@ def poll(login_token: str) -> dict:
             return {"status": "ok", "session_token": session_token, "user": user}
 
 
+_SESSION_CACHE_TTL = 60.0
+
+
 def get_user(session_token: str | None) -> dict | None:
+    """Har bir mobil API so'rovi shu orqali o'tadi — shuning uchun qisqa muddatli
+    kesh (Redis bo'lsa Redis, bo'lmasa xotira) bilan: takroriy so'rov SQLite'ga
+    umuman bormaydi. Sessiya tugash vaqti keshda ham tekshiriladi, revoke esa
+    keshni darhol tozalaydi. O'qish WAL'da yozuvchilarni bloklamaydi, shuning
+    uchun global `_lock` ham, `_cleanup` ham kerak emas."""
     if not session_token:
         return None
     now = time.time()
-    with _lock:
-        _cleanup(now)
-        with _connection() as conn:
-            row = conn.execute(
-                "SELECT user_json FROM mobile_sessions WHERE token_hash = ? AND expires_at > ?",
-                (_token_hash(session_token), now),
-            ).fetchone()
-            return json.loads(row["user_json"]) if row else None
+    token_hash = _token_hash(session_token)
+    cache_key = f"msess:{token_hash}"
+    hit = cache.get(cache_key)
+    if hit and hit.get("exp", 0) > now:
+        return hit["user"]
+    with _connection() as conn:
+        row = conn.execute(
+            "SELECT user_json, expires_at FROM mobile_sessions WHERE token_hash = ? AND expires_at > ?",
+            (token_hash, now),
+        ).fetchone()
+    if not row:
+        return None
+    user = json.loads(row["user_json"])
+    cache.set(cache_key, {"user": user, "exp": min(float(row["expires_at"]), now + _SESSION_CACHE_TTL)},
+              ttl=_SESSION_CACHE_TTL)
+    return user
 
 
 def revoke_session(session_token: str | None) -> bool:
     """Revoke a session token immediately; token values are never stored in plaintext."""
     if not session_token:
         return False
+    token_hash = _token_hash(session_token)
+    cache.delete(f"msess:{token_hash}")
     with _lock, _connection() as conn:
-        cur = conn.execute("DELETE FROM mobile_sessions WHERE token_hash = ?", (_token_hash(session_token),))
-        return cur.rowcount == 1
+        cur = conn.execute("DELETE FROM mobile_sessions WHERE token_hash = ?", (token_hash,))
+        revoked = cur.rowcount == 1
+    cache.delete(f"msess:{token_hash}")   # DELETE paytida kelgan parallel get_user qayta keshlab qo'ymasin
+    return revoked
 
 
 def create_code_challenge(telegram_id: int) -> str:
@@ -260,6 +302,7 @@ def create_code_challenge(telegram_id: int) -> str:
     with _lock:
         _cleanup(now)
         with _connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")   # o'qish->yozish: yozuv qulfini boshidan olamiz
             row = conn.execute(
                 "SELECT created_at FROM mobile_code_challenges WHERE telegram_id=?", (telegram_id,)
             ).fetchone()

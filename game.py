@@ -55,9 +55,16 @@ try:
 except Exception:
     ROOMS = {}
 
+def _snapshot() -> str:
+    # JSON faqat LOCK ostida (ms), tarmoq yozuvi esa lock TASHQARISIDA, fon thread'ida.
+    with LOCK:
+        return json.dumps(ROOMS, ensure_ascii=False)
+
 def _save():
-    config.persist_write(GAME_FILE, GAME_KEY, json.dumps(ROOMS, ensure_ascii=False),
-                         commit_message="🎮 1v1 o'yin xonalari yangilandi")
+    """Kechiktirilgan (debounce) saqlash — chaqiruvchini va LOCK'ni bloklamaydi.
+    Ketma-ket yurishlar bitta yozuvga birlashadi (qarang: config.persist_write_deferred)."""
+    config.persist_write_deferred(GAME_FILE, GAME_KEY, _snapshot,
+                                  commit_message="🎮 1v1 o'yin xonalari yangilandi")
 
 def _purge():
     now=time.time()
@@ -783,7 +790,9 @@ def signal(rid, init_data, target, payload):
         box=room["signals"].setdefault(target,[])
         box.append({"from":int(user["id"]),"payload":payload,"ts":time.time()})
         room["signals"][target]=box[-MAX_SIGNAL_ITEMS:]
-        room["updated_at"]=time.time(); _save()
+        # WebRTC signal (offer/answer/ICE) — vaqtinchalik ma'lumot: xotirada qoladi,
+        # bazaga YOZILMAYDI (avval har ICE candidate butun JSON'ni Neon'ga yozardi).
+        room["updated_at"]=time.time()
     return True,None
 
 def get_signals(rid, init_data):

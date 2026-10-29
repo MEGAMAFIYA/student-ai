@@ -17,6 +17,9 @@ import logging
 import os
 import base64
 import re
+import threading
+import atexit
+import time
 import httpx
 from dotenv import load_dotenv
 
@@ -657,10 +660,13 @@ _EDITABLE_FIELDS = ("provider", "model", "api_key", "base_url")
 _KEY_FIELDS = ("key", "model")
 
 
+_neon_conn = None
+_neon_conn_lock = threading.RLock()
+
+
 def _neon_connect():
-    """Har chaqiriqda yangi ulanish ochadi (bot kam trafikli bo'lgani uchun
-    connection pool shart emas — soddaligi ustunlik). psycopg2 o'rnatilmagan
-    bo'lsa, tushunarli xato bilan to'xtaydi (requirements.txt'ga qarang)."""
+    """Yangi Postgres ulanishi ochadi (autocommit, TCP keepalive bilan).
+    psycopg2 o'rnatilmagan yoki ulanib bo'lmasa — None qaytaradi."""
     try:
         import psycopg2
     except ImportError:
@@ -670,10 +676,50 @@ def _neon_connect():
         )
         return None
     try:
-        return psycopg2.connect(NEON_DATABASE_URL, connect_timeout=10)
+        conn = psycopg2.connect(
+            NEON_DATABASE_URL,
+            connect_timeout=8,
+            keepalives=1, keepalives_idle=30, keepalives_interval=10, keepalives_count=3,
+            options="-c statement_timeout=15000",
+        )
+        conn.autocommit = True   # ochiq (idle-in-transaction) tranzaksiya qolmasin
+        return conn
     except Exception as e:
         logger.error(f"❌ Neon/Postgres'ga ulanib bo'lmadi: {type(e).__name__}: {e}")
         return None
+
+
+def _neon_run(fn):
+    """`fn(conn)` ni BITTA umumiy (qayta ishlatiladigan) ulanishda bajaradi.
+
+    Avval har chaqiriqda yangi TCP+TLS ulanish ochilardi (Render -> Neon,
+    har safar yuzlab ms, Neon "uxlab qolgan" bo'lsa soniyalar) — endi ulanish
+    qayta ishlatiladi, uzilgan bo'lsa (Neon 5 daqiqa bo'sh turib uxlaganda
+    yoki tarmoq uzilganda) bir marta avtomatik qayta ulanadi.
+    Qaytaradi: (muvaffaqiyatli_mi, natija)."""
+    global _neon_conn
+    try:
+        import psycopg2
+        conn_errors = (psycopg2.OperationalError, psycopg2.InterfaceError)
+    except ImportError:
+        _neon_connect()  # xatoni logga yozadi
+        return False, None
+    with _neon_conn_lock:
+        for attempt in (1, 2):
+            if _neon_conn is None or getattr(_neon_conn, "closed", 1):
+                _neon_conn = _neon_connect()
+                if _neon_conn is None:
+                    return False, None
+            try:
+                return True, fn(_neon_conn)
+            except conn_errors as e:
+                logger.warning(f"Neon ulanishi uzilgan ({type(e).__name__}) — qayta ulanilmoqda (urinish {attempt}/2).")
+                try:
+                    _neon_conn.close()
+                except Exception:
+                    pass
+                _neon_conn = None
+        return False, None
 
 
 def _neon_ensure_table(conn) -> None:
@@ -688,32 +734,26 @@ def _neon_ensure_table(conn) -> None:
             "  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()"
             ")"
         )
-    conn.commit()
     _neon_table_ready = True
 
 
 def _neon_get(key: str) -> str | None:
-    conn = _neon_connect()
-    if conn is None:
-        return None
-    try:
+    def _do(conn):
         _neon_ensure_table(conn)
         with conn.cursor() as cur:
             cur.execute("SELECT value FROM student_ai_kv WHERE key = %s", (key,))
             row = cur.fetchone()
             return row[0] if row else None
+    try:
+        ok, val = _neon_run(_do)
     except Exception as e:
         logger.error(f"❌ Neon/Postgres'dan '{key}' o'qishda xato: {type(e).__name__}: {e}")
         return None
-    finally:
-        conn.close()
+    return val if ok else None
 
 
 def _neon_set(key: str, value: str) -> bool:
-    conn = _neon_connect()
-    if conn is None:
-        return False
-    try:
+    def _do(conn):
         _neon_ensure_table(conn)
         with conn.cursor() as cur:
             cur.execute(
@@ -721,13 +761,13 @@ def _neon_set(key: str, value: str) -> bool:
                 "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
                 (key, value),
             )
-        conn.commit()
         return True
+    try:
+        ok, _ = _neon_run(_do)
     except Exception as e:
         logger.error(f"❌ Neon/Postgres'ga '{key}' yozishda xato: {type(e).__name__}: {e}")
         return False
-    finally:
-        conn.close()
+    return ok
 
 
 def _upstash_request(command: list) -> dict | None:
@@ -938,6 +978,93 @@ def persist_write(local_filename: str, upstash_key: str, raw: str, commit_messag
         return
 
     _write_local_fallback(local_filename, raw)
+
+
+# ------------------------------------------------------------
+# ⏱ Kechiktirilgan (debounce) yozish — tez-tez o'zgaradigan holat uchun
+# (o'yin xonalari, statistika). Muammo: har bir yurish/signal/xabarda BUTUN
+# JSON sinxron ravishda tashqi bazaga yozilar, bu vaqt davomida global lock
+# ushlab turilar va barcha polling so'rovlari (har 180-650 ms) navbatda
+# qotib qolardi. Endi `persist_write_deferred` faqat "iflos" deb belgilaydi;
+# alohida fon thread'i bir necha yozuvni BITTAGA birlashtirib (coalesce),
+# lock OLDIDA emas, tashqarisida yozadi. Chiqishda (SIGTERM/deploy) `atexit`
+# oxirgi holatni yozib ketadi. Pul/to'lov ma'lumotlari (wallet, pro obuna)
+# bunga O'TMAYDI — ular oldingidek darhol (write-through) yoziladi.
+# PERSIST_DEFERRED=0 qo'yilsa — hamma narsa oldingidek sinxron.
+# ------------------------------------------------------------
+PERSIST_DEFERRED = os.getenv("PERSIST_DEFERRED", "1").strip() not in ("0", "false", "no")
+PERSIST_DEBOUNCE_SEC = float(os.getenv("PERSIST_DEBOUNCE_SEC", "1.5") or 1.5)
+if USE_GITHUB and not USE_UPSTASH and not USE_NEON:
+    # GitHub'ga har yozuv = bitta commit; tez-tez commit qilmaslik uchun.
+    PERSIST_DEBOUNCE_SEC = max(PERSIST_DEBOUNCE_SEC, 15.0)
+
+_deferred: dict = {}              # upstash_key -> (local_filename, supplier, commit_message)
+_deferred_cv = threading.Condition()
+_deferred_busy = False
+_deferred_thread = None
+
+
+def _deferred_worker() -> None:
+    global _deferred_busy
+    while True:
+        with _deferred_cv:
+            while not _deferred:
+                _deferred_cv.wait()
+        # Debounce: shu oraliqda kelgan boshqa o'zgarishlar ham bitta yozuvga qo'shiladi.
+        time.sleep(PERSIST_DEBOUNCE_SEC)
+        with _deferred_cv:
+            if not _deferred:      # flush_deferred() allaqachon yozib yuborgan
+                continue
+            batch = dict(_deferred)
+            _deferred.clear()
+            _deferred_busy = True
+        try:
+            _flush_batch(batch)
+        finally:
+            with _deferred_cv:
+                _deferred_busy = False
+                _deferred_cv.notify_all()
+
+
+def _flush_batch(batch: dict) -> None:
+    for key, (local_filename, supplier, commit_message) in batch.items():
+        try:
+            raw = supplier()   # supplier o'z lock'i ostida JSON'ni tayyorlaydi (tarmoqsiz, ms)
+            persist_write(local_filename, key, raw, commit_message=commit_message)
+        except Exception as e:
+            logger.error(f"❌ Kechiktirilgan yozuv xatosi ('{local_filename}'): {type(e).__name__}: {e}")
+
+
+def persist_write_deferred(local_filename: str, upstash_key: str, supplier, commit_message: str = "") -> None:
+    """`supplier()` -> JSON matn qaytaradigan funksiya (o'z lock'i ostida).
+    Chaqiruvchini bloklamaydi; bir kalit uchun ketma-ket chaqiruvlar birlashtiriladi."""
+    global _deferred_thread
+    if not PERSIST_DEFERRED:
+        persist_write(local_filename, upstash_key, supplier(), commit_message=commit_message)
+        return
+    with _deferred_cv:
+        _deferred[upstash_key] = (local_filename, supplier, commit_message)
+        if _deferred_thread is None or not _deferred_thread.is_alive():
+            _deferred_thread = threading.Thread(target=_deferred_worker, name="persist-writer", daemon=True)
+            _deferred_thread.start()
+        _deferred_cv.notify_all()
+
+
+def flush_deferred(timeout: float = 15.0) -> bool:
+    """Kutilayotgan barcha yozuvlarni DARHOL yozadi (chiqishda / testlarda)."""
+    deadline = time.monotonic() + timeout
+    with _deferred_cv:
+        batch = dict(_deferred)
+        _deferred.clear()
+    if batch:
+        _flush_batch(batch)
+    with _deferred_cv:
+        while _deferred_busy and time.monotonic() < deadline:
+            _deferred_cv.wait(timeout=0.2)
+        return not _deferred and not _deferred_busy
+
+
+atexit.register(flush_deferred)
 
 
 def _write_local_fallback(local_filename: str, raw: str) -> None:

@@ -30,7 +30,32 @@ from urllib.parse import parse_qsl
 MAX_INIT_DATA_AGE_SECONDS = 3600  # 1 soat — bundan eskirgan initData rad etiladi
 
 
+_VERIFY_MEMO: dict = {}
+_VERIFY_MEMO_TTL = 60.0
+_VERIFY_MEMO_MAX = 2000
+
+
 def verify_telegram_init_data(init_data: str, bot_token: str, max_age_seconds: int = MAX_INIT_DATA_AGE_SECONDS) -> dict | None:
+    """Mini App har 180-650 ms da bir xil initData bilan so'rov yuboradi —
+    HMAC/parse natijasi 60 soniyaga xotirada eslab qolinadi (faqat MUVAFFAQIYATLI
+    natija; max_age esa har safar qayta tekshiriladi)."""
+    if not init_data or not bot_token:
+        return None
+    key = (init_data, bot_token, max_age_seconds)
+    now = time.time()
+    hit = _VERIFY_MEMO.get(key)
+    if hit and hit[0] > now:
+        return dict(hit[1])
+    user = _verify_telegram_init_data_uncached(init_data, bot_token, max_age_seconds)
+    if user is not None:
+        if len(_VERIFY_MEMO) >= _VERIFY_MEMO_MAX:
+            _VERIFY_MEMO.clear()
+        _VERIFY_MEMO[key] = (now + _VERIFY_MEMO_TTL, user)
+        return dict(user)
+    return None
+
+
+def _verify_telegram_init_data_uncached(init_data: str, bot_token: str, max_age_seconds: int = MAX_INIT_DATA_AGE_SECONDS) -> dict | None:
     """`init_data` haqiqiy va yetarlicha yangi bo'lsa — undagi `user` obyektini
     (dict, kamida `id` maydoni bilan) qaytaradi. Aks holda `None`.
 
