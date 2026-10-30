@@ -1385,6 +1385,10 @@ def build_developer_conv():
                 MessageHandler((filters.TEXT & ~filters.COMMAND) | filters.Document.ALL, developer.on_github_input),
                 CallbackQueryHandler(developer.on_callback, pattern="^dev:"),
             ],
+            developer.DEV_WAIT_ENVPDF: [
+                MessageHandler((filters.TEXT & ~filters.COMMAND) | filters.Document.ALL, developer.on_env_pdf_input),
+                CallbackQueryHandler(developer.on_callback, pattern="^dev:"),
+            ],
         },
         fallbacks=[CommandHandler("cancel", developer.cancel)],
         name="developer_conv",

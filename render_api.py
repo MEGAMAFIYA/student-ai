@@ -194,6 +194,36 @@ async def list_env_vars(api_key: str, service_id: str, limit: int = 100) -> list
     return _unwrap_items(payload, ("envVar", "env_var"))
 
 
+async def list_env_vars_all(api_key: str, service_id: str, page_size: int = 100, max_pages: int = 50) -> list[dict[str, Any]]:
+    """Barcha env var'larni (qiymatlari bilan) cursor bo'yicha sahifalab oladi.
+
+    ``list_env_vars`` faqat birinchi sahifani qaytaradi; PDF eksport uchun
+    birorta ham o'zgaruvchi tushib qolmasligi kerak.
+    """
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    cursor: str | None = None
+    for _ in range(max_pages):
+        params: dict[str, Any] = {"limit": min(max(page_size, 1), 100)}
+        if cursor:
+            params["cursor"] = cursor
+        payload = await _request("GET", f"/services/{service_id}/env-vars", api_key=api_key, params=params)
+        raw = payload if isinstance(payload, list) else (payload.get("items") if isinstance(payload, dict) else None) or []
+        for item in _unwrap_items(payload, ("envVar", "env_var")):
+            key = str(item.get("key") or item.get("name") or "")
+            if key and key not in seen:
+                seen.add(key)
+                out.append(item)
+        next_cursor = None
+        if raw and isinstance(raw[-1], dict):
+            next_cursor = raw[-1].get("cursor")
+        next_cursor = next_cursor or _pagination_cursor(payload)
+        if len(raw) < params["limit"] or not next_cursor or next_cursor == cursor:
+            break
+        cursor = str(next_cursor)
+    return out
+
+
 async def upsert_env_var(api_key: str, service_id: str, key: str, value: str) -> dict[str, Any]:
     if not key or any(ch in key for ch in "/?#"):
         raise ValueError("Noto'g'ri environment variable nomi.")

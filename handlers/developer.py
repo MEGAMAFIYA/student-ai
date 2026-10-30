@@ -40,6 +40,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 
 import ai_clients
 import render_api
+import render_env_pdf
 import config
 import pro_subscription
 import storage
@@ -49,7 +50,7 @@ from handlers import payment_admin as pay_ui
 
 logger = logging.getLogger(__name__)
 
-DEV_MENU, DEV_WAIT_TEXT, DEV_WAIT_BULK_MODEL, DEV_WAIT_AUDIO, DEV_WAIT_GITHUB = range(5)
+DEV_MENU, DEV_WAIT_TEXT, DEV_WAIT_BULK_MODEL, DEV_WAIT_AUDIO, DEV_WAIT_GITHUB, DEV_WAIT_ENVPDF = range(6)
 
 _FIELD_LABELS = {
     "provider": "PROVIDER",
@@ -1088,6 +1089,10 @@ def _render_settings_keyboard(service: dict) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("➕/✏️ ENV qo'shish/o'zgartirish", callback_data=f"dev:renvadd:{sid}")],
         [InlineKeyboardButton("🗑 ENV o'chirish", callback_data=f"dev:renvdel:{sid}")],
+        [
+            InlineKeyboardButton("📄 ENV'larni PDF qilish", callback_data=f"dev:renvpdf:{sid}"),
+            InlineKeyboardButton("📥 ENV PDF yuklash", callback_data=f"dev:renvpdfup:{sid}"),
+        ],
         [InlineKeyboardButton(
             "🔴 Auto Deploy o'chirish" if auto else "🟢 Auto Deploy yoqish",
             callback_data=f"dev:rautodeploy:{sid}:{'no' if auto else 'yes'}",
@@ -2224,6 +2229,82 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return DEV_WAIT_TEXT
 
+    if action == "renvpdf":
+        service_id = parts[2]
+        await _safe_edit_query(query, "📄 <b>ENV PDF tayyorlanmoqda...</b>\nRender'dan barcha o'zgaruvchilar olinmoqda.", parse_mode="HTML")
+        try:
+            api_key = _render_api_key_for_service(context, service_id)
+            service = await render_api.get_service(api_key, service_id)
+            env_items = await render_api.list_env_vars_all(api_key, service_id)
+            if not env_items:
+                await _safe_edit_query(
+                    query, "ℹ️ Bu servisda environment variable yo'q — PDF qilinadigan narsa topilmadi.",
+                    reply_markup=_back_keyboard(f"dev:rsettings:{service_id}"), parse_mode="HTML",
+                )
+                return DEV_MENU
+            pdf_bytes, info = await asyncio.to_thread(render_env_pdf.build_env_pdf, service, env_items)
+            missing_note = (
+                f"\n⚠️ Qiymati berilmagani uchun tushib qolgan: {', '.join(info['missing'][:10])}"
+                if info["missing"] else ""
+            )
+            await context.bot.send_document(
+                chat_id=update.effective_chat.id,
+                document=io.BytesIO(pdf_bytes),
+                filename=render_env_pdf.safe_filename(service),
+                caption=(
+                    f"🔐 {_render_service_name(service)} — ENV PDF\n"
+                    f"🧾 Jami: {info['count']} ta\n"
+                    "⚠️ Ichida MAXFIY kalitlar bor. Begonaga bermang, ishlatib bo'lgach Telegramdan o'chiring."
+                    f"{missing_note}"
+                )[:1000],
+            )
+            await _safe_edit_query(
+                query, "✅ <b>ENV PDF tayyor va yuborildi.</b>",
+                reply_markup=_back_keyboard(f"dev:rsettings:{service_id}"), parse_mode="HTML",
+            )
+        except Exception as exc:
+            await _render_api_error(query, exc, f"dev:rsettings:{service_id}")
+        return DEV_MENU
+
+    if action == "renvpdfup":
+        service_id = parts[2]
+        account = _render_account_for_service(context, service_id)
+        context.user_data["dev_action"] = {
+            "type": "render_env_pdf_import",
+            "service_id": service_id,
+            "account_id": account["id"] if account else "",
+        }
+        await _safe_edit_query(
+            query,
+            "📥 <b>ENV PDF yuklash</b>\n\n"
+            "«📄 ENV'larni PDF qilish» orqali olingan <b>PDF faylni</b> shu yerga yuboring.\n"
+            "PDF'dagi barcha environment variable'lar shu servisga o'rnatiladi "
+            "(mavjud bo'lsa qiymati almashtiriladi; PDF'da yo'q o'zgaruvchilar o'chirilmaydi).\n\n"
+            "Xavfsizlik uchun yuborilgan PDF xabari chatdan o'chiriladi.",
+            reply_markup=_back_keyboard(f"dev:rsettings:{service_id}"), parse_mode="HTML",
+        )
+        return DEV_WAIT_ENVPDF
+
+    if action == "renvpdfgo":
+        service_id, mode = parts[2], (parts[3] if len(parts) > 3 else "all")
+        pending = context.user_data.pop("env_pdf_pending", None)
+        if not pending or pending.get("service_id") != service_id:
+            await _safe_edit_query(
+                query, "⚠️ Kutilayotgan import topilmadi. PDF'ni qaytadan yuklang.",
+                reply_markup=_back_keyboard(f"dev:rsettings:{service_id}"), parse_mode="HTML",
+            )
+            return DEV_MENU
+        entries = pending["entries"]
+        skipped_creds: list[str] = []
+        if mode == "skip":
+            skipped_creds = render_env_pdf.render_credential_keys(entries)
+            entries = [(k, v) for k, v in entries if k not in set(skipped_creds)]
+        await _apply_env_import(
+            context, service_id, pending.get("account_id", ""), entries,
+            pending.get("invalid", []), skipped_creds,
+        )
+        return DEV_MENU
+
     if action == "rautodeploy":
         service_id, value = parts[2], parts[3]
         await _safe_edit_query(query, "⚙️ Auto Deploy sozlanmoqda...", parse_mode="HTML")
@@ -3041,6 +3122,159 @@ async def on_github_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as exc:
         await _edit_menu(context, f"❌ {_esc(str(exc))}", _back_keyboard("dev:gh:file"))
         return DEV_WAIT_GITHUB
+
+
+_ENV_PDF_MAX_BYTES = 10 * 1024 * 1024
+
+
+async def _apply_env_import(
+    context: ContextTypes.DEFAULT_TYPE,
+    service_id: str,
+    account_id: str,
+    entries: list[tuple[str, str]],
+    invalid_keys: list[str],
+    skipped_creds: list[str] | None = None,
+):
+    """PDF'dan olingan ENV'larni Render servisiga ketma-ket o'rnatadi.
+
+    Qiymatlar hech qayerda ko'rsatilmaydi va logga yozilmaydi.
+    """
+    skipped_creds = skipped_creds or []
+    back = _back_keyboard(f"dev:rsettings:{service_id}")
+    account = config.get_render_account(account_id) or _render_account_for_service(context, service_id)
+    if not account:
+        await _edit_menu(context, "❌ Render API kaliti sozlanmagan (RENDER_API_KEY).", back)
+        return
+
+    ok = 0
+    failed: list[tuple[str, str]] = []
+    aborted = False
+    total = len(entries)
+    for i, (key, value) in enumerate(entries, 1):
+        try:
+            await render_api.upsert_env_var(account["key"], service_id, key, value)
+            ok += 1
+        except Exception as exc:
+            failed.append((key, render_api.human_error(exc)))
+            # Kalit/ruxsat/servis xatosi qolgan hammasiga ham tegishli — to'xtatamiz.
+            if isinstance(exc, render_api.RenderAPIError) and exc.status_code in (401, 403, 404):
+                aborted = True
+                break
+        if i % 5 == 0 and i < total:
+            try:
+                await _edit_menu(context, f"📥 <b>ENV'lar o'rnatilmoqda...</b> {i}/{total}", back)
+            except Exception:
+                pass
+
+    lines = [
+        ("⚠️" if failed else "✅") + f" <b>ENV PDF import tugadi:</b> {ok}/{total} ta o'rnatildi.",
+    ]
+    if failed:
+        lines.append("\n❌ <b>O'rnatilmadi:</b>")
+        for key, reason in failed[:15]:
+            lines.append(f"• <code>{_esc(key)}</code> — {_esc(reason)}")
+        if len(failed) > 15:
+            lines.append(f"• … yana {len(failed) - 15} ta")
+        if aborted:
+            lines.append("<i>Xato hamma o'zgaruvchiga tegishli bo'lgani uchun jarayon to'xtatildi.</i>")
+    if skipped_creds:
+        lines.append("\n⏭ O'tkazib yuborildi (Render ulanish kalitlari): " + ", ".join(f"<code>{_esc(k)}</code>" for k in skipped_creds))
+    if invalid_keys:
+        lines.append("\n⏭ Noto'g'ri nomli, o'tkazib yuborildi: " + ", ".join(f"<code>{_esc(k)}</code>" for k in invalid_keys[:10]))
+    if ok:
+        lines.append("\nO'zgarishlar kuchga kirishi uchun 🚀 Deploy qiling.")
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🚀 Deploy", callback_data=f"dev:rdeploy:{service_id}")],
+        [InlineKeyboardButton("⚙️ Sozlamalar", callback_data=f"dev:rsettings:{service_id}")],
+    ])
+    await _edit_menu(context, "\n".join(lines)[:3900], keyboard)
+
+
+async def on_env_pdf_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin yuborgan ENV PDF'ni o'qib, shu servisga o'rnatadi."""
+    if not _is_admin(update) or not update.message:
+        return ConversationHandler.END
+    action = context.user_data.get("dev_action") or {}
+    if action.get("type") != "render_env_pdf_import":
+        return DEV_MENU
+    service_id = str(action.get("service_id") or "")
+    back = _back_keyboard(f"dev:rsettings:{service_id}")
+
+    if "dev_msg" not in context.user_data:
+        msg = await update.message.reply_text("⏳ Amal bajarilmoqda...")
+        context.user_data["dev_msg"] = (msg.chat_id, msg.message_id)
+
+    async def _drop_user_message():
+        try:
+            await update.message.delete()
+        except Exception:
+            pass
+
+    doc = update.message.document
+    is_pdf = bool(doc) and (
+        (doc.file_name or "").lower().endswith(".pdf") or (doc.mime_type or "").lower() == "application/pdf"
+    )
+    if not is_pdf:
+        await _drop_user_message()
+        await _edit_menu(context, "⚠️ Iltimos, «ENV'larni PDF qilish» orqali olingan <b>.pdf</b> faylni yuboring.", back)
+        return DEV_WAIT_ENVPDF
+    if doc.file_size and doc.file_size > _ENV_PDF_MAX_BYTES:
+        await _drop_user_message()
+        await _edit_menu(context, "⚠️ PDF juda katta (10 MB dan oshmasligi kerak).", back)
+        return DEV_WAIT_ENVPDF
+
+    try:
+        tg_file = await doc.get_file()
+        data = bytes(await tg_file.download_as_bytearray())
+    except Exception as exc:
+        await _edit_menu(context, f"❌ PDF'ni yuklab bo'lmadi: {_esc(exc)}", back)
+        return DEV_WAIT_ENVPDF
+    await _drop_user_message()  # ichida maxfiy kalitlar bor — chatda qolmasin
+
+    try:
+        payload = await asyncio.to_thread(render_env_pdf.parse_env_pdf, data)
+    except render_env_pdf.EnvPdfError as exc:
+        await _edit_menu(context, f"❌ {_esc(exc)}", back)
+        return DEV_WAIT_ENVPDF
+    except Exception as exc:
+        logger.error("ENV PDF o'qishda kutilmagan xato: %s", type(exc).__name__)
+        await _edit_menu(context, "❌ PDF'ni o'qishda kutilmagan xato yuz berdi.", back)
+        return DEV_WAIT_ENVPDF
+
+    entries, invalid = render_env_pdf.split_valid(payload["vars"])
+    if not entries:
+        await _edit_menu(context, "⚠️ PDF'da o'rnatiladigan o'zgaruvchi topilmadi.", back)
+        return DEV_WAIT_ENVPDF
+
+    context.user_data.pop("dev_action", None)
+    creds = render_env_pdf.render_credential_keys(entries)
+    if creds:
+        # Boshqa Render hisobiga ko'chirishda eski RENDER_API_KEY yangisining
+        # ustiga yozilsa, panel noto'g'ri hisobni boshqarib qoladi — so'raymiz.
+        context.user_data["env_pdf_pending"] = {
+            "service_id": service_id,
+            "account_id": action.get("account_id", ""),
+            "entries": entries,
+            "invalid": invalid,
+        }
+        await _edit_menu(
+            context,
+            f"📥 PDF o'qildi: <b>{len(entries)}</b> ta o'zgaruvchi.\n\n"
+            "⚠️ PDF'da Render ulanish kalitlari bor:\n"
+            + "\n".join(f"• <code>{_esc(k)}</code>" for k in creds[:10])
+            + "\n\nAgar loyihani <b>boshqa Render hisobiga</b> ko'chirayotgan bo'lsangiz, bularni o'rnatsangiz "
+            "yangi servis eski hisobni boshqarib qoladi. Qanday davom etamiz?",
+            InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Hammasini o'rnatish", callback_data=f"dev:renvpdfgo:{service_id}:all")],
+                [InlineKeyboardButton("⏭ RENDER_* kalitlarsiz o'rnatish", callback_data=f"dev:renvpdfgo:{service_id}:skip")],
+                [InlineKeyboardButton("⬅️ Bekor qilish", callback_data=f"dev:rsettings:{service_id}")],
+            ]),
+        )
+        return DEV_MENU
+
+    await _edit_menu(context, f"📥 <b>ENV'lar o'rnatilmoqda...</b> 0/{len(entries)}", back)
+    await _apply_env_import(context, service_id, action.get("account_id", ""), entries, invalid)
+    return DEV_MENU
 
 
 async def on_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
