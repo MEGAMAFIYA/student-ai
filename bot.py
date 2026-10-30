@@ -170,6 +170,13 @@ async def _post_init(application):
     except Exception as e:
         logger.error(f"😴 Render keep-alive tsiklini ishga tushirishda xato: {type(e).__name__}: {e}", exc_info=True)
 
+    # 📢 Guruh reklamalari (/developer > 📢 Reklama): saqlangan hammasini tiklaymiz.
+    try:
+        from handlers import ads as ads_scheduler
+        ads_scheduler.reschedule_all(application)
+    except Exception as e:
+        logger.error(f"📢 Reklamalarni qayta rejalashtirishda xato: {type(e).__name__}: {e}", exc_info=True)
+
     # 🤖 Bot ishga tushganda (har qayta deployda ham) storage'da saqlangan
     # BARCHA 'auto_hold' to'lovlarni qayta rejalashtiramiz — shu orqali
     # 1 soatlik avtomatik qabul muddati deploy/restart paytida yo'qolmaydi

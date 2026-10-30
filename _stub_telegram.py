@@ -84,6 +84,12 @@ def install_stubs():
                 super().__init__(f"Flood control: retry after {retry_after}")
                 self.retry_after = retry_after
 
+        class ChatMigrated(TelegramError):
+            def __init__(self, new_chat_id=0):
+                super().__init__(f"Group migrated to supergroup {new_chat_id}")
+                self.new_chat_id = new_chat_id
+
+        error_mod.ChatMigrated = ChatMigrated
         error_mod.TelegramError = TelegramError
         error_mod.BadRequest = BadRequest
         error_mod.Forbidden = Forbidden

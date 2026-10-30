@@ -52,6 +52,7 @@ _DEFAULT_DATA = {
     "inline_logs": [],  # [{"ts","user_id","username","query","status","detail"}] — inline (@Bot ...) jurnali
     "movies": {},      # {"<movie_id>": {"id","title","file_id","mime_type","file_name","size","uploaded_by","created_ts"}} — kino katalogi
     "keepalive": {},   # {"<render_service_id>": {"name","url","enabled_ts"}} — 😴 Render "Uxlamaslik" ro'yxati
+    "ads": {},         # {"<ad_id>": {"id","chat_id","chat_title","text","interval_min","created_by","created_ts"}} — 📢 guruh reklamalari
 }
 
 
@@ -320,6 +321,66 @@ def remove_reminder(reminder_id: str) -> bool:
     if changed:
         logger.info(f"⏰ Eslatma o'chirildi: id={reminder_id}.")
     return changed
+
+
+# ============================================================
+# 📢 Guruh reklamalari (/developer > 📢 Reklama)
+# ============================================================
+# Faqat reklama sozlamasi saqlanadi (guruh, matn, interval). Oxirgi yuborilgan
+# vaqt ATAYLAB saqlanmaydi: har daqiqada yozuv yangilansa, GitHub/Neon
+# saqlashda keraksiz yuk va commitlar paydo bo'lardi.
+
+MAX_ADS = 50
+
+
+def add_ad(chat_id: int, chat_title: str, text: str, interval_min: int, created_by: int) -> dict:
+    with _lock:
+        if len(_data["ads"]) >= MAX_ADS:
+            raise ValueError(f"Faol reklamalar soni chegarasi ({MAX_ADS}) to'lgan.")
+        ad = {
+            "id": uuid.uuid4().hex[:10],
+            "chat_id": int(chat_id),
+            "chat_title": str(chat_title or "")[:120],
+            "text": str(text),
+            "interval_min": int(interval_min),
+            "created_by": int(created_by),
+            "created_ts": time.time(),
+        }
+        _data["ads"][ad["id"]] = ad
+        _save()
+    logger.info(f"📢 Yangi reklama qo'shildi: id={ad['id']}, chat_id={chat_id}, har {interval_min} daqiqada.")
+    return dict(ad)
+
+
+def get_ads() -> list[dict]:
+    with _lock:
+        return sorted((dict(a) for a in _data["ads"].values()), key=lambda a: a.get("created_ts", 0))
+
+
+def get_ad(ad_id: str) -> dict | None:
+    with _lock:
+        ad = _data["ads"].get(str(ad_id))
+        return dict(ad) if ad else None
+
+
+def update_ad(ad_id: str, **fields) -> dict | None:
+    with _lock:
+        ad = _data["ads"].get(str(ad_id))
+        if not ad:
+            return None
+        ad.update(fields)
+        _save()
+        return dict(ad)
+
+
+def remove_ad(ad_id: str) -> bool:
+    with _lock:
+        removed = _data["ads"].pop(str(ad_id), None) is not None
+        if removed:
+            _save()
+    if removed:
+        logger.info(f"📢 Reklama o'chirildi: id={ad_id}.")
+    return removed
 
 
 # ============================================================
