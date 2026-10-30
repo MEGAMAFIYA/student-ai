@@ -4,10 +4,16 @@
 Oqim:
   1. 📢 Reklama bosiladi → FAOL reklamalar ro'yxati chiqadi (yo'q bo'lsa — bo'sh).
   2. ➕ Reklama qo'shish → guruh ID → matn → daqiqa (1..10) → tasdiqlash.
-  3. Tasdiqlangach bot guruhni tekshiradi, BIRINCHI xabarni darhol yuboradi,
-     so'ng har N daqiqada shu matnni qayta-qayta yuboradi.
-  4. Har bir xabar ostida "🤖 Talaba AI" tugmasi bor (botga o'tish) — xuddi
-     inline natijadagi tugma kabi (handlers/inline_query.py INLINE_MESSAGE_MARKUP).
+  3. Tasdiqlangach BIRINCHI xabar darhol yuboriladi, so'ng har N daqiqada
+     shu matn qayta-qayta yuboriladi.
+
+Xabar BOT nomidan emas, ulangan Telegram AKKAUNT (Telethon StringSession:
+TG_API_ID / TG_API_HASH / TG_SESSION — telegram_mtproto.py) nomidan yuboriladi.
+Oddiy akkaunt xabar ostiga tugma qo'sha olmaydi, shuning uchun yuborish INLINE
+orqali amalga oshadi: akkaunt "@Bot ad:<id>" inline so'rovini bajaradi, bot
+(handlers/inline_query.py > on_inline_ad_query) reklama matni va "🤖 Talaba AI"
+tugmasi bilan natija qaytaradi, akkaunt uni guruhga yuboradi. Natijada xabar
+akkauntdan ("via @Bot" belgisi bilan) chiqadi va ostida botga o'tish tugmasi bo'ladi.
 
 Saqlash: storage.py (ads) — deployda yo'qolmaydi (Neon/Upstash/GitHub bo'lsa).
 Rejalashtirish: handlers/reminders.py dagi kabi asyncio.create_task; bot qayta
@@ -25,11 +31,14 @@ import asyncio
 import html
 import logging
 import re
+import uuid
+from types import SimpleNamespace
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.error import BadRequest, ChatMigrated, Forbidden, RetryAfter
 
+import config
 import storage
+import telegram_mtproto
 
 logger = logging.getLogger(__name__)
 
@@ -42,18 +51,26 @@ BUTTON_LABEL = "🤖 Talaba AI"
 
 ACTIONS = {"ads", "adsadd", "adsview", "adsdel", "adsdelyes", "adsmin", "adsok"}
 
-# Bu xatolar takrorlanmaydi — guruhga yuborishning o'zi imkonsiz bo'lib qolgan.
-_PERMANENT_BAD_REQUEST = (
-    "chat not found",
-    "not enough rights",
-    "have no rights",
-    "chat_write_forbidden",
-    "chat was deactivated",
-    "peer_id_invalid",
-    "need administrator rights",
-)
+# Bu xatolar takrorlanmaydi — yuborishning o'zi imkonsiz bo'lib qolgan (Telethon
+# xato klasslari nomi bo'yicha tekshiriladi: Telethon testlarda bo'lmasligi mumkin).
+_PERMANENT_ERRORS = {
+    "AdAccountError", "ChatWriteForbiddenError", "UserBannedInChannelError", "ChannelPrivateError",
+    "ChatAdminRequiredError", "UserNotParticipantError", "ChannelBannedError", "ChatRestrictedError",
+    "PeerIdInvalidError", "BotInlineDisabledError", "AuthKeyUnregisteredError", "SessionRevokedError",
+    "SessionExpiredError", "UserDeactivatedError", "UserDeactivatedBanError", "ChatIdInvalidError",
+}
+_WAIT_ERRORS = {"FloodWaitError", "SlowModeWaitError"}
+
+# Hozirgi ulangan akkaunt ID si (inline so'rovni faqat shu akkaunt/adminlar bajara olsin).
+_session_user_id: int | None = None
 
 _tasks: dict[str, asyncio.Task] = {}
+
+
+class AdAccountError(Exception):
+    """Akkaunt sozlanmagan / guruh topilmadi — qayta urinish foydasiz."""
+
+
 
 
 # ============================================================
@@ -88,17 +105,23 @@ def build_markup() -> InlineKeyboardMarkup:
 
 def describe_error(exc: Exception) -> str:
     """Adminga ko'rsatiladigan tushunarli xato matni."""
-    msg = str(exc)
-    low = msg.lower()
-    if isinstance(exc, Forbidden):
-        return "Bot bu guruhda yo'q (yoki chiqarib yuborilgan) yoki xabar yozish huquqi yo'q."
-    if "chat not found" in low or "peer_id_invalid" in low:
-        return "Guruh topilmadi. ID to'g'ri ekanini va bot shu guruhga qo'shilganini tekshiring."
-    if "not enough rights" in low or "have no rights" in low or "chat_write_forbidden" in low:
-        return "Botda bu guruhga xabar yozish huquqi yo'q."
-    if "parse entities" in low:
-        return "Matn formati (HTML) noto'g'ri."
-    return f"{type(exc).__name__}: {msg}"
+    name = type(exc).__name__
+    if name == "AdAccountError":
+        return str(exc)
+    if name in ("ChatWriteForbiddenError", "ChatRestrictedError", "UserBannedInChannelError", "ChannelBannedError"):
+        return "Akkauntning bu guruhga xabar yozish huquqi yo'q (yoki guruhdan cheklangan)."
+    if name in ("ChannelPrivateError", "UserNotParticipantError", "PeerIdInvalidError", "ChatIdInvalidError"):
+        return "Akkaunt bu guruhda a'zo emas yoki guruhga kira olmaydi."
+    if name == "ChatAdminRequiredError":
+        return "Bu yerga yozish uchun akkaunt administrator bo'lishi kerak (kanal bo'lishi mumkin)."
+    if name == "BotInlineDisabledError":
+        return "Bot uchun inline rejim o'chirilgan (@BotFather > Bot Settings > Inline Mode)."
+    if name in ("AuthKeyUnregisteredError", "SessionRevokedError", "SessionExpiredError",
+                "UserDeactivatedError", "UserDeactivatedBanError"):
+        return "Akkaunt sessiyasi yaroqsiz — TG_SESSION ni qaytadan yarating."
+    if name in _WAIT_ERRORS:
+        return f"Telegram vaqtincha cheklov qo'ydi ({getattr(exc, 'seconds', '?')} soniya)."
+    return f"{name}: {exc}"
 
 
 # ============================================================
@@ -108,6 +131,13 @@ def describe_error(exc: Exception) -> str:
 def menu_text() -> str:
     ads = storage.get_ads()
     lines = ["📢 <b>Reklama</b>\n"]
+    if not telegram_mtproto.is_configured():
+        lines.append(
+            "⚠️ <i>Akkaunt ulanmagan: TG_API_ID, TG_API_HASH va TG_SESSION sozlanmaguncha "
+            "reklama yuborib bo'lmaydi.</i>\n"
+        )
+    else:
+        lines.append("👤 <i>Xabarlar ulangan Telegram akkaunt nomidan yuboriladi.</i>\n")
     if not ads:
         lines.append("<i>Hozircha faol reklama yo'q.</i>")
     else:
@@ -154,8 +184,8 @@ def group_prompt_text() -> str:
         "➕ <b>Reklama qo'shish</b> — 1/3\n\n"
         "Reklama yuboriladigan <b>guruh ID</b> raqamini yuboring.\n"
         "Masalan: <code>-1001234567890</code>\n\n"
-        "Bot shu guruhda a'zo bo'lishi va xabar yozish huquqiga ega bo'lishi kerak. "
-        "Ochiq guruh bo'lsa, <code>@username</code> ham bo'ladi."
+        "Ulangan <b>akkaunt</b> shu guruhda a'zo bo'lishi va yozish huquqiga ega bo'lishi kerak "
+        "(xabar akkaunt nomidan yuboriladi). Ochiq guruh bo'lsa, <code>@username</code> ham bo'ladi."
     )
 
 
@@ -219,8 +249,76 @@ def parse_chat_ref(raw: str):
     return None
 
 
-async def check_group(bot, raw: str):
-    """Guruhni tekshiradi. Qaytaradi: (chat, None) yoki (None, xato_matni)."""
+def _peer_id(entity) -> int:
+    """Telethon entity -> '-100...' (kanal/superguruh), '-...' (oddiy guruh) yoki user ID."""
+    name = type(entity).__name__
+    if name in ("Channel", "ChannelForbidden"):
+        return int(f"-100{entity.id}")
+    if name in ("Chat", "ChatForbidden"):
+        return -int(entity.id)
+    return int(entity.id)
+
+
+def _candidates(ref) -> list:
+    """Admin ko'pincha '-100' siz ID yuboradi (masalan 1276198486) — shuning uchun
+    musbat son uchun superguruh (-100...), oddiy guruh (-...) va oxirida user variantlari sinaladi."""
+    if isinstance(ref, str):
+        return [ref]
+    if ref < 0:
+        return [ref]
+    return [int(f"-100{ref}"), -ref, ref]
+
+
+_DIALOGS_REWARM_SEC = 300
+
+
+async def _account_client():
+    global _session_user_id
+    if not telegram_mtproto.is_configured():
+        raise AdAccountError("Akkaunt ulanmagan: TG_API_ID, TG_API_HASH va TG_SESSION sozlang.")
+    try:
+        client = await telegram_mtproto.get_client()
+    except RuntimeError as exc:
+        raise AdAccountError(str(exc)) from exc
+    if _session_user_id is None:
+        me = await client.get_me()
+        _session_user_id = int(me.id)
+    return client
+
+
+async def _resolve_entity(client, ref):
+    """Akkaunt ko'ra oladigan guruhni topadi. StringSession entity keshini saqlamaydi,
+    shuning uchun topilmasa dialoglar bir marta yuklanib, qayta uriniladi."""
+    import time
+    warmed = False
+    for candidate in _candidates(ref):
+        for attempt in (0, 1):
+            try:
+                return await client.get_entity(candidate)
+            except (ValueError, KeyError):
+                if attempt == 0 and not warmed and not isinstance(candidate, str):
+                    last = getattr(client, "_ads_dialogs_warm_at", None)
+                    now = time.monotonic()
+                    if last is None or now - last > _DIALOGS_REWARM_SEC:
+                        client._ads_dialogs_warm_at = now
+                        try:
+                            await client.get_dialogs(limit=1000)
+                        except Exception as exc:
+                            logger.warning("📢 get_dialogs xato: %s: %s", type(exc).__name__, exc)
+                    warmed = True
+                    continue
+                break
+            except Exception as exc:
+                logger.info("📢 get_entity(%r) xato: %s: %s", candidate, type(exc).__name__, exc)
+                break
+    raise AdAccountError(
+        "Akkaunt bu guruhni topa olmadi. ID to'g'ri ekanini va akkaunt shu guruhda a'zo "
+        "ekanini tekshiring (guruh ID lari odatda -100 bilan boshlanadi)."
+    )
+
+
+async def check_group(raw: str):
+    """Guruhni AKKAUNT orqali tekshiradi. Qaytaradi: (chat, None) yoki (None, xato_matni)."""
     ref = parse_chat_ref(raw)
     if ref is None:
         return None, (
@@ -228,61 +326,59 @@ async def check_group(bot, raw: str):
             "yoki <code>@username</code> yuboring."
         )
     try:
-        chat = await bot.get_chat(ref)
+        client = await _account_client()
+        entity = await _resolve_entity(client, ref)
     except Exception as exc:
         logger.info("📢 Guruhni tekshirishda xato: ref=%s, %s: %s", ref, type(exc).__name__, exc)
         return None, _esc(describe_error(exc))
 
-    if chat.type == "private":
-        return None, "Bu guruh emas, shaxsiy chat ID si. Guruh ID sini yuboring."
-
-    try:
-        me = await bot.get_chat_member(chat.id, bot.id)
-    except Exception as exc:
-        return None, "Botning guruhdagi holatini aniqlab bo'lmadi: " + _esc(describe_error(exc))
-
-    status = getattr(me, "status", "")
-    if status in ("left", "kicked"):
-        return None, "Bot bu guruhda a'zo emas. Avval botni guruhga qo'shing."
-    if chat.type == "channel" and status not in ("administrator", "creator"):
-        return None, "Kanalga yozish uchun bot kanalda administrator bo'lishi kerak."
-    if status == "restricted" and getattr(me, "can_send_messages", True) is False:
-        return None, "Botning bu guruhda xabar yozish huquqi cheklangan."
-    return chat, None
+    if type(entity).__name__ == "User":
+        return None, "Bu guruh emas, shaxsiy chat (foydalanuvchi) ID si. Guruh ID sini yuboring."
+    title = getattr(entity, "title", None) or (
+        f"@{entity.username}" if getattr(entity, "username", None) else str(_peer_id(entity))
+    )
+    return SimpleNamespace(id=_peer_id(entity), title=title), None
 
 
 # ============================================================
 # Yuborish va fon rejasi
 # ============================================================
 
-async def send_ad(bot, ad: dict):
-    """Reklamani guruhga bir marta yuboradi (matn ostida botga o'tish tugmasi bilan)."""
-    markup = build_markup()
-    try:
-        return await bot.send_message(
-            chat_id=ad["chat_id"], text=ad["text"], parse_mode="HTML", reply_markup=markup
-        )
-    except BadRequest as exc:
-        if "parse entities" not in str(exc).lower():
-            raise
-        # HTML buzilgan bo'lsa ham reklama to'xtab qolmasin — oddiy matn sifatida yuboramiz.
-        return await bot.send_message(
-            chat_id=ad["chat_id"], text=_plain(ad["text"]), reply_markup=markup
-        )
+async def send_ad(ad: dict):
+    """Reklamani guruhga AKKAUNT nomidan yuboradi: akkaunt "@Bot ad:<id>" inline natijasini
+    guruhga yuboradi — shu tufayli xabar ostida botga o'tish tugmasi bo'ladi."""
+    from handlers import mention_dispatch
+    client = await _account_client()
+    entity = await _resolve_entity(client, int(ad["chat_id"]))
+    results = await client.inline_query(mention_dispatch.get_bot_username(), f"ad:{ad['id']}", entity=entity)
+    if not results:
+        raise RuntimeError("Bot reklama uchun inline natija qaytarmadi (bot ishlayaptimi / inline yoqilganmi?).")
+    await results[0].click(entity)
+
+
+async def on_inline_ad_query(update, context):
+    """Akkaunt "@Bot ad:<id>" so'raganda: reklama matni + botga o'tish tugmasi bilan natija."""
+    from telegram import InlineQueryResultArticle, InputTextMessageContent
+    inline = update.inline_query
+    ad_id = inline.query.strip()[3:].strip()
+    ad = storage.get_ad(ad_id)
+    uid = getattr(inline.from_user, "id", None)
+    allowed = uid in config.ADMIN_IDS or (_session_user_id is not None and uid == _session_user_id)
+    if not ad or not allowed:
+        await inline.answer([], cache_time=0, is_personal=True)
+        return
+    result = InlineQueryResultArticle(
+        id=f"ads_{ad['id']}_{uuid.uuid4().hex[:8]}",
+        title="📢 Reklama",
+        description=_preview(ad["text"], 100),
+        input_message_content=InputTextMessageContent(ad["text"], parse_mode="HTML"),
+        reply_markup=build_markup(),
+    )
+    await inline.answer([result], cache_time=0, is_personal=True)
 
 
 def _is_permanent(exc: Exception) -> bool:
-    if isinstance(exc, Forbidden):
-        return True
-    if isinstance(exc, BadRequest):
-        low = str(exc).lower()
-        return any(marker in low for marker in _PERMANENT_BAD_REQUEST)
-    return False
-
-
-def _retry_seconds(exc: RetryAfter) -> float:
-    value = exc.retry_after
-    return float(value.total_seconds() if hasattr(value, "total_seconds") else value)
+    return type(exc).__name__ in _PERMANENT_ERRORS
 
 
 async def _stop_with_notice(application, ad: dict, reason: str):
@@ -313,26 +409,23 @@ async def _ad_loop(application, ad_id: str, first_delay: float):
         if not ad:
             return  # admin o'chirgan
         try:
-            await send_ad(application.bot, ad)
+            await send_ad(ad)
             failures = 0
             delay = ad["interval_min"] * 60
         except asyncio.CancelledError:
             raise
-        except RetryAfter as exc:
-            delay = _retry_seconds(exc) + 1
-            logger.warning("📢 Flood limit: id=%s, %s soniyadan keyin qayta uriniladi.", ad_id, delay)
-        except ChatMigrated as exc:
-            # Oddiy guruh superguruhga aylangan — yangi ID bilan davom etamiz.
-            storage.update_ad(ad_id, chat_id=exc.new_chat_id)
-            logger.info("📢 Guruh ko'chirildi: id=%s yangi chat_id=%s", ad_id, exc.new_chat_id)
-            delay = 1
         except Exception as exc:
+            name = type(exc).__name__
+            if name in _WAIT_ERRORS:
+                delay = float(getattr(exc, "seconds", 30)) + 1
+                logger.warning("📢 Telegram cheklovi (%s): id=%s, %s soniyadan keyin qayta uriniladi.", name, ad_id, delay)
+                continue
             if _is_permanent(exc):
                 await _stop_with_notice(application, ad, describe_error(exc))
                 return
             failures += 1
             logger.error("📢 Reklamani yuborishda xato (%d/%d): id=%s %s: %s",
-                         failures, MAX_FAILURES, ad_id, type(exc).__name__, exc)
+                         failures, MAX_FAILURES, ad_id, name, exc)
             if failures >= MAX_FAILURES:
                 await _stop_with_notice(
                     application, ad,
@@ -365,13 +458,18 @@ def reschedule_all(application) -> None:
 
 async def activate(application, *, chat_id: int, chat_title: str, text: str,
                    interval_min: int, created_by: int) -> dict:
-    """Birinchi xabarni DARHOL yuboradi (shu bilan guruh ham tekshiriladi), keyin
-    reklamani saqlab, takroriy yuborishni boshlaydi. Birinchi yuborish
-    muvaffaqiyatsiz bo'lsa — hech narsa saqlanmaydi va xato ko'tariladi."""
+    """Reklamani saqlaydi, birinchi xabarni DARHOL yuboradi (shu bilan guruh/huquq ham
+    tekshiriladi) va takroriy yuborishni boshlaydi. Birinchi yuborish muvaffaqiyatsiz
+    bo'lsa — reklama o'chiriladi (hech narsa qolmaydi) va xato ko'tariladi.
+    (Inline handler reklamani storage'dan o'qiydi, shuning uchun avval saqlanadi.)"""
     if len(storage.get_ads()) >= storage.MAX_ADS:
         raise ValueError(f"Faol reklamalar soni chegarasi ({storage.MAX_ADS}) to'lgan.")
-    await send_ad(application.bot, {"chat_id": chat_id, "text": text})
     ad = storage.add_ad(chat_id, chat_title, text, interval_min, created_by)
+    try:
+        await send_ad(ad)
+    except BaseException:
+        storage.remove_ad(ad["id"])
+        raise
     start_ad(application, ad)
     return ad
 
@@ -495,9 +593,13 @@ async def handle_dev_text(action, update, context, DEV_MENU, DEV_WAIT_TEXT):
     raw = (message.text or "").strip()
 
     if kind == "ads_group":
-        chat, error = await check_group(context.bot, raw)
+        chat, error = await check_group(raw)
         if error:
-            await edit_menu(context, f"⚠️ {error}\n\n" + group_prompt_text(), _back("dev:ads"))
+            # Kiritilgan qiymat ham ko'rsatiladi: xato matni avvalgisi bilan bir xil bo'lsa,
+            # Telegram "message is not modified" deb xabarni yangilamay qo'yadi (qotib qolgandek ko'rinadi).
+            await edit_menu(
+                context, f"⚠️ <code>{_esc(raw[:40])}</code>: {error}\n\n" + group_prompt_text(), _back("dev:ads")
+            )
             context.user_data["dev_action"] = action
             return DEV_WAIT_TEXT
         title = chat.title or (f"@{chat.username}" if chat.username else str(chat.id))

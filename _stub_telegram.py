@@ -65,6 +65,17 @@ def install_stubs():
             def __init__(self, inline_keyboard):
                 self.inline_keyboard = inline_keyboard
 
+        class InlineQueryResultArticle:
+            def __init__(self, id, title, input_message_content, reply_markup=None, description=None, **kw):
+                self.id, self.title, self.description = id, title, description
+                self.input_message_content, self.reply_markup = input_message_content, reply_markup
+
+        class InputTextMessageContent:
+            def __init__(self, message_text, parse_mode=None, **kw):
+                self.message_text, self.parse_mode = message_text, parse_mode
+
+        telegram_mod.InlineQueryResultArticle = InlineQueryResultArticle
+        telegram_mod.InputTextMessageContent = InputTextMessageContent
         telegram_mod.InlineKeyboardButton = InlineKeyboardButton
         telegram_mod.InlineKeyboardMarkup = InlineKeyboardMarkup
 

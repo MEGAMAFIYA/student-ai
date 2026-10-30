@@ -283,6 +283,15 @@ async def on_inline_query(
         await managed_tests.on_inline(update, context)
         return
 
+    # 📢 Reklama: /developer > 📢 Reklama akkaunt (Telethon) nomidan guruhga yuborayotganda
+    # "@Bot ad:<id>" inline natijasini tanlaydi — shu tufayli xabar ostida botga o'tish
+    # tugmasi bo'ladi (oddiy user akkaunt tugma qo'sha olmaydi). Boshqa hech qanday
+    # oqimga (AI va h.k.) tushmaydi.
+    if _raw_q.lower().startswith("ad:"):
+        from handlers import ads as ads_ui
+        await ads_ui.on_inline_ad_query(update, context)
+        return
+
     query = update.inline_query.query.strip()
     user = update.inline_query.from_user
     logger.info("🔍 INLINE START: user_id=%s username=%s query=%r", getattr(user, "id", "?"), _user_label(user), query)
@@ -929,6 +938,11 @@ async def on_chosen_inline_result(
     # qat’iy to‘xtatiladi.
     if chosen.result_id.startswith("managed-tests") or re.match(r"^test(?:lar|s)?(?:\s|$)", special_query, re.IGNORECASE):
         logger.info("📝 [CHOSEN_INLINE] test natijasi tanlandi — AI ga yuborilmaydi")
+        return
+
+    # 📢 Reklama natijasi tanlanganda ham AI/edit oqimiga tushmaydi.
+    if chosen.result_id.startswith("ads_") or special_query.lower().startswith("ad:"):
+        logger.info("📢 [CHOSEN_INLINE] reklama natijasi yuborildi (user_id=%s)", getattr(chosen.from_user, "id", "?"))
         return
 
     # 🎮 GAME ham og'ir/AI oqim emas: natija tanlanganda AI chaqirilmasin.
