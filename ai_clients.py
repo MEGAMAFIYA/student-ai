@@ -26,6 +26,7 @@ import asyncio
 import logging
 import os
 import re
+import time
 from urllib.parse import quote
 
 import httpx
@@ -38,6 +39,27 @@ logger = logging.getLogger(__name__)
 GEMINI_TIMEOUT_SEC = max(30, int(os.getenv("GEMINI_TIMEOUT_SEC", "120")))  # Gemini javob bermasa, cheksiz kutmaslik uchun
 
 _gemini_model_cache: dict[tuple[str, str], object] = {}
+# Gemini kvotasi odatda loyiha + model bo'yicha umumiy. Birinchi 429 dan
+# keyin ayni model uchun boshqa kalitlarni ham ketma-ket urmaslik uchun
+# jarayon ichidagi circuit-breaker. Render qayta ishga tushsa cooldown yangidan
+# hisoblanadi; Google javobidagi retry_delay imkon qadar aniq olinadi.
+_gemini_quota_cooldowns: dict[str, float] = {}
+_GEMINI_QUOTA_DEFAULT_COOLDOWN_SEC = max(60, int(os.getenv("GEMINI_QUOTA_DEFAULT_COOLDOWN_SEC", "3600")))
+
+
+def _gemini_quota_remaining(model_name: str) -> int:
+    until = _gemini_quota_cooldowns.get(model_name, 0.0)
+    return max(0, int(until - time.monotonic()))
+
+
+def _set_gemini_quota_cooldown(model_name: str, error_text: str) -> int:
+    match = re.search(r"retry_delay\s*\{\s*seconds:\s*(\d+)", error_text, re.IGNORECASE)
+    seconds = int(match.group(1)) if match else _GEMINI_QUOTA_DEFAULT_COOLDOWN_SEC
+    seconds = max(60, min(seconds, 7 * 24 * 60 * 60))
+    _gemini_quota_cooldowns[model_name] = max(
+        _gemini_quota_cooldowns.get(model_name, 0.0), time.monotonic() + seconds
+    )
+    return seconds
 # google-generativeai kutubxonasining genai.configure() chaqiruvi JARAYON
 # DARAJASIDA GLOBAL holatni o'zgartiradi (bitta API kalitni "joriy" qilib
 # qo'yadi). Loyihada bir nechta turli Gemini kalit bir vaqtda ishlatilishi
@@ -123,6 +145,9 @@ async def _call_gemini(
     """Qaytaradi: (natija yoki None, status, tafsilot)."""
     if not api_key or not model:
         return None, "invalid", "Kalit yoki model sozlanmagan."
+    remaining = _gemini_quota_remaining(model)
+    if remaining:
+        return None, "quota", f"{model} uchun Gemini kvota kutish rejimida ({remaining} soniya qoldi)."
     logger.info(f"{label} ({model}) ga so'rov yuborilmoqda (prompt: {len(prompt)} belgi)...")
     try:
         gmodel = await _get_gemini_model_safe(api_key, model)
@@ -149,6 +174,12 @@ async def _call_gemini(
         return None, "error", "Vaqt tugadi (timeout)."
     except Exception as e:
         status, detail = _classify_gemini_error(e)
+        if status == "quota":
+            cooldown = _set_gemini_quota_cooldown(model, str(e))
+            logger.warning(
+                f"{label}: Gemini {model} kvotasi tugadi; shu modeldagi qolgan kalitlar "
+                f"{cooldown} soniya davomida qayta sinalmaydi. Boshqa provayderga o'tiladi."
+            )
         logger.error(f"{label} xato ({model}) [{status}]: {type(e).__name__}: {e}")
         return None, status, detail
 

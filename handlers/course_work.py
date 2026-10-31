@@ -70,8 +70,8 @@ SHARE_KIRISH = 0.07
 SHARE_BOB = 0.24        # har bir bob uchun (3 ta bob => taxminan 72%)
 SHARE_XULOSA = 0.10
 
-MAX_SUBSECTION_FILL_ROUNDS = 4   # bitta kichik bo'limni to'ldirish uchun maksimal urinish
-MAX_PDF_EXPAND_ROUNDS = 30       # yakuniy PDF sahifa sonini yetkazish uchun maksimal urinish
+MAX_SUBSECTION_FILL_ROUNDS = 2   # bitta kichik bo'limni to'ldirish uchun maksimal urinish
+MAX_PDF_EXPAND_ROUNDS = 8       # yakuniy PDF sahifa sonini yetkazish uchun maksimal urinish
 MIN_ACCEPTABLE_WORDS = 60        # shundan kam so'z yozilsa — AI umuman ishlamagan deb hisoblanadi
 
 # ===== NAZORATCHI (to'liqlik tekshiruvi) sozlamalari =====
@@ -83,16 +83,13 @@ MAX_COMPLETENESS_ROUNDS = 3      # to'liqlikni tekshirish-tuzatish tsikli necha 
 # ===== YAKUNIY MUHARRIRLIK (ziddiyat/til/raqamlash tuzatish) sozlamalari =====
 MAX_HARMONIZE_WORDS = 4000       # shundan uzun bo'lim muharrirlik bosqichida o'tkazib yuboriladi
 
-# RETRY_ATTEMPTS pasaytirildi (3 -> 2): endi /developer > 🔑 AI kalitlari
-# orqali qo'shilgan har bir provider (gemini/groq) BIR NECHTA kalitdan
-# iborat bo'lishi mumkin — ai_clients.ask_ai() BITTA _ask_retry urinishining
-# o'zida shu kalitlarning HAMMASINI birin-ketin sinab chiqadi. Ya'ni asosiy
-# "qayta urinish" ishi endi kalitlar darajasida bajariladi, shuning uchun
-# tashqi RETRY_ATTEMPTS'ni yuqori tutish keraksiz so'rovlar sonini
-# ko'paytirib, bepul limitni tezroq tugatib qo'yardi.
-RETRY_ATTEMPTS = 2               # bitta AI so'rovi necha marta qayta urinilishi
+# Bitta mantiqiy AI so'rovi ichida ai_clients.ask_ai() asosiy provider,
+# sozlangan zaxira providerlar va oxirgi fallbacklarni o'zi tekshiradi.
+# Shu sababli aynan bir xil promptni tashqi qatlamda takrorlash ko'p
+# so'rov sarflaydi; bo'limlar bo'yicha alohida tiklash mexanizmlari saqlanadi.
+RETRY_ATTEMPTS = 1               # bitta AI so'rovi necha marta qayta urinilishi
 RETRY_DELAY_SEC = 3              # urinishlar orasidagi kutish (soniya)
-OVERALL_TIMEOUT_SEC = 25 * 60    # butun kurs ishi generatsiyasi uchun yakuniy xavfsizlik chegarasi
+OVERALL_TIMEOUT_SEC = 45 * 60    # butun kurs ishi generatsiyasi uchun yakuniy xavfsizlik chegarasi
 
 _ROMAN = {1: "I", 2: "II", 3: "III"}
 
@@ -654,7 +651,7 @@ async def _generate_course_work_impl(topic: str, pages: int, status_msg=None):
             )
             + _facts_block(facts_registry),
             _COURSE_SYSTEM.format(topic=topic),
-            attempts=2,
+            attempts=1,
             tag=f"PDF-KENGAYTIRISH {rounds}",
         )
         if not addition:
@@ -741,11 +738,11 @@ async def _generate_one_subsection(
 async def _generate_bob(
     topic: str, bob_num: int, bolimlari: list, bob_target_words: int, status_cb, facts: list | None = None
 ) -> list:
-    """Bobning har bir kichik bo'limini ALOHIDA generatsiya qiladi va har birini
-    o'ziga ajratilgan hajmga (taxminan 2.5-3 bet) yetguncha to'ldiradi."""
+    """Bobning har bir kichik bo'limini ALOHIDA generatsiya qiladi va hajmni
+    bob uchun ajratilgan so'z maqsadiga mutanosib taqsimlaydi."""
     facts = facts if facts is not None else []
     n = max(len(bolimlari), 1)
-    per_sub_words = max(int(bob_target_words / n), 850)  # ~2.2+ bet minimal
+    per_sub_words = max(int(bob_target_words / n), 250)  # hajm bob maqsadiga mutanosib
 
     subsections = []
     for j, sub_title in enumerate(bolimlari, start=1):
@@ -886,7 +883,7 @@ async def _harmonize_text(topic: str, text: str) -> str:
     result = await _ask_retry(
         f"MAVZU: '{topic}'\n\nQUYIDAGI MATNNI TUZATING:\n\n{text}",
         _HARMONIZE_SYSTEM,
-        attempts=2,
+        attempts=1,
         tag="MUHARRIRLIK",
     )
     # Agar muharrirlik natijasi shubhali darajada qisqarib ketsa (masalan AI
