@@ -53,6 +53,7 @@ _DEFAULT_DATA = {
     "movies": {},      # {"<movie_id>": {"id","title","file_id","mime_type","file_name","size","uploaded_by","created_ts"}} — kino katalogi
     "keepalive": {},   # {"<render_service_id>": {"name","url","enabled_ts"}} — 😴 Render "Uxlamaslik" ro'yxati
     "ads": {},         # {"<ad_id>": {"id","chat_id","chat_title","text","interval_min","created_by","created_ts"}} — 📢 guruh reklamalari
+    "course_image_prefs": {},  # {"<user_id>": {"enabled"?, "provider"?, "model"?, "count"?}} — 🖼 kurs ishi rasm sozlamalari (faqat foydalanuvchi tanlagan maydonlar)
 }
 
 
@@ -545,3 +546,42 @@ def search_movies(query: str = "") -> list[dict]:
 
 def count_movies() -> int:
     return len(_data.get("movies", {}))
+
+
+# ============================================================
+# 🖼 Kurs ishi rasm sozlamalari (foydalanuvchi tanlovi)
+# ============================================================
+# Faqat foydalanuvchi AYNAN tanlagan maydonlar saqlanadi — qolganlari uchun
+# administrator standarti (config.COURSE_IMAGE_DEFAULTS) ishlaydi, shuning
+# uchun admin keyinchalik standartni o'zgartirsa, tanlamagan foydalanuvchilarga
+# avtomatik ta'sir qiladi.
+
+_COURSE_IMAGE_PREF_FIELDS = ("enabled", "provider", "model", "count")
+
+
+def get_course_image_prefs(user_id: int) -> dict:
+    with _lock:
+        prefs = _data.get("course_image_prefs", {}).get(str(int(user_id)), {})
+        return {k: v for k, v in prefs.items() if k in _COURSE_IMAGE_PREF_FIELDS}
+
+
+def set_course_image_prefs(user_id: int, **fields) -> dict:
+    """Berilgan maydonlarni yangilaydi (None qiymat — maydonni olib tashlaydi,
+    ya'ni admin standartiga qaytadi). Qaytaradi: yangi saqlangan prefs."""
+    with _lock:
+        store = _data.setdefault("course_image_prefs", {})
+        prefs = dict(store.get(str(int(user_id)), {}))
+        for k, v in fields.items():
+            if k not in _COURSE_IMAGE_PREF_FIELDS:
+                continue
+            if v is None:
+                prefs.pop(k, None)
+            else:
+                prefs[k] = v
+        if prefs:
+            store[str(int(user_id))] = prefs
+        else:
+            store.pop(str(int(user_id)), None)
+        _save()
+        return dict(prefs)
+

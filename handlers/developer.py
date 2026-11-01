@@ -39,6 +39,7 @@ from telegram.error import BadRequest
 from telegram.ext import ContextTypes, ConversationHandler
 
 import ai_clients
+import image_clients
 import render_api
 import render_env_pdf
 import config
@@ -61,13 +62,22 @@ _FIELD_LABELS = {
 
 _SCOPE_LABELS = {"all": "barcha", "odd": "toq sondagi", "even": "juft sondagi"}
 
-_STATUS_ICONS = {"ok": "✅", "quota": "⏳", "paid": "🚫", "invalid": "❌", "error": "⚠️"}
+_STATUS_ICONS = {
+    "ok": "✅", "quota": "⏳", "paid": "🚫", "invalid": "❌", "error": "⚠️",
+    "no_balance": "💸", "model_not_found": "🔎", "bad_request": "⚠️",
+    "moderated": "🛑", "timeout": "⌛️",
+}
 _STATUS_TEXT = {
     "ok": "ishlayapti",
     "quota": "limit tugagan",
     "paid": "model pullik",
     "invalid": "kalit yaroqsiz",
     "error": "xato",
+    "no_balance": "balans tugagan",
+    "model_not_found": "model topilmadi",
+    "bad_request": "so'rov noto'g'ri",
+    "moderated": "moderatsiya blokladi",
+    "timeout": "vaqt tugadi",
 }
 
 
@@ -302,6 +312,7 @@ def _kalitlar_menu_keyboard() -> InlineKeyboardMarkup:
     rows += [
         [InlineKeyboardButton("🔑 AI kalitlari", callback_data="dev:keys"),
          InlineKeyboardButton("➕ Barcha modellar", callback_data="dev:bulk")],
+        [InlineKeyboardButton("🖼 Kurs ishi rasmlari", callback_data="dev:cwimg")],
         [InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:menu")],
     ]
     return InlineKeyboardMarkup(rows)
@@ -533,7 +544,7 @@ def _provider_choice_keyboard(back_callback: str, choose_prefix: str) -> InlineK
 
 def _keys_menu_text() -> str:
     lines = ["🔑 <b>AI kalitlari</b>\n"]
-    for provider in config.SUPPORTED_PROVIDERS:
+    for provider in config.ALL_KEY_PROVIDERS:
         pool = config.KEY_POOLS.get(provider, [])
         lines.append(f"<b>{_esc(_provider_label(provider))} kalitlar:</b>")
         if not pool:
@@ -550,7 +561,7 @@ def _keys_menu_text() -> str:
 
 def _keys_menu_keyboard() -> InlineKeyboardMarkup:
     rows = []
-    for provider in config.SUPPORTED_PROVIDERS:
+    for provider in config.ALL_KEY_PROVIDERS:
         pool = config.KEY_POOLS.get(provider, [])
         btns = [
             InlineKeyboardButton(f"{_provider_label(provider)} {i}", callback_data=f"dev:keyview:{provider}:{i}")
@@ -570,26 +581,113 @@ def _key_view_text(provider: str, index: int) -> str:
     if not (1 <= index <= len(pool)):
         return "⚠️ Bu kalit topilmadi (o'chirilgan bo'lishi mumkin)."
     entry = pool[index - 1]
+    model = entry.get("model") or "—"
+    extra = ""
+    if provider in config.IMAGE_PROVIDERS:
+        extra = f" ({_esc(image_clients.model_label(provider, model))})\n🎨 <i>Rasm yaratish provayderi</i>"
     return (
         f"🔑 <b>{_esc(_provider_label(provider))} — Kalit #{index}</b>\n\n"
         f"Kalit: <code>{_esc(_mask_key(entry.get('key', '')))}</code>\n"
-        f"Model: <code>{_esc(entry.get('model') or '—')}</code>"
+        f"Model: <code>{_esc(model)}</code>{extra}"
     )
 
 
 def _key_view_keyboard(provider: str, index: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
+    rows = [
         [InlineKeyboardButton("🔁 Kalitni almashtirish", callback_data=f"dev:keyrepl:{provider}:{index}")],
         [InlineKeyboardButton("✏️ Modelni o'zgartirish", callback_data=f"dev:keymodel:{provider}:{index}")],
+        [InlineKeyboardButton("🩺 Shu kalitni tekshirish", callback_data=f"dev:keycheck1:{provider}:{index}")],
+    ]
+    if provider in config.IMAGE_PROVIDERS:
+        rows.append([InlineKeyboardButton("🧪 Test rasm yaratish (pullik)", callback_data=f"dev:keyimgtest:{provider}:{index}")])
+    rows += [
         [InlineKeyboardButton("🗑 O'chirish", callback_data=f"dev:keydel:{provider}:{index}")],
         [InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:keys")],
-    ])
+    ]
+    return InlineKeyboardMarkup(rows)
+
+
+# ---------- 🎨 Rasm provayderlari: model tanlash (ro'yxatdan YOKI qo'lda) ----------
+
+def _img_model_picker_text(provider: str, intro: str) -> str:
+    lines = [intro, "", f"<b>{_esc(_provider_label(provider))} — mavjud modellar:</b>"]
+    for m in image_clients.models_for(provider):
+        price = f" — ~{m['credits']:g} kredit" if m.get("credits") is not None else ""
+        lines.append(f"• <code>{_esc(m['id'])}</code> ({_esc(m['label'])}){price}")
+    if provider == "bfl":
+        lines.append("\nℹ️ FLUX.1 [schnell] BFL rasmiy API'sida mavjud emas (faqat ochiq vaznlar). "
+                     "Narxlar: bfl.ai/pricing")
+    else:
+        lines.append("\nℹ️ Narxlar taxminiy (1 kredit = $0.01) va o'zgarishi mumkin.")
+    lines.append("\nRo'yxatdan tanlang yoki \"✍️ Qo'lda kiritish\" ni bosing.")
+    return "\n".join(lines)
+
+
+def _img_model_picker_keyboard(provider: str, pick_prefix: str, manual_cb: str, back_cb: str) -> InlineKeyboardMarkup:
+    rows = []
+    for i, m in enumerate(image_clients.models_for(provider)):
+        rows.append([InlineKeyboardButton(m["label"], callback_data=f"{pick_prefix}:{i}")])
+    rows.append([InlineKeyboardButton("✍️ Qo'lda kiritish", callback_data=manual_cb)])
+    rows.append([InlineKeyboardButton("⬅️ Orqaga", callback_data=back_cb)])
+    return InlineKeyboardMarkup(rows)
+
+
+def _img_model_by_index(provider: str, i: int) -> str:
+    models = image_clients.models_for(provider)
+    return models[i]["id"] if 0 <= i < len(models) else ""
+
+
+# ---------- 🖼 Kurs ishi rasmlari — administrator standart sozlamalari ----------
+
+def _cwimg_keys_summary() -> str:
+    parts = []
+    for p in config.IMAGE_PROVIDERS:
+        n = len([e for e in config.KEY_POOLS.get(p, []) if e.get("key")])
+        parts.append(f"{_esc(_provider_label(p))}: {n} ta kalit")
+    return " | ".join(parts)
+
+
+def _cwimg_menu_text() -> str:
+    d = config.COURSE_IMAGE_DEFAULTS
+    prov = "Avtomatik" if d["provider"] == "auto" else _provider_label(d["provider"])
+    if d["provider"] == "auto":
+        model = "har provayderning standart modeli"
+    else:
+        model = d["model"] or f"standart ({config.DEFAULT_MODEL_BY_PROVIDER.get(d['provider'], '—')})"
+    return (
+        "🖼 <b>Kurs ishi rasmlari — standart sozlamalar</b>\n\n"
+        "Foydalanuvchi kurs ishi yaratishda rasm sozlamasini tanlamasa, shular ishlaydi.\n\n"
+        f"Rasmlar: <b>{'✅ YOQILGAN' if d['enabled'] else '⛔️ O‘CHIRILGAN'}</b>\n"
+        f"Provayder: <b>{_esc(prov)}</b>\n"
+        f"Model: <code>{_esc(model)}</code>\n"
+        f"Rasm soni: <b>{d['count']}</b> (diagramma + AI illyustratsiya, 1–5)\n\n"
+        f"🔑 {_cwimg_keys_summary()}\n"
+        "ℹ️ Diagrammalar (blok-sxema, arxitektura, statistik diagramma) kalitsiz, "
+        "aniq ma'lumotdan chiziladi; AI generator faqat illyustratsiya uchun."
+    )
+
+
+def _cwimg_menu_keyboard() -> InlineKeyboardMarkup:
+    d = config.COURSE_IMAGE_DEFAULTS
+    def mark(cond, text):
+        return ("✅ " if cond else "") + text
+    rows = [
+        [InlineKeyboardButton("⛔️ O'chirish" if d["enabled"] else "✅ Yoqish", callback_data="dev:cwimgtoggle")],
+        [InlineKeyboardButton(mark(d["provider"] == "auto", "Avtomatik"), callback_data="dev:cwimgprov:auto"),
+         InlineKeyboardButton(mark(d["provider"] == "bfl", "BFL"), callback_data="dev:cwimgprov:bfl"),
+         InlineKeyboardButton(mark(d["provider"] == "stability", "Stability"), callback_data="dev:cwimgprov:stability")],
+    ]
+    if d["provider"] != "auto":
+        rows.append([InlineKeyboardButton("🧩 Modelni tanlash", callback_data="dev:cwimgmodelmenu")])
+    rows.append([InlineKeyboardButton(mark(d["count"] == n, str(n)), callback_data=f"dev:cwimgcount:{n}") for n in range(1, 6)])
+    rows.append([InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:kalitlar")])
+    return InlineKeyboardMarkup(rows)
 
 
 def _keyadd_text() -> str:
     links = "\n".join(
         f"🔹 {_esc(_provider_label(p))}: {_esc(config.PROVIDER_KEY_LINKS.get(p, ''))}"
-        for p in config.SUPPORTED_PROVIDERS
+        for p in config.ALL_KEY_PROVIDERS
     )
     return (
         "➕ <b>Yangi kalit qo'shish</b>\n\n"
@@ -600,14 +698,14 @@ def _keyadd_text() -> str:
 
 
 def _keyadd_keyboard() -> InlineKeyboardMarkup:
-    buttons = [InlineKeyboardButton(_provider_label(p), callback_data=f"dev:keyaddprov:{p}") for p in config.SUPPORTED_PROVIDERS]
+    buttons = [InlineKeyboardButton(_provider_label(p), callback_data=f"dev:keyaddprov:{p}") for p in config.ALL_KEY_PROVIDERS]
     rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
     rows.append([InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:keys")])
     return InlineKeyboardMarkup(rows)
 
 
 def _keybulk_keyboard() -> InlineKeyboardMarkup:
-    buttons = [InlineKeyboardButton(_provider_label(p), callback_data=f"dev:keybulkprov:{p}") for p in config.SUPPORTED_PROVIDERS]
+    buttons = [InlineKeyboardButton(_provider_label(p), callback_data=f"dev:keybulkprov:{p}") for p in config.ALL_KEY_PROVIDERS]
     rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
     rows.append([InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:keys")])
     return InlineKeyboardMarkup(rows)
@@ -791,7 +889,7 @@ async def _run_key_check() -> str:
     ishlamayotganini ko'rish mumkin."""
     logger.info("🩺 Kalitlarni tekshirish boshlandi (/developer > AI kalitlari > Tekshirish)...")
     tasks, meta = [], []
-    for provider in config.SUPPORTED_PROVIDERS:
+    for provider in config.ALL_KEY_PROVIDERS:
         for i, entry in enumerate(config.KEY_POOLS.get(provider, []), start=1):
             key, model = entry.get("key", ""), entry.get("model", "")
             if key and model:
@@ -803,7 +901,7 @@ async def _run_key_check() -> str:
     results = await asyncio.gather(*tasks) if tasks else []
     result_iter = iter(results)
 
-    by_provider: dict[str, list] = {p: [] for p in config.SUPPORTED_PROVIDERS}
+    by_provider: dict[str, list] = {p: [] for p in config.ALL_KEY_PROVIDERS}
     ok_count, fail_count = 0, 0
     for provider, i, model, has_data in meta:
         if has_data:
@@ -820,7 +918,7 @@ async def _run_key_check() -> str:
 
     lines = ["🩺 <b>Kalitlar holati</b>\n"]
     any_key = False
-    for provider in config.SUPPORTED_PROVIDERS:
+    for provider in config.ALL_KEY_PROVIDERS:
         items = by_provider[provider]
         lines.append(f"<b>{_esc(_provider_label(provider))}:</b>")
         if not items:
@@ -831,7 +929,7 @@ async def _run_key_check() -> str:
                 icon = _STATUS_ICONS.get(status, "⚠️")
                 text = _STATUS_TEXT.get(status, status)
                 line = f"  {i}. {icon} {text} (<code>{_esc(model)}</code>)"
-                if status != "ok" and detail:
+                if detail:  # xato sababi YOKI (rasm provayderlari uchun) balans matni
                     line += f"\n     <i>{_esc(detail)}</i>"
                 lines.append(line)
         lines.append("")
@@ -1449,7 +1547,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # oldingi "kutilayotgan matn kiritish" holatini tozalaydi — pastda
     # tegishli branch (edit/keyaddprov/keyrepl/keymodel/bulkprov/keybulkscope)
     # kerak bo'lsa uni qaytadan o'rnatadi.
-    if action not in ("edit", "bulkprov", "keyaddprov", "keyrepl", "keymodel", "keybulkscope", "priceedit", "balsearch", "ptsong", "ptemoji", "ptdelay", "ptrevert", "gh", "github", "mt_stop", "giftconfirm", "adsmin", "adsok"):
+    if action not in ("edit", "bulkprov", "keyaddprov", "keyrepl", "keymodel", "keybulkscope", "imgaddmanual", "imgmodelmanual", "priceedit", "balsearch", "ptsong", "ptemoji", "ptdelay", "ptrevert", "gh", "github", "mt_stop", "giftconfirm", "adsmin", "adsok"):
         context.user_data.pop("dev_action", None)
 
     # ---------- Asosiy menyu ----------
@@ -1726,6 +1824,12 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "(Account ID va API tokenni dash.cloudflare.com sahifasining "
                 "o'ng tomonidagi \"Account ID\" va Workers AI bo'limidan olasiz.)"
             )
+        elif provider in config.IMAGE_PROVIDERS:
+            prompt_text = (
+                f"➕ <b>{_esc(_provider_label(provider))}</b> — yangi API kalitni xabar qilib yuboring.\n"
+                "Kalit xabari chatdan avtomatik o'chiriladi. Keyingi qadamda modelni "
+                "ro'yxatdan tanlaysiz yoki qo'lda yozasiz."
+            )
         else:
             prompt_text = f"➕ <b>{_esc(_provider_label(provider))}</b> — yangi API kalitni xabar qilib yuboring:"
         await _safe_edit_query(query, prompt_text, reply_markup=_back_keyboard("dev:keyadd"), parse_mode="HTML")
@@ -1740,6 +1844,17 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=_back_keyboard(f"dev:keyview:{provider}:{idx}"),
         )
         return DEV_WAIT_TEXT
+
+    if action == "keymodel" and parts[2] in config.IMAGE_PROVIDERS:
+        provider, idx = parts[2], int(parts[3])
+        await _safe_edit_query(
+            query,
+            _img_model_picker_text(provider, f"✏️ <b>{_esc(_provider_label(provider))} — Kalit #{idx}</b>: yangi model"),
+            reply_markup=_img_model_picker_keyboard(
+                provider, f"dev:imgmodel:{provider}:{idx}", f"dev:imgmodelmanual:{provider}:{idx}", f"dev:keyview:{provider}:{idx}"),
+            parse_mode="HTML",
+        )
+        return DEV_MENU
 
     if action == "keymodel":
         provider, idx = parts[2], int(parts[3])
@@ -1787,6 +1902,125 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return DEV_WAIT_BULK_MODEL
 
+
+    # ---------- 🎨 Rasm provayderlari: model tanlash / tekshirish / test ----------
+    if action == "imgadd":  # dev:imgadd:<provider>:<model_index>
+        provider, mi = parts[2], int(parts[3])
+        pending = context.user_data.get("dev_pending_img_key") or {}
+        model = _img_model_by_index(provider, mi)
+        if pending.get("provider") != provider or not pending.get("key") or not model:
+            await _safe_edit_query(
+                query, "⚠️ Kalit topilmadi (bot qayta ishga tushgan bo'lishi mumkin). Kalitni qaytadan qo'shing.\n\n"
+                + _keys_menu_text(), reply_markup=_keys_menu_keyboard(), parse_mode="HTML")
+            return DEV_MENU
+        context.user_data.pop("dev_pending_img_key", None)
+        idx = config.add_key(provider, pending["key"], model)
+        await _safe_edit_query(
+            query,
+            f"✅ {_esc(_provider_label(provider))} kalit #{idx} qo'shildi (model: <code>{_esc(model)}</code>).\n"
+            "\"🩺 Kalitlarni tekshirish\" orqali balans va modelni tekshiring.\n\n" + _keys_menu_text(),
+            reply_markup=_keys_menu_keyboard(), parse_mode="HTML")
+        return DEV_MENU
+
+    if action == "imgaddmanual":  # dev:imgaddmanual:<provider>
+        provider = parts[2]
+        context.user_data["dev_action"] = {"type": "add_key_model", "provider": provider}
+        await _safe_edit_query(
+            query, f"✍️ <b>{_esc(_provider_label(provider))}</b> — model nomini xabar qilib yuboring "
+                   "(masalan <code>flux-2-pro</code> yoki <code>sd3.5-large</code>):",
+            reply_markup=_back_keyboard("dev:keyadd"), parse_mode="HTML")
+        return DEV_WAIT_TEXT
+
+    if action == "imgmodel":  # dev:imgmodel:<provider>:<key_idx>:<model_index>
+        provider, idx, mi = parts[2], int(parts[3]), int(parts[4])
+        model = _img_model_by_index(provider, mi)
+        if model:
+            config.update_key_field(provider, idx, "model", model)
+        await _safe_edit_query(
+            query, ("✅ Model yangilandi.\n\n" if model else "⚠️ Model topilmadi.\n\n") + _key_view_text(provider, idx),
+            reply_markup=_key_view_keyboard(provider, idx), parse_mode="HTML")
+        return DEV_MENU
+
+    if action == "imgmodelmanual":  # dev:imgmodelmanual:<provider>:<key_idx>
+        provider, idx = parts[2], int(parts[3])
+        context.user_data["dev_action"] = {"type": "key_field", "provider": provider, "index": idx, "field": "model"}
+        await _safe_edit_query(
+            query, f"✍️ {_esc(_provider_label(provider))} — Kalit #{idx}\nYangi model nomini xabar qilib yuboring:",
+            reply_markup=_back_keyboard(f"dev:keyview:{provider}:{idx}"), parse_mode="HTML")
+        return DEV_WAIT_TEXT
+
+    if action == "keycheck1":  # bitta kalitni tekshirish
+        provider, idx = parts[2], int(parts[3])
+        pool = config.KEY_POOLS.get(provider, [])
+        if not (1 <= idx <= len(pool)):
+            await _safe_edit_query(query, "⚠️ Bu kalit topilmadi.", reply_markup=_keys_menu_keyboard())
+            return DEV_MENU
+        entry = pool[idx - 1]
+        await _safe_edit_query(query, "🩺 Tekshirilmoqda, biroz kuting...")
+        status, detail = await ai_clients.test_key(provider, entry.get("key", ""), entry.get("model", ""), index=idx)
+        icon, text = _STATUS_ICONS.get(status, "⚠️"), _STATUS_TEXT.get(status, status)
+        report = f"🩺 {icon} <b>{_esc(text)}</b>" + (f"\n<i>{_esc(detail)}</i>" if detail else "")
+        await _safe_edit_query(query, report + "\n\n" + _key_view_text(provider, idx),
+                               reply_markup=_key_view_keyboard(provider, idx), parse_mode="HTML")
+        return DEV_MENU
+
+    if action == "keyimgtest":  # haqiqiy (pullik) test rasm
+        provider, idx = parts[2], int(parts[3])
+        pool = config.KEY_POOLS.get(provider, [])
+        if provider not in config.IMAGE_PROVIDERS or not (1 <= idx <= len(pool)):
+            await _safe_edit_query(query, "⚠️ Bu kalit topilmadi.", reply_markup=_keys_menu_keyboard())
+            return DEV_MENU
+        entry = pool[idx - 1]
+        _, cost_txt = image_clients.estimate_cost(provider, entry.get("model", ""), 1)
+        await _safe_edit_query(query, f"🧪 Test rasm yaratilmoqda (taxminiy xarajat: {_esc(cost_txt)})...", parse_mode="HTML")
+        res = await image_clients.generate_image(
+            provider, entry.get("key", ""), entry.get("model", ""),
+            "Flat vector illustration of an open book and a glowing light bulb on a desk, "
+            "clean educational style, white background", aspect="1:1", use_cache=False)
+        if res.ok:
+            try:
+                await context.bot.send_photo(
+                    chat_id=query.message.chat_id, photo=io.BytesIO(res.data),
+                    caption=f"🧪 {_provider_label(provider)} / {entry.get('model')} — test rasm"
+                            + (f" (narx: {res.cost_credits:g} kredit)" if res.cost_credits is not None else ""))
+                msg = "✅ Test rasm yaratildi va yuborildi."
+            except Exception as exc:
+                msg = f"⚠️ Rasm yaratildi, lekin Telegramga yuborib bo'lmadi: {_esc(type(exc).__name__)}"
+        else:
+            msg = f"❌ {_esc(_STATUS_TEXT.get(res.status, res.status))}: {_esc(res.detail)}"
+        await _safe_edit_query(query, msg + "\n\n" + _key_view_text(provider, idx),
+                               reply_markup=_key_view_keyboard(provider, idx), parse_mode="HTML")
+        return DEV_MENU
+
+    # ---------- 🖼 Kurs ishi rasmlari: admin standartlari ----------
+    if action == "cwimg":
+        await _safe_edit_query(query, _cwimg_menu_text(), reply_markup=_cwimg_menu_keyboard(), parse_mode="HTML")
+        return DEV_MENU
+
+    if action in ("cwimgtoggle", "cwimgprov", "cwimgcount", "cwimgmodel"):
+        d = config.COURSE_IMAGE_DEFAULTS
+        if action == "cwimgtoggle":
+            config.update_course_image_defaults(enabled=not d["enabled"])
+        elif action == "cwimgprov":
+            config.update_course_image_defaults(provider=parts[2], model="")  # model provayderga bog'liq
+        elif action == "cwimgcount":
+            config.update_course_image_defaults(count=int(parts[2]))
+        else:  # cwimgmodel:<model_index>
+            model = _img_model_by_index(d["provider"], int(parts[2]))
+            config.update_course_image_defaults(model=model)
+        await _safe_edit_query(query, _cwimg_menu_text(), reply_markup=_cwimg_menu_keyboard(), parse_mode="HTML")
+        return DEV_MENU
+
+    if action == "cwimgmodelmenu":
+        provider = config.COURSE_IMAGE_DEFAULTS["provider"]
+        if provider == "auto":
+            await _safe_edit_query(query, _cwimg_menu_text(), reply_markup=_cwimg_menu_keyboard(), parse_mode="HTML")
+            return DEV_MENU
+        await _safe_edit_query(
+            query, _img_model_picker_text(provider, "🧩 <b>Kurs ishi rasmlari — model</b>"),
+            reply_markup=_img_model_picker_keyboard(provider, "dev:cwimgmodel", "dev:cwimg", "dev:cwimg"),
+            parse_mode="HTML")
+        return DEV_MENU
 
     # ---------- ☁️ GitHub ----------
     if action == "github":
@@ -2803,9 +3037,37 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _func_menu_keyboard(prefix),
         )
 
+    elif action_type == "add_key_model":
+        provider = action["provider"]
+        model = image_clients.normalize_model(provider, raw_value)
+        pending = context.user_data.get("dev_pending_img_key") or {}
+        if not model:
+            await _edit_menu(
+                context, "⚠️ Model nomi noto'g'ri (faqat lotin harf, raqam, '.', '-', '_'). Qaytadan yuboring:",
+                _back_keyboard("dev:keyadd"))
+            context.user_data["dev_action"] = action
+            return DEV_WAIT_TEXT
+        if pending.get("provider") != provider or not pending.get("key"):
+            await _edit_menu(context, "⚠️ Kalit topilmadi — kalitni qaytadan qo'shing.\n\n" + _keys_menu_text(), _keys_menu_keyboard())
+        else:
+            context.user_data.pop("dev_pending_img_key", None)
+            idx = config.add_key(provider, pending["key"], model)
+            await _edit_menu(
+                context,
+                f"✅ {_esc(_provider_label(provider))} kalit #{idx} qo'shildi (model: <code>{_esc(model)}</code>).\n\n"
+                + _keys_menu_text(), _keys_menu_keyboard())
+
     elif action_type == "key_field":
         provider, idx, field = action["provider"], action["index"], action["field"]
         value = "" if raw_value in ("-", "bosh", "bo'sh") else raw_value
+        if provider in config.IMAGE_PROVIDERS and field == "model":
+            value = image_clients.normalize_model(provider, value)
+            if not value:
+                await _edit_menu(
+                    context, "⚠️ Model nomi noto'g'ri (faqat lotin harf, raqam, '.', '-', '_'). Qaytadan yuboring:",
+                    _back_keyboard(f"dev:keyview:{provider}:{idx}"))
+                context.user_data["dev_action"] = action
+                return DEV_WAIT_TEXT
         config.update_key_field(provider, idx, field, value)
         field_label = "Kalit" if field == "key" else "Model"
         await _edit_menu(
@@ -2817,6 +3079,17 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action_type == "add_key":
         provider = action["provider"]
         if not raw_value:
+            context.user_data.pop("dev_action", None)
+            return DEV_MENU
+        if provider in config.IMAGE_PROVIDERS:
+            # Kalit XOTIRADA (user_data) saqlanadi, model tanlangandan keyingina
+            # KEY_POOLS ga yoziladi. Kalit chatdan allaqachon o'chirilgan.
+            context.user_data["dev_pending_img_key"] = {"provider": provider, "key": raw_value}
+            await _edit_menu(
+                context,
+                _img_model_picker_text(provider, f"✅ <b>{_esc(_provider_label(provider))}</b> kaliti qabul qilindi. Endi modelni tanlang:"),
+                _img_model_picker_keyboard(provider, f"dev:imgadd:{provider}", f"dev:imgaddmanual:{provider}", "dev:keyadd"),
+            )
             context.user_data.pop("dev_action", None)
             return DEV_MENU
         default_model = config.DEFAULT_MODEL_BY_PROVIDER.get(provider, "")
@@ -3331,6 +3604,13 @@ async def on_bulk_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif action_type == "bulk_pool_model":
         provider, scope = action["provider"], action["scope"]
+        if provider in config.IMAGE_PROVIDERS:
+            model = image_clients.normalize_model(provider, model)
+            if not model:
+                await _edit_menu(
+                    context, "⚠️ Model nomi noto'g'ri. Qaytadan yuboring:",
+                    _back_keyboard(f"dev:keybulkprov:{provider}"))
+                return DEV_WAIT_BULK_MODEL
         updated = config.bulk_update_pool_models(provider, scope, model)
         scope_label = _SCOPE_LABELS.get(scope, scope)
         if updated:

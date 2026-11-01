@@ -22,7 +22,7 @@ import json
 import logging
 import re
 
-from telegram import Update, InputFile
+from telegram import Update, InputFile, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode, ChatAction
 
@@ -31,6 +31,9 @@ import config
 from ai_clients import ask_ai, ask_ai_with_source
 import user_ai_keys
 import wallet
+import course_images
+import image_clients
+import storage
 from pdf_tools import build_course_work_pdf, count_pdf_pages
 from handlers.menu import main_menu_keyboard
 from handlers import wallet_ui
@@ -344,7 +347,112 @@ async def receive_pages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"✅ {pages} bet.\n\nEndi kurs ishining *mavzusini* yuboring:",
         parse_mode=ParseMode.MARKDOWN,
+        reply_markup=_img_open_keyboard(update.effective_user.id if update.effective_user else None),
     )
+    return CW_TOPIC
+
+
+# ============================================================
+# 🖼 Rasm sozlamalari paneli (CW_TOPIC holatida, inline tugmalar orqali).
+# Foydalanuvchi hech narsa tanlamasa — administrator standarti ishlaydi.
+# ============================================================
+
+def _provider_name(p: str) -> str:
+    return "Avtomatik" if p == "auto" else config.PROVIDER_LABELS.get(p, p)
+
+
+def _img_open_keyboard(user_id) -> InlineKeyboardMarkup:
+    st = course_images.resolve_settings(user_id)
+    label = f"🖼 Rasmlar: {'YOQILGAN' if st['enabled'] else 'O‘CHIRILGAN'} · {st['count']} ta · {_provider_name(st['provider'])}"
+    return InlineKeyboardMarkup([[InlineKeyboardButton(label, callback_data="cwimg:open")]])
+
+
+def _img_panel_text(user_id) -> str:
+    st = course_images.resolve_settings(user_id)
+    avail = course_images.available_providers(user_id)
+    keys_line = ", ".join(
+        f"{config.PROVIDER_LABELS[p]} {'✅' if p in avail else '❌'}" for p in config.IMAGE_PROVIDERS
+    )
+    if st["provider"] == "auto":
+        model = "har provayderning standart modeli"
+    else:
+        model = st["model"] or f"standart ({config.DEFAULT_MODEL_BY_PROVIDER.get(st['provider'], '—')})"
+    _, cost = course_images.estimate_job_cost(st, user_id, st["count"])
+    note = "" if avail else "\n⚠️ AI kalit yo'q: AI illyustratsiyalar o'tkazib yuboriladi, diagrammalar baribir yaratiladi."
+    return (
+        "🖼 Kurs ishi rasmlari\n\n"
+        f"Rasmlar: {'✅ YOQILGAN' if st['enabled'] else '⛔️ O‘CHIRILGAN'}\n"
+        f"Provayder: {_provider_name(st['provider'])}\n"
+        f"Model: {model}\n"
+        f"Rasm soni: {st['count']} (1–5)\n"
+        f"Kalitlar: {keys_line}\n"
+        f"Eng ko'pi bilan xarajat: {cost}{note}\n\n"
+        "Blok-sxema, arxitektura va statistik diagrammalar aniq ma'lumotdan chiziladi; "
+        "AI generator faqat illyustratsiya uchun."
+    )
+
+
+def _img_panel_keyboard(user_id) -> InlineKeyboardMarkup:
+    st = course_images.resolve_settings(user_id)
+    m = lambda c, t: ("✅ " if c else "") + t
+    rows = [
+        [InlineKeyboardButton("⛔️ O'chirish" if st["enabled"] else "✅ Yoqish", callback_data="cwimg:toggle")],
+        [InlineKeyboardButton(m(st["provider"] == "auto", "Avtomatik"), callback_data="cwimg:prov:auto"),
+         InlineKeyboardButton(m(st["provider"] == "bfl", "BFL"), callback_data="cwimg:prov:bfl"),
+         InlineKeyboardButton(m(st["provider"] == "stability", "Stability"), callback_data="cwimg:prov:stability")],
+    ]
+    if st["provider"] != "auto":
+        rows.append([InlineKeyboardButton("🧩 Model tanlash", callback_data="cwimg:models")])
+    rows.append([InlineKeyboardButton(m(st["count"] == n, str(n)), callback_data=f"cwimg:count:{n}") for n in range(1, 6)])
+    rows.append([InlineKeyboardButton("↩️ Admin standartiga qaytarish", callback_data="cwimg:reset")])
+    rows.append([InlineKeyboardButton("✔️ Tayyor", callback_data="cwimg:done")])
+    return InlineKeyboardMarkup(rows)
+
+
+async def img_settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = update.effective_user.id
+    parts = query.data.split(":")
+    action = parts[1] if len(parts) > 1 else "open"
+    st = course_images.resolve_settings(user_id)
+    try:
+        if action == "toggle":
+            storage.set_course_image_prefs(user_id, enabled=not st["enabled"])
+        elif action == "prov" and len(parts) > 2 and parts[2] in ("auto", *config.IMAGE_PROVIDERS):
+            storage.set_course_image_prefs(user_id, provider=parts[2], model=None)  # model provayderga bog'liq
+        elif action == "count" and len(parts) > 2 and parts[2].isdigit():
+            storage.set_course_image_prefs(user_id, count=max(1, min(5, int(parts[2]))))
+        elif action == "reset":
+            storage.set_course_image_prefs(user_id, enabled=None, provider=None, model=None, count=None)
+        elif action == "model" and len(parts) > 2 and parts[2].isdigit() and st["provider"] != "auto":
+            models = image_clients.models_for(st["provider"])
+            i = int(parts[2])
+            if 0 <= i < len(models):
+                storage.set_course_image_prefs(user_id, model=models[i]["id"])
+        elif action == "models" and st["provider"] != "auto":
+            rows = []
+            for i, mdl in enumerate(image_clients.models_for(st["provider"])):
+                price = f" · ~{mdl['credits']:g} kr" if mdl.get("credits") is not None else ""
+                rows.append([InlineKeyboardButton(mdl["label"] + price, callback_data=f"cwimg:model:{i}")])
+            rows.append([InlineKeyboardButton("⬅️ Orqaga", callback_data="cwimg:open")])
+            await query.answer()
+            await query.edit_message_text("🧩 Modelni tanlang:", reply_markup=InlineKeyboardMarkup(rows))
+            return CW_TOPIC
+        elif action == "done":
+            await query.answer("Saqlandi")
+            await query.edit_message_text(
+                "✅ Sozlamalar saqlandi.\n\nEndi kurs ishining mavzusini yuboring:",
+                reply_markup=_img_open_keyboard(user_id),
+            )
+            return CW_TOPIC
+        await query.answer()
+        await query.edit_message_text(_img_panel_text(user_id), reply_markup=_img_panel_keyboard(user_id))
+    except Exception as e:
+        logger.warning(f"🖼 Rasm sozlamalari panelida xato: {type(e).__name__}: {e}")
+        try:
+            await query.answer()
+        except Exception:
+            pass
     return CW_TOPIC
 
 
@@ -377,7 +485,8 @@ async def _generate_and_send(update, context, topic: str, pages: int, status):
 
     try:
         result = await asyncio.wait_for(
-            generate_course_work(topic, pages, status, user_id=user_id, source_tracker=source_tracker),
+            generate_course_work(topic, pages, status, user_id=user_id, source_tracker=source_tracker,
+                                 image_opts=course_images.resolve_settings(user_id)),
             timeout=OVERALL_TIMEOUT_SEC,
         )
     except asyncio.TimeoutError:
@@ -431,6 +540,7 @@ async def _generate_and_send(update, context, topic: str, pages: int, status):
             f"📄 {topic}\n"
             f"📎 {actual_pages} bet (so'ralgan: {pages}+)\n"
             "✅ Titul, mundarija, kirish, 3 bob, xulosa va adabiyotlar ro'yxati bilan."
+            + (f"\n🖼 {sections['figure_count']} ta rasm/diagramma qo'shildi." if sections.get("figure_count") else "")
         ),
         reply_markup=main_menu_keyboard(),
     )
@@ -490,7 +600,8 @@ async def _ask_retry(prompt: str, system: str, attempts: int = RETRY_ATTEMPTS, d
     return None
 
 
-async def generate_course_work(topic: str, pages: int, status_msg=None, user_id: int | None = None, source_tracker: dict | None = None):
+async def generate_course_work(topic: str, pages: int, status_msg=None, user_id: int | None = None, source_tracker: dict | None = None,
+                               image_opts: dict | None = None):
     """
     Kurs ishini tuzilgan holda generatsiya qiladi, NAZORATCHI orqali har bir
     bo'limning to'liqligini tekshirib, bo'sh qolgan qismlarni qayta yozdiradi,
@@ -500,6 +611,11 @@ async def generate_course_work(topic: str, pages: int, status_msg=None, user_id:
     Boshqa modullar (masalan universal_chat) ham shu funksiyadan foydalanadi
     (ular `user_id`/`source_tracker` bermaydi — o'sha chaqiruvlarda shaxsiy
     kalit kuzatilmaydi, xatti-harakat AVVALGIDEK qoladi).
+
+    `image_opts` (course_images.resolve_settings() natijasi) berilsa va
+    `enabled` bo'lsa, matn tayyor bo'lgach mavzuga mos rasm/diagrammalar
+    yaratilib PDF'ga joylanadi; berilmasa (inline/universal_chat) — AVVALGIDEK
+    rasmsiz. Rasm xatosi hech qachon kurs ishini to'xtatmaydi.
 
     `user_id` va `source_tracker` (bo'sh lug'at — chaqiruvchi o'zi yaratib
     beradi) berilsa (FAQAT pullik /kurs_ishi oqimidan), generatsiya
@@ -512,13 +628,32 @@ async def generate_course_work(topic: str, pages: int, status_msg=None, user_id:
     token_u = _current_user_id.set(user_id)
     token_t = _current_source_tracker.set(source_tracker)
     try:
-        return await _generate_course_work_impl(topic, pages, status_msg)
+        return await _generate_course_work_impl(topic, pages, status_msg, image_opts)
     finally:
         _current_user_id.reset(token_u)
         _current_source_tracker.reset(token_t)
 
 
-async def _generate_course_work_impl(topic: str, pages: int, status_msg=None):
+async def _build_pdf_safe(topic: str, sections: dict):
+    """PDF quradi; rasmlar sababli xato chiqsa — rasmsiz qayta quradi (kurs ishi baribir tayyor bo'ladi)."""
+    try:
+        pdf_buf = await asyncio.to_thread(build_course_work_pdf, topic, sections)
+    except Exception as e:
+        if not sections.get("figures"):
+            raise
+        logger.error(f"[PDF] Rasmlar bilan qurishda xato ({type(e).__name__}: {e}) — rasmsiz qayta quriladi.", exc_info=True)
+        sections["figures"] = []
+        sections["figure_count"] = 0
+        pdf_buf = await asyncio.to_thread(build_course_work_pdf, topic, sections)
+    actual_pages = await asyncio.to_thread(count_pdf_pages, pdf_buf)
+    return pdf_buf, actual_pages
+
+
+async def _ask_for_images(prompt: str, system: str, tag: str):
+    return await _ask_retry(prompt, system, attempts=2, raw=True, tag=tag)
+
+
+async def _generate_course_work_impl(topic: str, pages: int, status_msg=None, image_opts: dict | None = None):
     target_words = int(pages * WORDS_PER_PAGE * SAFETY_MARGIN)
     logger.info(f"===== [KURS ISHI BOSHLANDI] mavzu='{topic}', bet={pages}, maqsad so'z={target_words} =====")
 
@@ -627,9 +762,31 @@ async def _generate_course_work_impl(topic: str, pages: int, status_msg=None):
     # va sekin (ayniqsa 100+ betlik hujjatlarda) — asyncio.to_thread() orqali
     # alohida oqimda bajariladi, shu orqali BOSHQA FOYDALANUVCHILARNING
     # so'rovlari shu vaqtda bloklanib qolmaydi.
+    # ===== 🖼 MAVZUGA MOS RASMLAR (ixtiyoriy; xato bo'lsa rasmsiz davom etadi) =====
+    workdir = None
+    sections["figures"] = []
+    if image_opts and image_opts.get("enabled"):
+        try:
+            workdir = course_images.make_workdir()
+            await _status(f"⏳ *{topic}* — rasm/diagrammalar rejalashtirilmoqda...")
+            sections["figures"] = await course_images.build_figures(
+                topic, sections, image_opts, _current_user_id.get(), _ask_for_images, workdir, _status
+            )
+        except Exception as e:
+            logger.error(f"[RASM] Rasm bosqichi xato bilan tugadi: {type(e).__name__}: {e}", exc_info=True)
+            sections["figures"] = []
+    sections["figure_count"] = len(sections["figures"])
+
+    try:
+        return await _finish_pdf(topic, pages, sections, facts_registry, _status)
+    finally:
+        course_images.cleanup(workdir)  # vaqtinchalik rasm fayllari tozalanadi
+        sections.pop("figures", None)
+
+
+async def _finish_pdf(topic, pages, sections, facts_registry, _status):
     logger.info("[PDF] Birinchi versiya qurilmoqda...")
-    pdf_buf = await asyncio.to_thread(build_course_work_pdf, topic, sections)
-    actual_pages = await asyncio.to_thread(count_pdf_pages, pdf_buf)
+    pdf_buf, actual_pages = await _build_pdf_safe(topic, sections)
     logger.info(f"[PDF] Birinchi versiya: {actual_pages} bet (so'ralgan: {pages}).")
 
     rounds = 0
@@ -660,8 +817,7 @@ async def _generate_course_work_impl(topic: str, pages: int, status_msg=None):
         _register_facts(facts_registry, addition)
         shortest["content"] = shortest["content"].rstrip() + "\n\n" + addition.strip()
 
-        pdf_buf = await asyncio.to_thread(build_course_work_pdf, topic, sections)
-        actual_pages = await asyncio.to_thread(count_pdf_pages, pdf_buf)
+        pdf_buf, actual_pages = await _build_pdf_safe(topic, sections)
         logger.info(f"[PDF-KENGAYTIRISH {rounds}] Yangi hajm: {actual_pages}/{pages} bet.")
 
     logger.info(f"===== [KURS ISHI TUGADI] mavzu='{topic}', yakuniy hajm={actual_pages} bet =====")

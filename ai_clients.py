@@ -393,7 +393,10 @@ async def ask_ai_with_source(
         alohida xabar berish shart emas)."""
     if user_id:
         import user_ai_keys  # aylanma import'dan qochish uchun shu yerda
-        pools = user_ai_keys.get_pools(user_id)
+        # FAQAT matn AI provayderlari: rasm provayderlari (bfl/stability) ham
+        # shaxsiy kalitlar ichida saqlanadi, lekin ular /chat/completions
+        # API'ga ega emas — matn so'rovida ishlatilmaydi (image_clients.py).
+        pools = user_ai_keys.get_text_pools(user_id)
         last_detail = ""
         for provider, pool in pools.items():
             for idx, entry in enumerate(pool, start=1):
@@ -423,7 +426,8 @@ async def ask_ai_with_source(
 async def test_key(provider: str, api_key: str, model: str, index: int | None = None) -> tuple[str, str]:
     """/developer > 🔑 AI kalitlari > 🩺 Kalitlarni tekshirish uchun — bitta
     kalit/model juftligini juda qisqa so'rov bilan sinaydi (narxni minimal
-    qilish uchun). `index` berilsa, log yozuvlarida aynan qaysi kalit
+    qilish uchun). Rasm provayderlari (bfl/stability) uchun status "ok"
+    bo'lsa ham tafsilotda balans matni qaytadi. `index` berilsa, log yozuvlarida aynan qaysi kalit
     (masalan "Gemini kalit #2") ekanligi ko'rinadi — bir nechta kalit bir
     vaqtda tekshirilganda ularni farqlash uchun ZARUR (aks holda hammasi
     bir xil "Tekshiruv (Gemini)" nomi bilan logga tushib, qaysi kalit
@@ -432,6 +436,16 @@ async def test_key(provider: str, api_key: str, model: str, index: int | None = 
     label = config.PROVIDER_LABELS.get(provider, provider.capitalize())
     key_label = f"{label} kalit #{index}" if index is not None else label
     logger.info(f"🩺 Tekshiruv boshlandi: {key_label} (model: {model}).")
+    if provider in config.IMAGE_PROVIDERS:
+        # Rasm provayderlari: matn so'rovi EMAS, haqiqiy API so'rovlari
+        # (balans + model mavjudligi) — qarang: image_clients.test_image_key().
+        import image_clients  # kech import: matn AI oqimiga ta'sir qilmasin
+        status, detail = await image_clients.test_image_key(provider, api_key, model)
+        if status == "ok":
+            logger.info(f"🩺 {key_label}: ✅ ishlayapti ({detail}).")
+        else:
+            logger.warning(f"🩺 {key_label}: ❌ ishlamadi — status={status}, sabab: {detail}")
+        return status, detail
     result, status, detail = await _dispatch(provider, api_key, model, "", "Salom", "", None, f"Tekshiruv ({key_label})")
     if result:
         logger.info(f"🩺 {key_label}: ✅ ishlayapti.")

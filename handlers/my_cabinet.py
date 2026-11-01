@@ -38,6 +38,7 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 import ai_clients
+import image_clients
 import config
 import github_storage
 import pro_subscription
@@ -223,6 +224,66 @@ async def my_cabinet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text(f"🔁 {_esc(_provider_label(provider))} #{idx} — yangi kalitni yuboring:", parse_mode=ParseMode.HTML)
         return
 
+    if action.startswith("imgadd:"):  # mycab:imgadd:<provider>:<model_index>
+        _, provider, mi = action.split(":")
+        pending = context.user_data.get("awaiting_personal_key") or {}
+        models = image_clients.models_for(provider)
+        if pending.get("provider") != provider or not pending.get("pending_key") or not (0 <= int(mi) < len(models)):
+            await query.answer()
+            await query.edit_message_text(
+                "⚠️ Kalit topilmadi (bot qayta ishga tushgan bo'lishi mumkin). Kalitni qaytadan qo'shing.",
+                parse_mode=ParseMode.HTML, reply_markup=_keys_menu_keyboard(user_id))
+            return
+        context.user_data.pop("awaiting_personal_key", None)
+        idx, ok = user_ai_keys.add_key(user_id, provider, pending["pending_key"], models[int(mi)]["id"])
+        await query.answer()
+        await query.edit_message_text(
+            (f"✅ {_provider_label(provider)} kalit #{idx} qo'shildi!\n\n" if ok
+             else "❌ Kalit qabul qilindi, lekin saqlash muvaffaqiyatsiz bo'ldi. Birozdan keyin qayta urinib ko'ring.\n\n")
+            + _keys_menu_text(user_id),
+            parse_mode=ParseMode.HTML, reply_markup=_keys_menu_keyboard(user_id))
+        return
+
+    if action.startswith("imgmodel:"):  # mycab:imgmodel:<provider>:<key_idx>:<model_index>
+        _, provider, idx, mi = action.split(":")
+        models = image_clients.models_for(provider)
+        ok = False
+        if 0 <= int(mi) < len(models):
+            ok = user_ai_keys.update_key_field(user_id, provider, int(idx), "model", models[int(mi)]["id"])
+        await query.answer("✅ Model o'zgartirildi." if ok else "❌ Saqlab bo'lmadi.")
+        await query.edit_message_text(
+            _key_view_text(user_id, provider, int(idx)), parse_mode=ParseMode.HTML,
+            reply_markup=_key_view_keyboard(provider, int(idx)))
+        return
+
+    if action.startswith("keycheck1:"):
+        _, provider, idx = action.split(":")
+        entry = user_ai_keys.get_key(user_id, provider, int(idx))
+        await query.answer()
+        if not entry:
+            await query.edit_message_text("⚠️ Bu kalit topilmadi.", reply_markup=_keys_menu_keyboard(user_id))
+            return
+        await query.edit_message_text("🩺 Tekshirilmoqda, biroz kuting...")
+        status, detail = await ai_clients.test_key(provider, entry.get("key", ""), entry.get("model", ""), index=int(idx))
+        if status == "ok":
+            report = "✅ Ishlayapti" + (f" — {_esc(detail)}" if detail else "")
+        else:
+            report = "❌ " + _esc(detail or image_clients.STATUS_TEXT_UZ.get(status, status))
+        await query.edit_message_text(
+            report + "\n\n" + _key_view_text(user_id, provider, int(idx)), parse_mode=ParseMode.HTML,
+            reply_markup=_key_view_keyboard(provider, int(idx)))
+        return
+
+    if action.startswith("keymodel:") and action.split(":")[1] in config.IMAGE_PROVIDERS:
+        _, provider, idx = action.split(":")
+        context.user_data["awaiting_personal_key"] = {"provider": provider, "stage": "replace_model", "index": int(idx)}
+        await query.answer()
+        await query.edit_message_text(
+            _img_model_picker_text(provider, f"✏️ <b>{_esc(_provider_label(provider))} #{idx}</b> — yangi model"),
+            parse_mode=ParseMode.HTML,
+            reply_markup=_img_model_picker_keyboard(provider, f"mycab:imgmodel:{provider}:{idx}", f"mycab:keyview:{provider}:{idx}"))
+        return
+
     if action.startswith("keymodel:"):
         _, provider, idx = action.split(":")
         context.user_data["awaiting_personal_key"] = {"provider": provider, "stage": "replace_model", "index": int(idx)}
@@ -383,7 +444,7 @@ def _keys_menu_keyboard(user_id: int) -> InlineKeyboardMarkup:
 def _keyadd_text() -> str:
     links = "\n".join(
         f"🔹 {_esc(_provider_label(p))}: {_esc(config.PROVIDER_KEY_LINKS.get(p, ''))}"
-        for p in config.SUPPORTED_PROVIDERS
+        for p in config.ALL_KEY_PROVIDERS
     )
     return (
         "➕ <b>Yangi shaxsiy kalit qo'shish</b>\n\n"
@@ -394,9 +455,27 @@ def _keyadd_text() -> str:
 
 
 def _keyadd_keyboard() -> InlineKeyboardMarkup:
-    buttons = [InlineKeyboardButton(_provider_label(p), callback_data=f"mycab:keyaddprov:{p}") for p in config.SUPPORTED_PROVIDERS]
+    buttons = [InlineKeyboardButton(_provider_label(p), callback_data=f"mycab:keyaddprov:{p}") for p in config.ALL_KEY_PROVIDERS]
     rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
     rows.append([InlineKeyboardButton("⬅️ Orqaga", callback_data="mycab:keys")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _img_model_picker_text(provider: str, intro: str) -> str:
+    lines = [intro, "", f"<b>{_esc(_provider_label(provider))} — mavjud modellar:</b>"]
+    for m in image_clients.models_for(provider):
+        price = f" — ~{m['credits']:g} kredit" if m.get("credits") is not None else ""
+        lines.append(f"• <code>{_esc(m['id'])}</code> ({_esc(m['label'])}){price}")
+    if provider == "bfl":
+        lines.append("\nℹ️ FLUX.1 [schnell] BFL rasmiy API'sida mavjud emas.")
+    lines.append("\nRo'yxatdan tanlang yoki model nomini matn qilib yuboring.")
+    return "\n".join(lines)
+
+
+def _img_model_picker_keyboard(provider: str, pick_prefix: str, back_cb: str) -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(m["label"], callback_data=f"{pick_prefix}:{i}")]
+            for i, m in enumerate(image_clients.models_for(provider))]
+    rows.append([InlineKeyboardButton("⬅️ Orqaga", callback_data=back_cb)])
     return InlineKeyboardMarkup(rows)
 
 
@@ -404,10 +483,12 @@ def _key_view_text(user_id: int, provider: str, index: int) -> str:
     entry = user_ai_keys.get_key(user_id, provider, index)
     if not entry:
         return "⚠️ Bu kalit topilmadi (o'chirilgan bo'lishi mumkin)."
+    model = entry.get("model") or "—"
+    extra = f" ({_esc(image_clients.model_label(provider, model))})" if provider in config.IMAGE_PROVIDERS else ""
     return (
         f"🔑 <b>{_esc(_provider_label(provider))} — Kalit #{index}</b>\n\n"
         f"Kalit: <code>{_esc(_mask_key(entry.get('key', '')))}</code>\n"
-        f"Model: <code>{_esc(entry.get('model') or '—')}</code>"
+        f"Model: <code>{_esc(model)}</code>{extra}"
     )
 
 
@@ -415,6 +496,7 @@ def _key_view_keyboard(provider: str, index: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔁 Kalitni almashtirish", callback_data=f"mycab:keyrepl:{provider}:{index}")],
         [InlineKeyboardButton("✏️ Modelni o'zgartirish", callback_data=f"mycab:keymodel:{provider}:{index}")],
+        [InlineKeyboardButton("🩺 Shu kalitni tekshirish", callback_data=f"mycab:keycheck1:{provider}:{index}")],
         [InlineKeyboardButton("🗑 O'chirish", callback_data=f"mycab:keydel:{provider}:{index}")],
         [InlineKeyboardButton("⬅️ Orqaga", callback_data="mycab:keys")],
     ])
@@ -441,10 +523,11 @@ async def _run_personal_key_check(user_id: int) -> str:
         status, detail = next(result_iter)
         if status == "ok":
             ok_count += 1
-            lines.append(f"✅ {_esc(_provider_label(provider))} #{i} — ishlayapti")
+            lines.append(f"✅ {_esc(_provider_label(provider))} #{i} — ishlayapti" + (f" ({_esc(detail)})" if detail else ""))
         else:
             fail_count += 1
-            lines.append(f"❌ {_esc(_provider_label(provider))} #{i} — {_esc(detail)}")
+            reason = detail or image_clients.STATUS_TEXT_UZ.get(status, status)
+            lines.append(f"❌ {_esc(_provider_label(provider))} #{i} — {_esc(reason)}")
 
     if not meta:
         lines.append("<i>Tekshirish uchun kalit topilmadi.</i>")
@@ -485,6 +568,23 @@ async def on_personal_key_text(update: Update, context: ContextTypes.DEFAULT_TYP
     provider = pending["provider"]
     stage = pending["stage"]
 
+    if stage in ("key", "replace_key"):
+        # Maxfiy kalit chatda turib qolmasin (xato bo'lsa ham e'tiborsiz qoldiriladi).
+        try:
+            await update.message.delete()
+        except Exception:
+            pass
+
+    if stage == "key" and provider in config.IMAGE_PROVIDERS:
+        pending["pending_key"] = text
+        pending["stage"] = "model"  # ro'yxatdan tanlanmasa — yuborilgan matn model nomi sifatida olinadi
+        context.user_data["awaiting_personal_key"] = pending
+        await update.message.reply_text(
+            _img_model_picker_text(provider, f"✅ <b>{_esc(_provider_label(provider))}</b> kaliti qabul qilindi. Endi modelni tanlang:"),
+            parse_mode=ParseMode.HTML,
+            reply_markup=_img_model_picker_keyboard(provider, f"mycab:imgadd:{provider}", "mycab:keyadd"))
+        return True
+
     if stage == "key":
         pending["pending_key"] = text
         pending["stage"] = "model"
@@ -495,6 +595,14 @@ async def on_personal_key_text(update: Update, context: ContextTypes.DEFAULT_TYP
             parse_mode=ParseMode.MARKDOWN,
         )
         return True
+
+    if stage in ("model", "replace_model") and provider in config.IMAGE_PROVIDERS:
+        normalized = image_clients.normalize_model(provider, text)
+        if not normalized:
+            await update.message.reply_text(
+                "⚠️ Model nomi noto'g'ri (faqat lotin harf, raqam, '.', '-', '_'). Qaytadan yuboring:")
+            return True
+        text = normalized
 
     if stage == "model":
         context.user_data.pop("awaiting_personal_key", None)

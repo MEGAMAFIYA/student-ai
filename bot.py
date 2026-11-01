@@ -1148,7 +1148,10 @@ def build_course_work_conv():
         entry_points=[CallbackQueryHandler(wallet_ui.require_payment("course_work")(course_work.entry), pattern="^menu:course_work$")],
         states={
             course_work.CW_PAGES: [MessageHandler(filters.TEXT & ~filters.COMMAND, course_work.receive_pages)],
-            course_work.CW_TOPIC: [MessageHandler(filters.TEXT & ~filters.COMMAND, course_work.receive_topic_and_generate)],
+            course_work.CW_TOPIC: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, course_work.receive_topic_and_generate),
+                CallbackQueryHandler(course_work.img_settings_callback, pattern="^cwimg:"),
+            ],
         },
         fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
         name="course_work_conv",

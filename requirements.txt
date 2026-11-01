@@ -31,3 +31,7 @@ telethon>=1.44.0
 
 # Ixtiyoriy: REDIS_URL sozlansa kesh Redis orqali ishlaydi (cache.py). Yo'q bo'lsa xotira keshi ishlaydi.
 redis>=5.0
+
+# Kurs ishi diagrammalari (blok-sxema, arxitektura, statistik diagramma) — course_images.py.
+# Faqat Agg (oynasiz) backend ishlatiladi, Render'da qo'shimcha tizim paketi shart emas.
+matplotlib>=3.8

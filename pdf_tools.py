@@ -11,7 +11,8 @@ from PIL import Image
 from pypdf import PdfReader
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, KeepTogether
+from reportlab.platypus import Image as RLImage
 from reportlab.platypus.tableofcontents import TableOfContents
 from reportlab.lib.units import cm, mm
 from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_JUSTIFY
@@ -210,10 +211,44 @@ def _parse_section_blocks(text: str):
     return blocks
 
 
+# ------------------------------------------------------------
+# 🖼 Kurs ishi rasmlari (course_images.py). Rasm bob ichidagi TEGISHLI kichik
+# bo'limga qo'yiladi; o'lcham sahifa ramkasiga avtomatik moslanadi; izoh
+# ("N-rasm. ...") rasm ostida markazda; rasm+izoh KeepTogether bilan bitta
+# sahifada qoladi (matn bilan ustma-ust tushmaydi, sahifadan chiqib ketmaydi).
+# Buzilgan/o'qib bo'lmaydigan rasm shunchaki o'tkazib yuboriladi.
+# ------------------------------------------------------------
+
+FIGURE_AFTER_PARAGRAPHS = 2   # rasm kichik bo'lim sarlavhasidan keyingi 2-abzasdan so'ng qo'yiladi
+
+
+def _figure_flowable(fig: dict, number: int, max_w: float, max_h: float, caption_style):
+    try:
+        with Image.open(fig["path"]) as im:
+            w_px, h_px = im.size
+        if w_px <= 0 or h_px <= 0:
+            return None
+        ratio = h_px / w_px
+        w = max_w
+        h = w * ratio
+        if h > max_h:
+            h = max_h
+            w = h / ratio
+        img = RLImage(fig["path"], width=w, height=h)
+        img.hAlign = "CENTER"
+        caption = Paragraph(f"{number}-rasm. {_escape(str(fig.get('caption', '')).strip())}", caption_style)
+        return KeepTogether([Spacer(1, 3 * mm), img, Spacer(1, 2 * mm), caption, Spacer(1, 4 * mm)])
+    except Exception:
+        return None
+
+
 def build_course_work_pdf(topic: str, sections: dict, meta: dict | None = None) -> BytesIO:
     """
-    sections: {"kirish": str, "bobs": [{"title": str, "content": str}, ...],
-               "xulosa": str, "adabiyotlar": str}
+    sections: {"kirish": str, "bobs": [{"title": str, "content": str,
+                                       "subsections": [{"heading": str, ...}]}, ...],
+               "xulosa": str, "adabiyotlar": str,
+               "figures": [{"path","caption","bob","sub"}, ...]   # ixtiyoriy (course_images.py)
+              }
     meta: {"muassasa": str, "kafedra": str, "bajaruvchi": str, "guruh": str,
            "yonalish": str, "rahbar": str, "shahar": str} — barchasi ixtiyoriy
     """
@@ -254,6 +289,12 @@ def build_course_work_pdf(topic: str, sections: dict, meta: dict | None = None) 
         "CWSectionTOC", fontName=FONT_BOLD, fontSize=12,
         spaceBefore=12, spaceAfter=8,
     )
+    caption_style = ParagraphStyle(
+        "CWCaption", fontName=FONT_ITALIC, fontSize=10.5, leading=14, alignment=TA_CENTER, spaceAfter=6,
+    )
+    fig_max_w, fig_max_h = doc.width, min(doc.height * 0.42, 10.5 * cm)
+    figures = [f for f in (sections.get("figures") or []) if isinstance(f, dict) and f.get("path")]
+    fig_counter = 0
 
     story = []
 
@@ -292,10 +333,49 @@ def build_course_work_pdf(topic: str, sections: dict, meta: dict | None = None) 
     story.append(PageBreak())
 
     # ===== BOBLAR =====
-    for bob in sections.get("bobs", []):
+    for bi, bob in enumerate(sections.get("bobs", [])):
         story.append(Paragraph(_escape(bob["title"]), chapter_toc))
+
+        # Bu bobga tegishli rasmlar: kichik bo'lim sarlavhasi (escape qilingan) -> [rasmlar]
+        pending_by_heading: dict[str, list] = {}
+        unplaced: list = []
+        subs = bob.get("subsections") or []
+        for fig in figures:
+            if fig.get("bob") != bi:
+                continue
+            sj = fig.get("sub")
+            if isinstance(sj, int) and 0 <= sj < len(subs):
+                pending_by_heading.setdefault(_escape(str(subs[sj].get("heading", "")).strip()), []).append(fig)
+            else:
+                unplaced.append(fig)
+
+        def _emit(figs: list):
+            nonlocal fig_counter
+            for fg in figs:
+                flow = _figure_flowable(fg, fig_counter + 1, fig_max_w, fig_max_h, caption_style)
+                if flow is not None:
+                    fig_counter += 1
+                    story.append(flow)
+
+        current: list = []
+        paras_since_heading = 0
         for text, is_heading in _parse_section_blocks(bob.get("content", "")):
-            story.append(Paragraph(text, section_toc if is_heading else body))
+            if is_heading:
+                _emit(current)  # oldingi kichik bo'limda joylanmay qolgan bo'lsa — uning oxiriga
+                current = pending_by_heading.pop(text.strip(), [])
+                paras_since_heading = 0
+                story.append(Paragraph(text, section_toc))
+            else:
+                story.append(Paragraph(text, body))
+                paras_since_heading += 1
+                if current and paras_since_heading >= FIGURE_AFTER_PARAGRAPHS:
+                    _emit(current)
+                    current = []
+        _emit(current)
+        # Sarlavhasi topilmagan rasmlar baribir SHU bobning oxirida qoladi.
+        for rest in pending_by_heading.values():
+            _emit(rest)
+        _emit(unplaced)
         story.append(PageBreak())
 
     # ===== XULOSA =====

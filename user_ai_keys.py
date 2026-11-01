@@ -44,8 +44,22 @@ def get_pools(user_id: int) -> dict:
         return {}
 
 
+def get_text_pools(user_id: int) -> dict:
+    """Faqat MATN AI provayderlari (config.SUPPORTED_PROVIDERS) kalitlari —
+    rasm provayderlari (bfl/stability) bu yerga kirmaydi, chunki ular matn
+    so'rovlarida ishlatilmaydi."""
+    return {p: pool for p, pool in get_pools(user_id).items() if p in config.SUPPORTED_PROVIDERS}
+
+
+def get_image_pools(user_id: int) -> dict:
+    """Faqat RASM provayderlari (config.IMAGE_PROVIDERS) kalitlari."""
+    return {p: pool for p, pool in get_pools(user_id).items() if p in config.IMAGE_PROVIDERS and pool}
+
+
 def has_any_keys(user_id: int) -> bool:
-    return any(pool for pool in get_pools(user_id).values())
+    """Foydalanuvchida MATN AI uchun shaxsiy kalit bormi (50% qaytarish
+    mantig'i faqat matn kalitlariga bog'liq — rasm kalitlari buni o'zgartirmaydi)."""
+    return any(pool for pool in get_text_pools(user_id).values())
 
 
 def _save_pools(user_id: int, pools: dict, message: str) -> bool:

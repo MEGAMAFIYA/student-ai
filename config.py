@@ -497,6 +497,15 @@ SUPPORTED_PROVIDERS = [
     "cloudflare", "sambanova", "cohere", "huggingface", "nvidia", "vercel",
 ]
 
+# 🎨 RASM yaratish provayderlari (matn AI emas!). Ular /chat/completions API'ga
+# ega EMAS, shuning uchun SUPPORTED_PROVIDERS (matn AI zaxira zanjiri) ichiga
+# QO'SHILMAGAN — aks holda ai_clients.ask_ai() ularga matn so'rovi yuborishga
+# urinardi. Kalit boshqaruvi (/developer, /my) esa ALL_KEY_PROVIDERS bo'yicha
+# ishlaydi: ya'ni kalit qo'shish/almashtirish/o'chirish/tekshirish BIR XIL
+# menyuda, KEY_POOLS va user_ai_keys saqlash mexanizmi orqali.
+IMAGE_PROVIDERS = ["bfl", "stability"]
+ALL_KEY_PROVIDERS = SUPPORTED_PROVIDERS + IMAGE_PROVIDERS
+
 # /developer menyusida tugma va matnlarda ko'rsatiladigan to'liq nom
 # (berilmagan provider uchun oddiy .capitalize() ishlatiladi).
 PROVIDER_LABELS = {
@@ -511,6 +520,8 @@ PROVIDER_LABELS = {
     "huggingface": "Hugging Face",
     "nvidia": "NVIDIA NIM",
     "vercel": "Vercel AI Gateway",
+    "bfl": "Black Forest Labs",
+    "stability": "Stability AI",
 }
 
 # Har bir provider uchun BEPUL API kalit olinadigan rasmiy sahifa —
@@ -527,6 +538,8 @@ PROVIDER_KEY_LINKS = {
     "huggingface": "https://huggingface.co/settings/tokens",
     "nvidia": "https://build.nvidia.com",
     "vercel": "https://vercel.com/docs/ai-gateway",
+    "bfl": "https://api.bfl.ai (Dashboard > API Keys; hujjat: https://docs.bfl.ai/)",
+    "stability": "https://platform.stability.ai/account/keys",
 }
 
 # OpenAI-mos provayderlarning standart /v1 bazaviy manzili. Gemini google SDK
@@ -560,6 +573,8 @@ DEFAULT_MODEL_BY_PROVIDER = {
     "huggingface": "meta-llama/Llama-3.1-8B-Instruct",
     "nvidia": "meta/llama-3.1-8b-instruct",
     "vercel": "openai/gpt-4o-mini",
+    "bfl": "flux-2-pro",        # rasm yaratish (image_clients.py)
+    "stability": "core",        # rasm yaratish (image_clients.py)
 }
 
 MAX_TELEGRAM_TEXT = 3800
@@ -577,7 +592,55 @@ REMINDER_TZ_OFFSET_HOURS = float(os.getenv("REMINDER_TZ_OFFSET_HOURS", "5"))
 # Ro'yxat TARTIBI muhim — 1-kalit, 2-kalit... shu tartibda birin-ketin
 # sinaladi (ai_clients.ask_ai ichida). Bo'sh ro'yxat — pool ishlatilmaydi,
 # o'sha holda AI_FUNCTIONS'dagi eski bitta-kalit rejimi ishlaydi (moslik uchun).
-KEY_POOLS: dict[str, list[dict]] = {p: [] for p in SUPPORTED_PROVIDERS}
+KEY_POOLS: dict[str, list[dict]] = {p: [] for p in ALL_KEY_PROVIDERS}
+
+# ============================================================
+# 🖼 KURS ISHI RASMLARI — ADMINISTRATOR STANDART SOZLAMALARI
+# ============================================================
+# Foydalanuvchi kurs ishi yaratishda rasm sozlamalarini tanlamasa, shu
+# qiymatlar ishlaydi (/developer > 🔑 Kalitlar > 🖼 Kurs ishi rasmlari orqali
+# o'zgartiriladi va KEY_POOLS kabi doimiy saqlanadi).
+#   enabled  — rasmlarni yaratish yoqilganmi
+#   provider — "auto" | "bfl" | "stability"
+#   model    — "" = provayderning standart modeli (DEFAULT_MODEL_BY_PROVIDER)
+#   count    — 1..5 (diagrammalar + AI illyustratsiyalar jami)
+COURSE_IMAGE_COUNT_MIN, COURSE_IMAGE_COUNT_MAX = 1, 5
+COURSE_IMAGE_DEFAULTS: dict = {
+    "enabled": os.getenv("COURSE_IMAGES_ENABLED", "1").strip().lower() not in ("0", "false", "off", "no"),
+    "provider": os.getenv("COURSE_IMAGES_PROVIDER", "auto").strip().lower() or "auto",
+    "model": os.getenv("COURSE_IMAGES_MODEL", "").strip(),
+    "count": 3,
+}
+
+
+def sanitize_course_image_settings(raw: dict | None, base: dict | None = None) -> dict:
+    """Istalgan (foydalanuvchi/admin/saqlangan) sozlamani XAVFSIZ shaklga keltiradi.
+    Noto'g'ri/yo'q maydonlar `base` (yoki admin standarti) dan olinadi."""
+    base = base if base is not None else COURSE_IMAGE_DEFAULTS
+    raw = raw if isinstance(raw, dict) else {}
+    out = {
+        "enabled": bool(base.get("enabled", True)),
+        "provider": str(base.get("provider", "auto")),
+        "model": str(base.get("model", "")),
+        "count": int(base.get("count", 3)),
+    }
+    if "enabled" in raw:
+        out["enabled"] = bool(raw["enabled"])
+    prov = str(raw.get("provider", out["provider"])).strip().lower()
+    out["provider"] = prov if prov in ("auto", *IMAGE_PROVIDERS) else "auto"
+    if "model" in raw:
+        out["model"] = str(raw.get("model") or "").strip()[:64]
+    try:
+        cnt = int(raw.get("count", out["count"]))
+    except (TypeError, ValueError):
+        cnt = out["count"]
+    out["count"] = max(COURSE_IMAGE_COUNT_MIN, min(COURSE_IMAGE_COUNT_MAX, cnt))
+    if out["provider"] == "auto":
+        out["model"] = ""  # "avtomatik" rejimida model har provayderning o'z standarti
+    return out
+
+
+COURSE_IMAGE_DEFAULTS.update(sanitize_course_image_settings(COURSE_IMAGE_DEFAULTS, {"enabled": True, "provider": "auto", "model": "", "count": 3}))
 
 # ============================================================
 # RUNTIME AI SOZLAMALARI (/developer orqali o'zgartiriladi, .env EMAS)
@@ -1119,6 +1182,8 @@ def _load_runtime_overrides() -> None:
     if "functions" in data or "key_pools" in data or "music_search_sources" in data:
         functions_data = data.get("functions", {})
         pools_data = data.get("key_pools", {})
+        if isinstance(data.get("course_images"), dict):
+            COURSE_IMAGE_DEFAULTS.update(sanitize_course_image_settings(data["course_images"], COURSE_IMAGE_DEFAULTS))
         music_data = data.get("music_search_sources", {})
         tabrik_data = data.get("tabrik_settings", {})
     else:
@@ -1186,6 +1251,7 @@ def _save_runtime_overrides() -> None:
             for provider, entries in KEY_POOLS.items()
         },
         "music_search_sources": dict(MUSIC_SEARCH_SOURCES),
+        "course_images": dict(COURSE_IMAGE_DEFAULTS),
         "tabrik_settings": {
             "emojis": list(DEFAULT_TABRIK_EMOJIS),
             "emoji_delay": TABRIK_EMOJI_DELAY_SEC,
@@ -1278,6 +1344,15 @@ def bulk_update_pool_models(provider: str, scope: str, model: str) -> list[int]:
         _save_runtime_overrides()
         logger.info(f"[DEVELOPER] {provider} — {scope} kalitlar modeli '{model}' ga o'zgartirildi: {updated}")
     return updated
+
+
+def update_course_image_defaults(**fields) -> dict:
+    """Admin standart rasm sozlamalarini (enabled/provider/model/count) yangilaydi
+    va doimiy saqlaydi. Qaytaradi: yangi (tozalangan) sozlamalar."""
+    COURSE_IMAGE_DEFAULTS.update(sanitize_course_image_settings(fields, COURSE_IMAGE_DEFAULTS))
+    _save_runtime_overrides()
+    logger.info(f"[DEVELOPER] Kurs ishi rasm standartlari yangilandi: {COURSE_IMAGE_DEFAULTS}")
+    return dict(COURSE_IMAGE_DEFAULTS)
 
 
 _load_runtime_overrides()
