@@ -302,7 +302,8 @@ def _normalize_chart(item: dict, section_text: str) -> dict | None:
     }
 
 
-def validate_plan(raw_plan: dict | None, sub_index: dict, sub_texts: dict, count: int, ai_available: bool) -> list[FigureSpec]:
+def validate_plan(raw_plan: dict | None, sub_index: dict, sub_texts: dict, count: int, ai_available: bool,
+                  ai_only: bool = False) -> list[FigureSpec]:
     """AI rejasini xavfsiz FigureSpec ro'yxatiga aylantiradi.
     sub_index: {"1.2": (bob_i, sub_j)}, sub_texts: {"1.2": to'liq matn}."""
     specs: list[FigureSpec] = []
@@ -322,6 +323,8 @@ def validate_plan(raw_plan: dict | None, sub_index: dict, sub_texts: dict, count
         caption = _clean_label(item.get("caption"), 140).rstrip(".")
         if not kind or not caption:
             continue
+        if ai_only and kind != "illustration":
+            continue  # pullik rejim: faqat AI chizgan rasmlar
         # "N-rasm." prefiksini AI qo'shgan bo'lsa olib tashlaymiz — raqamni PDF qo'yadi.
         caption = re.sub(r"^\s*\d+\s*-?\s*rasm[.:]?\s*", "", caption, flags=re.IGNORECASE).strip() or caption
         bob, sub = sub_index[sid]
@@ -358,7 +361,7 @@ _PLANNER_SYSTEM = (
 )
 
 
-def build_planner_prompt(topic: str, subs: list[dict], count: int, ai_available: bool) -> str:
+def build_planner_prompt(topic: str, subs: list[dict], count: int, ai_available: bool, ai_only: bool = False) -> str:
     sections_txt = "\n\n".join(
         f"[{s['id']}] {s['title']}\n{s['text'][:PLANNER_EXCERPT_CHARS]}" for s in subs
     )
@@ -368,6 +371,17 @@ def build_planner_prompt(topic: str, subs: list[dict], count: int, ai_available:
         if ai_available else
         "AI rasm generatori MAVJUD EMAS — 'illustration' turini ishlatmang"
     )
+    if ai_only:
+        return (
+            f"Kurs ishi mavzusi: «{topic}».\n"
+            f"Quyida uning kichik bo'limlari (qisqartirilgan). AYNAN {count} ta AI illyustratsiya rejalashtiring: "
+            "mazmunga HAQIQATAN mos, turli bob/bo'limlarga taqsimlangan, har bir kichik bo'limga bittadan ko'p emas. "
+            "FAQAT \"illustration\" turi ruxsat etiladi: \"prompt\" maydoni INGLIZCHA, sahna/obyektlarni "
+            "tasvirlaydi (matn/raqam/yozuv so'ramaydi); \"caption\" — O'ZBEK tilida qisqa izoh (raqamsiz, "
+            "'rasm' so'zisiz, nuqtasiz).\n"
+            'Javob FAQAT shu JSON:\n{"figures": [{"section": "1.2", "kind": "illustration", "caption": "...", "prompt": "..."}]}\n\n'
+            f"BO'LIMLAR:\n{sections_txt}"
+        )
     return (
         f"Kurs ishi mavzusi: «{topic}».\n"
         f"Quyida uning kichik bo'limlari (qisqartirilgan). Eng ko'pi bilan {count} ta tasvir rejalashtiring: "
@@ -407,14 +421,15 @@ def collect_subsections(sections: dict) -> tuple[list[dict], dict, dict]:
     return subs, index, texts
 
 
-async def plan_figures(topic: str, sections: dict, count: int, ai_available: bool, ask_fn) -> list[FigureSpec]:
+async def plan_figures(topic: str, sections: dict, count: int, ai_available: bool, ask_fn,
+                       ai_only: bool = False) -> list[FigureSpec]:
     """ask_fn(prompt, system, tag) -> str | None (course_work._ask_retry o'rami)."""
     subs, index, texts = collect_subsections(sections)
     if not subs:
         return []
-    raw = await ask_fn(build_planner_prompt(topic, subs, count, ai_available), _PLANNER_SYSTEM, "RASM-REJA")
+    raw = await ask_fn(build_planner_prompt(topic, subs, count, ai_available, ai_only), _PLANNER_SYSTEM, "RASM-REJA")
     plan = _extract_json(raw or "")
-    specs = validate_plan(plan, index, texts, count, ai_available)
+    specs = validate_plan(plan, index, texts, count, ai_available, ai_only)
     logger.info(f"🖼 Rasm rejasi: so'ralgan {count}, tasdiqlangan {len(specs)} ({[s.kind for s in specs]}).")
     return specs
 
@@ -704,8 +719,12 @@ async def _build_figures_impl(topic, sections, settings, user_id, ask_fn, workdi
     count = int(settings.get("count", 3))
     candidates = candidate_keys(settings, user_id)
     ai_available = bool(candidates)
+    ai_only = bool(settings.get("ai_only"))
+    if ai_only and not ai_available:
+        logger.warning("🖼 Pullik rasm so'raldi, lekin AI kalit yo'q — rasm chizilmaydi (pul yechilmaydi).")
+        return []
 
-    specs = await plan_figures(topic, sections, count, ai_available, ask_fn)
+    specs = await plan_figures(topic, sections, count, ai_available, ask_fn, ai_only)
     if not specs:
         logger.info("🖼 Rasm rejasi bo'sh — rasmlarsiz davom etiladi.")
         return []
@@ -746,3 +765,81 @@ async def _build_figures_impl(topic, sections, settings, user_id, ask_fn, workdi
     figures.sort(key=lambda f: (f["bob"], f["sub"]))
     logger.info(f"🖼 Tayyor rasmlar: {len(figures)}/{len(specs)} ({[f['source'] for f in figures]}).")
     return figures
+
+
+# ============================================================
+# 📤 Foydalanuvchi yuklagan suratlarni kurs ishiga joylash
+# ============================================================
+
+async def describe_upload(path: str) -> str:
+    """Yuklangan suratning qisqa o'zbekcha tavsifi (Vision AI). Xato bo'lsa — bo'sh."""
+    try:
+        from ai_clients import ask_gemini_multimodal
+        with open(path, "rb") as f:
+            data = f.read()
+        text, _status, _detail = await ask_gemini_multimodal(
+            config.VISION_AI,
+            "Bu suratda nima tasvirlangan? O'zbek tilida 1 ta qisqa jumlada (12 so'zgacha) yozing.",
+            data, "image/jpeg", label="Kurs ishi surati")
+        return re.sub(r"\s+", " ", text or "").strip()[:160]
+    except Exception as e:
+        logger.warning(f"📤 Surat tavsiflanmadi: {type(e).__name__}: {e}")
+        return ""
+
+
+async def place_uploads(topic: str, sections: dict, uploads: list[dict], ask_fn, workdir: str) -> list[dict]:
+    """uploads: [{"path": jpeg/png fayl, "hint": foydalanuvchi izohi}]. Har bir suratni
+    mazmuniga eng mos kichik bo'limga qo'yadi (AI), AI ishlamasa — teng taqsimlaydi.
+    Qaytaradi: pdf_tools uchun figures ro'yxati. HECH QACHON istisno ko'tarmaydi."""
+    try:
+        subs, index, _texts = collect_subsections(sections)
+        if not uploads or not subs:
+            return []
+        items = []
+        for i, up in enumerate(uploads):
+            safe = os.path.join(workdir, f"up{i + 1}.jpg")
+            with open(up["path"], "rb") as fh:
+                raw_bytes = fh.read()
+            ok = await asyncio.to_thread(_to_pdf_friendly_jpeg, raw_bytes, safe)
+            if not ok:
+                continue
+            desc = (up.get("hint") or "").strip() or await describe_upload(safe)
+            items.append({"path": safe, "desc": desc})
+        if not items:
+            return []
+
+        listing = "\n".join(f"[{s['id']}] {s['title']}" for s in subs)
+        pics = "\n".join(f"{i + 1}. {it['desc'] or '(tavsifsiz surat)'}" for i, it in enumerate(items))
+        prompt = (
+            f"Kurs ishi mavzusi: «{topic}».\nKichik bo'limlar:\n{listing}\n\nYuklangan suratlar:\n{pics}\n\n"
+            "Har bir suratni mazmuniga eng mos kichik bo'limga joylang va o'zbekcha qisqa izoh (raqamsiz, "
+            "nuqtasiz) yozing. FAQAT JSON:\n"
+            '{"placements": [{"image": 1, "section": "1.2", "caption": "..."}]}'
+        )
+        raw = await ask_fn(prompt, _PLANNER_SYSTEM, "SURAT-JOYLASH")
+        plan = _extract_json(raw or "") or {}
+        chosen: dict[int, tuple[str, str]] = {}
+        for pl in plan.get("placements") or []:
+            try:
+                n = int(pl.get("image"))
+                sid = str(pl.get("section", "")).strip().rstrip(".")
+            except (TypeError, ValueError, AttributeError):
+                continue
+            if 1 <= n <= len(items) and sid in index and n not in chosen:
+                chosen[n] = (sid, _clean_label(pl.get("caption"), 140).rstrip("."))
+        ids = list(index)
+        figures = []
+        for n, it in enumerate(items, 1):
+            if n in chosen:
+                sid, cap = chosen[n]
+            else:  # AI joylamagan — teng taqsimlash
+                sid, cap = ids[(n - 1) * len(ids) // max(len(items), 1) % len(ids)], ""
+            cap = cap or it["desc"].rstrip(".") or f"{topic} mavzusiga oid surat"
+            bob, sub = index[sid]
+            figures.append({"path": it["path"], "caption": cap, "bob": bob, "sub": sub,
+                            "kind": "upload", "source": "user", "section": sid})
+        figures.sort(key=lambda f: (f["bob"], f["sub"]))
+        return figures
+    except Exception as e:
+        logger.error(f"📤 Suratlarni joylashda xato: {type(e).__name__}: {e}", exc_info=True)
+        return []

@@ -20,6 +20,7 @@ import asyncio
 import contextvars
 import json
 import logging
+import os
 import re
 
 from telegram import Update, InputFile, InlineKeyboardButton, InlineKeyboardMarkup
@@ -31,6 +32,7 @@ import config
 from ai_clients import ask_ai, ask_ai_with_source
 import user_ai_keys
 import wallet
+import ai_draw
 import course_images
 import image_clients
 import storage
@@ -40,7 +42,7 @@ from handlers import wallet_ui
 
 logger = logging.getLogger(__name__)
 
-CW_PAGES, CW_TOPIC = range(2)
+CW_PAGES, CW_TOPIC, CW_UPLOAD = range(3)
 
 WORDS_PER_PAGE = 380
 MAX_PAGES = 150
@@ -309,19 +311,35 @@ DEFAULT_PLAN = {
 }
 
 
+def _pages_keyboard() -> InlineKeyboardMarkup:
+    rows, row = [], []
+    for n in ai_draw.COURSE_PAGE_OPTIONS:
+        price = ai_draw.course_pages_price(n)
+        row.append(InlineKeyboardButton(f"{n} bet · {ai_draw.fmt_sum(price) if price else 'bepul'}",
+                                        callback_data=f"cwpages:{n}"))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    return InlineKeyboardMarkup(rows)
+
+
 async def entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = update.effective_user
     logger.info(f"📘 'Kurs ishi / loyiha' tugmasi bosildi: user_id={user.id if user else '?'}.")
     try:
         await query.answer()
+        await wallet_ui.release_dangling_reservation(context, reason="course_work_restarted")
         context.user_data.clear()
         context.user_data["flow"] = "course_work"
+        context.user_data["cw_img_count"] = 0      # rasm chizish — standart O'CHIQ
+        context.user_data["cw_uploads"] = []
         await query.edit_message_text(
-            "📘 *Kurs ishi / loyiha*\n\n"
-            "PDF necha betdan iborat bo'lishi kerak? (masalan: 10, 20, 30)\n"
-            "Belgilagan bet sonidan kam bo'lmaydi (ko'proq chiqishi mumkin).",
+            "📘 *Kurs ishi / loyiha*\n\nKurs ishi necha betdan iborat bo'lsin? Tanlang:",
             parse_mode=ParseMode.MARKDOWN,
+            reply_markup=_pages_keyboard(),
         )
     except Exception as e:
         logger.error(f"📘 Kurs ishi menyusini ochishda xato (user_id={user.id if user else '?'}): {type(e).__name__}: {e}", exc_info=True)
@@ -329,138 +347,175 @@ async def entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return CW_PAGES
 
 
-async def receive_pages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    digits = re.sub(r"[^0-9]", "", update.message.text.strip())
-    if not digits or int(digits) <= 0:
-        await update.message.reply_text("❗️ Iltimos, faqat son yuboring. Masalan: 15")
+async def pages_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    try:
+        pages = int(query.data.split(":")[1])
+    except (IndexError, ValueError):
+        pages = 0
+    if pages not in ai_draw.COURSE_PAGE_OPTIONS:
+        await query.answer()
         return CW_PAGES
-
-    pages = int(digits)
-    if pages > MAX_PAGES:
-        await update.message.reply_text(
-            f"❗️ {MAX_PAGES} betdan katta hajm juda uzoq vaqt talab qiladi. "
-            f"Iltimos, {MAX_PAGES} yoki undan kichik son kiriting."
-        )
+    if not ai_draw.feature_enabled(ai_draw.course_feature_id(pages)):
+        await query.answer("🚫 Bu hajm hozircha o'chirilgan.", show_alert=True)
         return CW_PAGES
-
     context.user_data["cw_pages"] = pages
-    await update.message.reply_text(
-        f"✅ {pages} bet.\n\nEndi kurs ishining *mavzusini* yuboring:",
+    await query.answer()
+    await query.edit_message_text(
+        _topic_prompt_text(context),
         parse_mode=ParseMode.MARKDOWN,
-        reply_markup=_img_open_keyboard(update.effective_user.id if update.effective_user else None),
+        reply_markup=_topic_keyboard(context),
     )
     return CW_TOPIC
 
 
 # ============================================================
-# 🖼 Rasm sozlamalari paneli (CW_TOPIC holatida, inline tugmalar orqali).
-# Foydalanuvchi hech narsa tanlamasa — administrator standarti ishlaydi.
+# 🎨 Rasm chizdirish tugmasi (o'chiq → 1 → 2 → 3 → o'chiq) va
+# 📤 surat yuklash. Har bir chizilgan rasm uchun admin belgilagan narx
+# (standart 3000) yechiladi.
 # ============================================================
 
-def _provider_name(p: str) -> str:
-    return "Avtomatik" if p == "auto" else config.PROVIDER_LABELS.get(p, p)
+def _img_count(context) -> int:
+    return int(context.user_data.get("cw_img_count", 0))
 
 
-def _img_open_keyboard(user_id) -> InlineKeyboardMarkup:
-    st = course_images.resolve_settings(user_id)
-    label = f"🖼 Rasmlar: {'YOQILGAN' if st['enabled'] else 'O‘CHIRILGAN'} · {st['count']} ta · {_provider_name(st['provider'])}"
-    return InlineKeyboardMarkup([[InlineKeyboardButton(label, callback_data="cwimg:open")]])
+def _topic_keyboard(context) -> InlineKeyboardMarkup:
+    n = _img_count(context)
+    label = "🎨 Rasm chizdirish: O‘CHIQ" if n == 0 else f"🎨 Rasm chizdirish: {n} ta · {ai_draw.fmt_sum(ai_draw.image_price() * n)}"
+    ups = len(context.user_data.get("cw_uploads") or [])
+    up_label = "📤 Surat yuklash" + (f" ({ups})" if ups else "")
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(label, callback_data="cwimg:cycle")],
+        [InlineKeyboardButton(up_label, callback_data="cwup:open")],
+    ])
 
 
-def _img_panel_text(user_id) -> str:
-    st = course_images.resolve_settings(user_id)
-    avail = course_images.available_providers(user_id)
-    keys_line = ", ".join(
-        f"{config.PROVIDER_LABELS[p]} {'✅' if p in avail else '❌'}" for p in config.IMAGE_PROVIDERS
-    )
-    if st["provider"] == "auto":
-        model = "har provayderning standart modeli"
-    else:
-        model = st["model"] or f"standart ({config.DEFAULT_MODEL_BY_PROVIDER.get(st['provider'], '—')})"
-    _, cost = course_images.estimate_job_cost(st, user_id, st["count"])
-    note = "" if avail else "\n⚠️ AI kalit yo'q: AI illyustratsiyalar o'tkazib yuboriladi, diagrammalar baribir yaratiladi."
-    return (
-        "🖼 Kurs ishi rasmlari\n\n"
-        f"Rasmlar: {'✅ YOQILGAN' if st['enabled'] else '⛔️ O‘CHIRILGAN'}\n"
-        f"Provayder: {_provider_name(st['provider'])}\n"
-        f"Model: {model}\n"
-        f"Rasm soni: {st['count']} (1–5)\n"
-        f"Kalitlar: {keys_line}\n"
-        f"Eng ko'pi bilan xarajat: {cost}{note}\n\n"
-        "Blok-sxema, arxitektura va statistik diagrammalar aniq ma'lumotdan chiziladi; "
-        "AI generator faqat illyustratsiya uchun."
-    )
-
-
-def _img_panel_keyboard(user_id) -> InlineKeyboardMarkup:
-    st = course_images.resolve_settings(user_id)
-    m = lambda c, t: ("✅ " if c else "") + t
-    rows = [
-        [InlineKeyboardButton("⛔️ O'chirish" if st["enabled"] else "✅ Yoqish", callback_data="cwimg:toggle")],
-        [InlineKeyboardButton(m(st["provider"] == "auto", "Avtomatik"), callback_data="cwimg:prov:auto"),
-         InlineKeyboardButton(m(st["provider"] == "bfl", "BFL"), callback_data="cwimg:prov:bfl"),
-         InlineKeyboardButton(m(st["provider"] == "stability", "Stability"), callback_data="cwimg:prov:stability")],
-    ]
-    if st["provider"] != "auto":
-        rows.append([InlineKeyboardButton("🧩 Model tanlash", callback_data="cwimg:models")])
-    rows.append([InlineKeyboardButton(m(st["count"] == n, str(n)), callback_data=f"cwimg:count:{n}") for n in range(1, 6)])
-    rows.append([InlineKeyboardButton("↩️ Admin standartiga qaytarish", callback_data="cwimg:reset")])
-    rows.append([InlineKeyboardButton("✔️ Tayyor", callback_data="cwimg:done")])
-    return InlineKeyboardMarkup(rows)
+def _topic_prompt_text(context) -> str:
+    pages = context.user_data.get("cw_pages", 20)
+    n = _img_count(context)
+    total = ai_draw.course_total(pages, n)
+    lines = [f"✅ {pages} bet.", f"💰 Jami narx: {ai_draw.fmt_sum(total)}" if total else "💰 Bepul"]
+    if n:
+        lines.append(f"🎨 {n} ta rasm chiziladi (har biri {ai_draw.fmt_sum(ai_draw.image_price())}).")
+    lines.append("\nEndi kurs ishining *mavzusini* yuboring:")
+    return "\n".join(lines)
 
 
 async def img_settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    user_id = update.effective_user.id
-    parts = query.data.split(":")
-    action = parts[1] if len(parts) > 1 else "open"
-    st = course_images.resolve_settings(user_id)
+    choices = ai_draw.COURSE_IMAGE_CHOICES
+    cur = _img_count(context)
+    context.user_data["cw_img_count"] = choices[(choices.index(cur) + 1) % len(choices)] if cur in choices else 0
+    await query.answer()
     try:
-        if action == "toggle":
-            storage.set_course_image_prefs(user_id, enabled=not st["enabled"])
-        elif action == "prov" and len(parts) > 2 and parts[2] in ("auto", *config.IMAGE_PROVIDERS):
-            storage.set_course_image_prefs(user_id, provider=parts[2], model=None)  # model provayderga bog'liq
-        elif action == "count" and len(parts) > 2 and parts[2].isdigit():
-            storage.set_course_image_prefs(user_id, count=max(1, min(5, int(parts[2]))))
-        elif action == "reset":
-            storage.set_course_image_prefs(user_id, enabled=None, provider=None, model=None, count=None)
-        elif action == "model" and len(parts) > 2 and parts[2].isdigit() and st["provider"] != "auto":
-            models = image_clients.models_for(st["provider"])
-            i = int(parts[2])
-            if 0 <= i < len(models):
-                storage.set_course_image_prefs(user_id, model=models[i]["id"])
-        elif action == "models" and st["provider"] != "auto":
-            rows = []
-            for i, mdl in enumerate(image_clients.models_for(st["provider"])):
-                price = f" · ~{mdl['credits']:g} kr" if mdl.get("credits") is not None else ""
-                rows.append([InlineKeyboardButton(mdl["label"] + price, callback_data=f"cwimg:model:{i}")])
-            rows.append([InlineKeyboardButton("⬅️ Orqaga", callback_data="cwimg:open")])
-            await query.answer()
-            await query.edit_message_text("🧩 Modelni tanlang:", reply_markup=InlineKeyboardMarkup(rows))
-            return CW_TOPIC
-        elif action == "done":
-            await query.answer("Saqlandi")
-            await query.edit_message_text(
-                "✅ Sozlamalar saqlandi.\n\nEndi kurs ishining mavzusini yuboring:",
-                reply_markup=_img_open_keyboard(user_id),
-            )
-            return CW_TOPIC
-        await query.answer()
-        await query.edit_message_text(_img_panel_text(user_id), reply_markup=_img_panel_keyboard(user_id))
+        await query.edit_message_text(_topic_prompt_text(context), parse_mode=ParseMode.MARKDOWN,
+                                      reply_markup=_topic_keyboard(context))
     except Exception as e:
-        logger.warning(f"🖼 Rasm sozlamalari panelida xato: {type(e).__name__}: {e}")
-        try:
-            await query.answer()
-        except Exception:
-            pass
+        logger.warning(f"🎨 Rasm tugmasini yangilashda xato: {type(e).__name__}: {e}")
+    return CW_TOPIC
+
+
+def _upload_keyboard(count: int) -> InlineKeyboardMarkup:
+    rows = []
+    if count:
+        rows.append([InlineKeyboardButton(f"✅ Tasdiqlash ({count} ta surat)", callback_data="cwup:confirm")])
+    rows.append([InlineKeyboardButton("↩️ Bekor qilish", callback_data="cwup:cancel")])
+    return InlineKeyboardMarkup(rows)
+
+
+MAX_UPLOADS = 10
+
+
+async def upload_open(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    context.user_data["cw_pending_uploads"] = []
+    await query.edit_message_text(
+        "📤 Kurs ishi uchun suratlarni yuboring (bir nechta yuborish mumkin).\n"
+        "Surat tagiga izoh yozsangiz, u kurs ishidagi rasm izohi bo'ladi.\n"
+        "Tugagach «✅ Tasdiqlash» tugmasini bosing.",
+        reply_markup=_upload_keyboard(0),
+    )
+    return CW_UPLOAD
+
+
+async def upload_receive(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    pending = context.user_data.setdefault("cw_pending_uploads", [])
+    if len(pending) >= MAX_UPLOADS:
+        await msg.reply_text(f"❗️ Eng ko'pi bilan {MAX_UPLOADS} ta surat qabul qilinadi. «✅ Tasdiqlash»ni bosing.",
+                             reply_markup=_upload_keyboard(len(pending)))
+        return CW_UPLOAD
+    file_obj = None
+    if msg.photo:
+        file_obj = msg.photo[-1]
+    elif msg.document and (msg.document.mime_type or "").startswith("image/"):
+        file_obj = msg.document
+    if not file_obj:
+        await msg.reply_text("❗️ Iltimos, surat yuboring.", reply_markup=_upload_keyboard(len(pending)))
+        return CW_UPLOAD
+    try:
+        tg_file = await file_obj.get_file()
+        data = bytes(await tg_file.download_as_bytearray())
+    except Exception as e:
+        logger.warning(f"📤 Suratni yuklab olishda xato: {type(e).__name__}: {e}")
+        await msg.reply_text("❌ Suratni qabul qilib bo'lmadi, qayta yuboring.", reply_markup=_upload_keyboard(len(pending)))
+        return CW_UPLOAD
+    if len(data) > 15 * 1024 * 1024:
+        await msg.reply_text("❗️ Surat juda katta (15 MB dan oshmasin).", reply_markup=_upload_keyboard(len(pending)))
+        return CW_UPLOAD
+    pending.append({"data": data, "hint": (msg.caption or "").strip()[:140]})
+    await msg.reply_text(f"✅ {len(pending)}-surat qabul qilindi. Yana yuborishingiz yoki tasdiqlashingiz mumkin.",
+                         reply_markup=_upload_keyboard(len(pending)))
+    return CW_UPLOAD
+
+
+async def upload_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    action = query.data.split(":")[1] if ":" in query.data else ""
+    pending = context.user_data.pop("cw_pending_uploads", []) or []
+    if action == "confirm" and pending:
+        context.user_data.setdefault("cw_uploads", []).extend(pending)
+        context.user_data["cw_uploads"] = context.user_data["cw_uploads"][:MAX_UPLOADS]
+        await query.answer(f"✅ {len(pending)} ta surat saqlandi")
+    else:
+        await query.answer("Bekor qilindi")
+    await query.edit_message_text(_topic_prompt_text(context), parse_mode=ParseMode.MARKDOWN,
+                                  reply_markup=_topic_keyboard(context))
     return CW_TOPIC
 
 
 async def receive_topic_and_generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     topic = clean_topic(update.message.text.strip())
-    pages = context.user_data.get("cw_pages", 10)
+    pages = context.user_data.get("cw_pages")
     user = update.effective_user
-    logger.info(f"📘 Kurs ishi so'rovi: user_id={user.id if user else '?'}, mavzu='{topic}', bet={pages}.")
+    if pages not in ai_draw.COURSE_PAGE_OPTIONS:
+        await update.message.reply_text("❗️ Avval kurs ishi hajmini tanlang: /start → 📘 Kurs ishi.")
+        context.user_data.clear()
+        return ConversationHandler.END
+    n_img = _img_count(context)
+    logger.info(f"📘 Kurs ishi so'rovi: user_id={user.id if user else '?'}, mavzu='{topic}', bet={pages}, rasm={n_img}.")
+
+    # 💰 Pul AVVAL band qilinadi (kurs ishi narxi + har bir rasm uchun alohida),
+    # xizmat muvaffaqiyatli tugagandan KEYIN yechiladi.
+    total = ai_draw.course_total(pages, n_img)
+    hold = ai_draw.reserve(user.id, ai_draw.course_feature_id(pages), total)
+    if hold.status == "disabled":
+        await update.message.reply_text("🚫 Bu funksiya hozircha o'chirilgan.")
+        return CW_TOPIC
+    if hold.status == "insufficient":
+        await update.message.reply_text(
+            ai_draw.insufficient_text(hold) + "\n\nYoki rasm sonini kamaytirib, mavzuni qayta yuboring.",
+            reply_markup=wallet_ui.insufficient_balance_keyboard(),
+        )
+        return CW_TOPIC
+    if hold.status == "reserved":
+        context.user_data[wallet_ui._RESERVATION_KEY] = {
+            "reservation_id": hold.reservation_id,
+            "feature_id": ai_draw.course_feature_id(pages),
+            "price": total,
+            "text_price": ai_draw.course_pages_price(pages),
+        }
 
     await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
     status = await update.message.reply_text(
@@ -470,12 +525,13 @@ async def receive_topic_and_generate(update: Update, context: ContextTypes.DEFAU
         parse_mode=ParseMode.MARKDOWN,
     )
 
-    await _generate_and_send(update, context, topic, pages, status)
+    uploads = list(context.user_data.get("cw_uploads") or [])
+    await _generate_and_send(update, context, topic, pages, status, n_images=n_img, uploads=uploads)
     context.user_data.clear()
     return ConversationHandler.END
 
 
-async def _generate_and_send(update, context, topic: str, pages: int, status):
+async def _generate_and_send(update, context, topic: str, pages: int, status, n_images: int = 0, uploads: list | None = None):
     user = update.effective_user
     user_id = user.id if user else None
     # 🔑 Shaxsiy AI kalitlari FAQAT bu (pullik, wallet_ui.require_payment
@@ -483,10 +539,13 @@ async def _generate_and_send(update, context, topic: str, pages: int, status):
     # chaqiruvlar bunga aloqasi yo'q (source_tracker=None qoladi).
     source_tracker = {"used_user_key": False, "used_bot_key": False, "last_user_key_failure": ""} if user_id else None
 
+    image_opts = dict(course_images.resolve_settings(user_id))
+    image_opts.update(enabled=n_images > 0, count=max(1, n_images), ai_only=True)
+
     try:
         result = await asyncio.wait_for(
             generate_course_work(topic, pages, status, user_id=user_id, source_tracker=source_tracker,
-                                 image_opts=course_images.resolve_settings(user_id)),
+                                 image_opts=image_opts, uploads=uploads or None),
             timeout=OVERALL_TIMEOUT_SEC,
         )
     except asyncio.TimeoutError:
@@ -503,9 +562,7 @@ async def _generate_and_send(update, context, topic: str, pages: int, status):
             "yoki ba'zi bo'limlarni bir necha urinishdan keyin ham to'liq yoza olmadi. "
             "Birozdan so'ng qayta urinib ko'ring."
         )
-        # 💰 Xizmat MUVAFFAQIYATSIZ bo'ldi — band qilingan pul ozod qilinadi
-        # (hech qachon yechilmagani uchun "qaytarish" shart emas, faqat
-        # bandlik bekor qilinadi) va foydalanuvchiga alohida xabar boradi.
+        # 💰 Xizmat MUVAFFAQIYATSIZ bo'ldi — band qilingan pul ozod qilinadi.
         await wallet_ui.finalize_failure(context, update=update, reason="course_work_generation_failed")
         return
 
@@ -518,20 +575,29 @@ async def _generate_and_send(update, context, topic: str, pages: int, status):
     # reservation narx qadar band qilingan edi; farq shu — foydalanuvchi
     # kaliti ishlagan bo'lsa YARMI DARHOL qaytariladi).
     extra_note = ""
+    reservation = wallet_ui.get_active_reservation(context)
+    # 🎨 So'ralgan rasmlarning hammasi chizilmagan bo'lsa — chizilmaganlari uchun pul olinmaydi.
+    if reservation and n_images:
+        missing = max(0, n_images - int(sections.get("ai_figure_count", 0)))
+        if missing:
+            back = min(reservation["price"], missing * ai_draw.image_price())
+            if back > 0:
+                wallet.refund(user_id, back, description=f"Chizilmagan {missing} ta rasm uchun qaytarildi: {topic[:60]}")
+                reservation["price"] -= back
+                extra_note = f"🎨 {n_images - missing}/{n_images} ta rasm chizildi, {missing} ta uchun {ai_draw.fmt_sum(back)} qaytarildi."
     if source_tracker and source_tracker["used_user_key"] and not source_tracker["used_bot_key"]:
-        reservation = wallet_ui.get_active_reservation(context)
-        price = reservation["price"] if reservation else 0
+        price = (reservation or {}).get("text_price", (reservation or {}).get("price", 0))
         if price > 0:
             refund_amount = price // 2
             wallet.refund(
                 user_id, refund_amount,
                 description=f"Shaxsiy AI kaliti ishlatilgani uchun 50% qaytarildi: {topic[:60]}",
             )
-            extra_note = f"🔑 Siz yuklagan AI kalitingiz ishladi! Hisobingizga {refund_amount:,} so'm qaytarildi.".replace(",", " ")
+            extra_note = (extra_note + "\n" if extra_note else "") + f"🔑 Siz yuklagan AI kalitingiz ishladi! Hisobingizga {refund_amount:,} so'm qaytarildi.".replace(",", " ")
             logger.info(f"🔑 Shaxsiy kalit muvaffaqiyati: user_id={user_id}, {refund_amount} so'm qaytarildi.")
     elif source_tracker and source_tracker["used_bot_key"] and user_ai_keys.has_any_keys(user_id):
         reason = source_tracker["last_user_key_failure"] or "noma'lum sabab"
-        extra_note = f"⚠️ Siz yuklagan AI kalit ishlamagani sababli ({reason}) bot kaliti ishlatildi. 50% pul qaytarilmaydi."
+        extra_note = (extra_note + "\n" if extra_note else "") + f"⚠️ Siz yuklagan AI kalit ishlamagani sababli ({reason}) bot kaliti ishlatildi. 50% pul qaytarilmaydi."
         logger.info(f"🔑 Shaxsiy kalit ishlamadi: user_id={user_id}, sabab='{reason}' — bot kaliti ishlatildi.")
 
     await update.message.reply_document(
@@ -540,7 +606,7 @@ async def _generate_and_send(update, context, topic: str, pages: int, status):
             f"📄 {topic}\n"
             f"📎 {actual_pages} bet (so'ralgan: {pages}+)\n"
             "✅ Titul, mundarija, kirish, 3 bob, xulosa va adabiyotlar ro'yxati bilan."
-            + (f"\n🖼 {sections['figure_count']} ta rasm/diagramma qo'shildi." if sections.get("figure_count") else "")
+            + (f"\n🖼 {sections['figure_count']} ta rasm qo'shildi." if sections.get("figure_count") else "")
         ),
         reply_markup=main_menu_keyboard(),
     )
@@ -601,7 +667,7 @@ async def _ask_retry(prompt: str, system: str, attempts: int = RETRY_ATTEMPTS, d
 
 
 async def generate_course_work(topic: str, pages: int, status_msg=None, user_id: int | None = None, source_tracker: dict | None = None,
-                               image_opts: dict | None = None):
+                               image_opts: dict | None = None, uploads: list | None = None):
     """
     Kurs ishini tuzilgan holda generatsiya qiladi, NAZORATCHI orqali har bir
     bo'limning to'liqligini tekshirib, bo'sh qolgan qismlarni qayta yozdiradi,
@@ -628,7 +694,7 @@ async def generate_course_work(topic: str, pages: int, status_msg=None, user_id:
     token_u = _current_user_id.set(user_id)
     token_t = _current_source_tracker.set(source_tracker)
     try:
-        return await _generate_course_work_impl(topic, pages, status_msg, image_opts)
+        return await _generate_course_work_impl(topic, pages, status_msg, image_opts, uploads)
     finally:
         _current_user_id.reset(token_u)
         _current_source_tracker.reset(token_t)
@@ -644,6 +710,7 @@ async def _build_pdf_safe(topic: str, sections: dict):
         logger.error(f"[PDF] Rasmlar bilan qurishda xato ({type(e).__name__}: {e}) — rasmsiz qayta quriladi.", exc_info=True)
         sections["figures"] = []
         sections["figure_count"] = 0
+        sections["ai_figure_count"] = 0
         pdf_buf = await asyncio.to_thread(build_course_work_pdf, topic, sections)
     actual_pages = await asyncio.to_thread(count_pdf_pages, pdf_buf)
     return pdf_buf, actual_pages
@@ -653,7 +720,8 @@ async def _ask_for_images(prompt: str, system: str, tag: str):
     return await _ask_retry(prompt, system, attempts=2, raw=True, tag=tag)
 
 
-async def _generate_course_work_impl(topic: str, pages: int, status_msg=None, image_opts: dict | None = None):
+async def _generate_course_work_impl(topic: str, pages: int, status_msg=None, image_opts: dict | None = None,
+                                     uploads: list | None = None):
     target_words = int(pages * WORDS_PER_PAGE * SAFETY_MARGIN)
     logger.info(f"===== [KURS ISHI BOSHLANDI] mavzu='{topic}', bet={pages}, maqsad so'z={target_words} =====")
 
@@ -765,16 +833,38 @@ async def _generate_course_work_impl(topic: str, pages: int, status_msg=None, im
     # ===== 🖼 MAVZUGA MOS RASMLAR (ixtiyoriy; xato bo'lsa rasmsiz davom etadi) =====
     workdir = None
     sections["figures"] = []
-    if image_opts and image_opts.get("enabled"):
+    ai_made = 0
+    want_ai = bool(image_opts and image_opts.get("enabled"))
+    if want_ai or uploads:
         try:
             workdir = course_images.make_workdir()
-            await _status(f"⏳ *{topic}* — rasm/diagrammalar rejalashtirilmoqda...")
+        except Exception as e:
+            logger.error(f"[RASM] Ish papkasi yaratilmadi: {e}")
+            workdir = None
+    if workdir and want_ai:
+        try:
+            await _status(f"⏳ *{topic}* — rasmlar rejalashtirilmoqda...")
             sections["figures"] = await course_images.build_figures(
                 topic, sections, image_opts, _current_user_id.get(), _ask_for_images, workdir, _status
             )
         except Exception as e:
             logger.error(f"[RASM] Rasm bosqichi xato bilan tugadi: {type(e).__name__}: {e}", exc_info=True)
             sections["figures"] = []
+    ai_made = sum(1 for f in sections["figures"] if str(f.get("source", "")).startswith("ai:"))
+    sections["ai_figure_count"] = ai_made
+    if workdir and uploads:
+        try:
+            await _status(f"⏳ *{topic}* — yuklangan suratlar mos joylarga qo'yilmoqda...")
+            raw_files = []
+            for i, up in enumerate(uploads):
+                path = os.path.join(workdir, f"raw{i + 1}.bin")
+                with open(path, "wb") as fh:
+                    fh.write(up["data"])
+                raw_files.append({"path": path, "hint": up.get("hint", "")})
+            placed = await course_images.place_uploads(topic, sections, raw_files, _ask_for_images, workdir)
+            sections["figures"] = sorted(sections["figures"] + placed, key=lambda f: (f["bob"], f["sub"]))
+        except Exception as e:
+            logger.error(f"[SURAT] Yuklangan suratlarni joylashda xato: {type(e).__name__}: {e}", exc_info=True)
     sections["figure_count"] = len(sections["figures"])
 
     try:

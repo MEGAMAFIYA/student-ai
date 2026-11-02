@@ -28,7 +28,7 @@ from config import UNIVERSAL_CHAT_AI, TRANSLATE_AI
 from ai_clients import ask_ai
 from pdf_tools import build_course_work_pdf, count_pdf_pages
 from handlers.menu import main_menu_keyboard, MENU_CALLBACKS
-from handlers import course_work, mention_dispatch
+from handlers import course_work, mention_dispatch, ai_image
 from handlers.tabrik import tabrik_cmd
 from handlers.rasim import rasim_cmd
 from handlers.vid import vid_cmd
@@ -224,6 +224,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if intent == "course_work":
         await _try_course_work(update, context, user_text)
+        return
+
+    if intent == "chat" and ai_image.is_image_request(user_text):
+        await ai_image.ask_confirmation(update, context, user_text)
         return
 
     if intent == "translate":

@@ -158,7 +158,13 @@ class ReservationError(WalletError):
 # doimiy saqlanadi, bu yerdagi qiymatlar faqat BOSHLANG'ICH standart).
 # ------------------------------------------------------------------
 _DEFAULT_FEATURES = {
-    "course_work": {"name": "📘 Kurs ishi", "price": 10000, "enabled": True, "description": "Kurs ishi/loyiha generatsiyasi"},
+    # 📘 Kurs ishi narxi bet soniga qarab (20/30/40/50) — har biri alohida.
+    "course_work_20": {"name": "📘 Kurs ishi — 20 bet", "price": 10000, "enabled": True, "description": "Kurs ishi/loyiha, 20 bet"},
+    "course_work_30": {"name": "📘 Kurs ishi — 30 bet", "price": 15000, "enabled": True, "description": "Kurs ishi/loyiha, 30 bet"},
+    "course_work_40": {"name": "📘 Kurs ishi — 40 bet", "price": 20000, "enabled": True, "description": "Kurs ishi/loyiha, 40 bet"},
+    "course_work_50": {"name": "📘 Kurs ishi — 50 bet", "price": 25000, "enabled": True, "description": "Kurs ishi/loyiha, 50 bet"},
+    # 🎨 AI rasm chizdirish — BITTA rasm narxi (kurs ishi, universal chat, inline).
+    "ai_image": {"name": "🎨 Rasm chizdirish (1 ta)", "price": 3000, "enabled": True, "description": "AI bilan 1 ta rasm chizish"},
     "essay": {"name": "🗒 Referat/Insho", "price": 5000, "enabled": True, "description": "Referat/Insho generatsiyasi"},
     "translate": {"name": "🌐 Tarjima", "price": 0, "enabled": True, "description": "Matn/hujjat tarjimasi"},
     "pptx": {"name": "📊 Taqdimot (PPTX)", "price": 7000, "enabled": True, "description": "PowerPoint taqdimot generatsiyasi"},
@@ -225,6 +231,12 @@ def _load() -> dict:
     # Yangi qo'shilgan standart feature'lar (kod yangilanganda) mavjud
     # ma'lumotlarga zarar YETKAZMASDAN qo'shiladi — admin oldin o'zgartirgan
     # narxlarga TEGILMAYDI.
+    # Eski yagona "course_work" narxi bet bo'yicha narxlarga almashtirildi:
+    # admin avval qo'ygan narx 20 betlik narx sifatida saqlanib qoladi.
+    legacy = data["features"].pop("course_work", None)
+    if legacy and "course_work_20" not in data["features"]:
+        data["features"]["course_work_20"] = dict(_DEFAULT_FEATURES["course_work_20"], price=int(legacy.get("price", 10000)),
+                                                  enabled=bool(legacy.get("enabled", True)))
     for fid, fdef in _DEFAULT_FEATURES.items():
         data["features"].setdefault(fid, dict(fdef))
     logger.info(f"{source} dan wallet (balans/to'lov) ma'lumotlari yuklandi.")

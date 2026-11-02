@@ -33,6 +33,7 @@ def _safe_ext(filename: str, media_type: str) -> str:
     allowed = {
         ".mp4", ".mkv", ".webm", ".mov", ".avi", ".m4v",
         ".mp3", ".m4a", ".aac", ".ogg", ".wav", ".opus",
+        ".jpg", ".jpeg", ".png", ".webp",
     }
     if ext in allowed:
         return ext
@@ -40,6 +41,8 @@ def _safe_ext(filename: str, media_type: str) -> str:
         return ".mp4"
     if media_type == "audio":
         return ".mp3"
+    if media_type == "photo":
+        return ".jpg"
     return ".bin"
 
 
@@ -98,7 +101,7 @@ def resolve_path(token_with_ext: str) -> tuple[str, str] | None:
     name = os.path.basename(token_with_ext)
     if name != token_with_ext:
         return None
-    if not name.endswith((".mp4", ".mkv", ".webm", ".mov", ".avi", ".m4v", ".mp3", ".m4a", ".aac", ".ogg", ".wav", ".opus")):
+    if not name.endswith((".mp4", ".mkv", ".webm", ".mov", ".avi", ".m4v", ".mp3", ".m4a", ".aac", ".ogg", ".wav", ".opus", ".jpg", ".jpeg", ".png", ".webp")):
         return None
     with _lock:
         created = _registry.get(name)

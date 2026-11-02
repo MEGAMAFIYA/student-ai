@@ -52,7 +52,7 @@ import game
 import chat_games
 import drawing_game
 from handlers import (
-    menu, universal_chat, course_work, translate as translate_handler, images_to_pdf,
+    menu, universal_chat, course_work, ai_image, translate as translate_handler, images_to_pdf,
     edit_pdf, guide, inline_query, developer, pptx_gen, essay, quiz, solve, summarize, managed_tests,
     grammar, citation, my_files, reminders, voice, wallet_ui, tabrik, rasim,
     vid, qoshiq, kino, mention_dispatch, pro_tabrik, my_cabinet, payment_notify, payment_auto,
@@ -297,6 +297,25 @@ async def _error_handler(update, context):
 
 _PLACEHOLDER_PDF_BYTES: bytes = b""
 _PLACEHOLDER_PDF_PATH = "/placeholder.pdf"
+# 🎨 Inline "rasm ..." uchun vaqtinchalik rasm (InlineQueryResultPhoto URL talab qiladi).
+_PLACEHOLDER_IMG_BYTES: bytes = b""
+_PLACEHOLDER_IMG_PATH = "/placeholder.png"
+
+
+def _build_placeholder_png() -> bytes:
+    try:
+        import io as _io
+        from PIL import Image, ImageDraw
+        img = Image.new("RGB", (512, 512), (42, 111, 176))
+        d = ImageDraw.Draw(img)
+        d.ellipse((176, 176, 336, 336), outline=(255, 255, 255), width=10)
+        d.polygon([(226, 216), (226, 296), (296, 256)], fill=(255, 255, 255))
+        buf = _io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+    except Exception as e:
+        logger.error(f"Placeholder rasm yaratishda xato: {e}")
+        return b""
 
 # ============================================================
 # 💎 Inline "/pro" boshlang'ich audio xabari uchun (pro_tabrik_business.py)
@@ -889,6 +908,15 @@ class HealthHandler(BaseHTTPRequestHandler):
             self.wfile.write(_PRO_AUDIO_BYTES)
             return
 
+        if self.path == _PLACEHOLDER_IMG_PATH and _PLACEHOLDER_IMG_BYTES:
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(_PLACEHOLDER_IMG_BYTES)))
+            self.send_header("Cache-Control", "public, max-age=86400")
+            self.end_headers()
+            self.wfile.write(_PLACEHOLDER_IMG_BYTES)
+            return
+
         if self.path.startswith(inline_media.URL_PREFIX):
             self._serve_inline_media()
             return
@@ -1105,8 +1133,9 @@ async def _chat_game_callback(update, context):
 
 
 def start_health_server():
-    global _PLACEHOLDER_PDF_BYTES, _MUSIC_ICON_PNG_BYTES, _PRO_AUDIO_BYTES
+    global _PLACEHOLDER_PDF_BYTES, _MUSIC_ICON_PNG_BYTES, _PRO_AUDIO_BYTES, _PLACEHOLDER_IMG_BYTES
     _PLACEHOLDER_PDF_BYTES = _build_placeholder_pdf()
+    _PLACEHOLDER_IMG_BYTES = _build_placeholder_png()
     _MUSIC_ICON_PNG_BYTES = _build_music_icon_png()
     _PRO_AUDIO_BYTES = _load_pro_audio_bytes()
     try:
@@ -1145,12 +1174,19 @@ def build_kino_conv():
 
 def build_course_work_conv():
     return ConversationHandler(
-        entry_points=[CallbackQueryHandler(wallet_ui.require_payment("course_work")(course_work.entry), pattern="^menu:course_work$")],
+        # 💰 To'lov bu yerda emas — bet soni va rasm soni tanlangach, mavzu
+        # yuborilganda (course_work.receive_topic_and_generate) band qilinadi.
+        entry_points=[CallbackQueryHandler(course_work.entry, pattern="^menu:course_work$")],
         states={
-            course_work.CW_PAGES: [MessageHandler(filters.TEXT & ~filters.COMMAND, course_work.receive_pages)],
+            course_work.CW_PAGES: [CallbackQueryHandler(course_work.pages_chosen, pattern="^cwpages:")],
             course_work.CW_TOPIC: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, course_work.receive_topic_and_generate),
                 CallbackQueryHandler(course_work.img_settings_callback, pattern="^cwimg:"),
+                CallbackQueryHandler(course_work.upload_open, pattern="^cwup:open$"),
+            ],
+            course_work.CW_UPLOAD: [
+                MessageHandler(filters.PHOTO | filters.Document.IMAGE, course_work.upload_receive),
+                CallbackQueryHandler(course_work.upload_done, pattern="^cwup:(confirm|cancel)$"),
             ],
         },
         fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
@@ -1599,6 +1635,9 @@ def main():
 
     # 🎙 Ovozli xabar — istalgan paytda (hech qanday menyu tanlanmagan bo'lsa ham)
     app.add_handler(MessageHandler(filters.VOICE, voice.handle_voice))
+
+    # 🎨 Universal chatdagi rasm chizdirish tasdig'i (✅ Ha / ❌ Yo'q)
+    app.add_handler(CallbackQueryHandler(ai_image.confirm_callback, pattern="^aiimg:"))
 
     # UNIVERSAL CHAT — hech qanday conversation faol bo'lmaganda ishlaydi
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, universal_chat.handle_message))

@@ -100,6 +100,7 @@ from telegram import (
     InlineQueryResultArticle,
     InlineQueryResultAudio,
     InlineQueryResultDocument,
+    InlineQueryResultPhoto,
     InlineQueryResultsButton,
     WebAppInfo,
     InputTextMessageContent,
@@ -116,6 +117,7 @@ from telegram.constants import ParseMode
 from telegram.error import BadRequest
 from telegram.helpers import escape_markdown
 
+import ai_draw
 import config
 from config import UNIVERSAL_CHAT_AI, PUBLIC_BASE_URL
 from ai_clients import ask_ai
@@ -257,6 +259,8 @@ GAME_RE = re.compile(r"^game$", re.IGNORECASE)
 # harakat (bo'sh inline so'rovning boshqa mazmunli natijasi yo'q — AI
 # chatga bo'sh matn yuborish foydasiz), shuning uchun buni ham "rasm
 # chizish" tugmasiga yo'naltiramiz. Aniq "/rasim" ham bir xil ishlaydi.
+# 🎨 "@Bot rasm <tavsif>" — AI rasm chizdirish (pullik, har bir rasm uchun admin narxi).
+IMAGE_INLINE_RE = re.compile(r"^(?:rasm|rasim|surat)\s*[:\-]?\s*(.*)$", re.IGNORECASE | re.DOTALL)
 RASIM_RE = re.compile(r"^$|^/rasim(?:@\w+)?\s*$", re.IGNORECASE)
 
 # 💎 /pro — /tabrik'ning shaxsiy-rasmli versiyasi (qarang: handlers/pro_tabrik.py)
@@ -715,6 +719,39 @@ async def on_inline_query(
         return
 
     # --------------------------------------------------------
+    # 🎨 AI RASM CHIZDIRISH: "rasm quyosh botayotgan dengiz"
+    # --------------------------------------------------------
+    m_img = IMAGE_INLINE_RE.match(query)
+    if m_img:
+        desc = m_img.group(1).strip()
+        price = ai_draw.image_price()
+        if len(desc) < 3:
+            await _answer_instruction(
+                update, "🎨 Rasm chizdirish — tasvirni yozing",
+                f"Masalan: rasm quyosh botayotgan dengiz • narxi: {ai_draw.fmt_sum(price)}",
+                query=query,
+            )
+            return
+        if not PUBLIC_BASE_URL:
+            await _answer_redirect(update, query, "PUBLIC_BASE_URL sozlanmagan")
+            return
+        result_id = str(uuid.uuid4())
+        cache[result_id] = {"type": "ai_image", "desc": desc[:500]}
+        await update.inline_query.answer(
+            [InlineQueryResultPhoto(
+                id=result_id,
+                photo_url=f"{PUBLIC_BASE_URL}/placeholder.png",
+                thumbnail_url=f"{PUBLIC_BASE_URL}/placeholder.png",
+                title=f"🎨 Rasm chizish — {ai_draw.fmt_sum(price)}" if price else "🎨 Rasm chizish",
+                description=desc[:120],
+                caption=f"⏳ Rasm chizilmoqda: {desc[:150]}",
+                reply_markup=INLINE_MESSAGE_MARKUP,
+            )],
+            cache_time=0, is_personal=True,
+        )
+        return
+
+    # --------------------------------------------------------
     # OG'IR: kurs ishi
     # --------------------------------------------------------
 
@@ -1014,6 +1051,10 @@ async def on_chosen_inline_result(
     # --------------------------------------------------------
     # 🎬 /vid
     # --------------------------------------------------------
+
+    if entry and entry.get("type") == "ai_image":
+        await _handle_ai_image(context, inline_message_id, entry.get("desc", ""), user)
+        return
 
     if entry and entry.get("type") == "vid":
         await _handle_vid(context, inline_message_id, entry["url"], user)
@@ -1335,6 +1376,66 @@ class _InlineCaptionStatus:
                 "Inline caption tahrirlashda xato "
                 f"(e'tiborsiz qoldirildi): {e}"
             )
+
+
+async def _handle_ai_image(context: ContextTypes.DEFAULT_TYPE, inline_message_id: str, desc: str, user=None):
+    """🎨 Inline AI rasm: pul band qilinadi → rasm chiziladi → xabar rasm bilan
+    almashtiriladi → pul yechiladi. Xatoda pul yechilmaydi."""
+    async def _fail(text: str):
+        try:
+            await context.bot.edit_message_caption(inline_message_id=inline_message_id, caption=text,
+                                                   reply_markup=INLINE_MESSAGE_MARKUP)
+        except Exception as e:
+            logger.error(f"🎨 Inline xato xabarini yozib bo'lmadi: {e}")
+
+    uid = getattr(user, "id", None)
+    if not uid:
+        await _fail("❌ Foydalanuvchi aniqlanmadi.")
+        return
+    hold = ai_draw.reserve(uid, ai_draw.IMAGE_FEATURE_ID, ai_draw.image_price())
+    if hold.status == "insufficient":
+        await _fail(f"❌ Balans yetarli emas: kerak {ai_draw.fmt_sum(hold.amount)}, mavjud {ai_draw.fmt_sum(hold.available)}. "
+                    f"Balansni to'ldirish: https://t.me/{BOT_USERNAME}")
+        _log_inline(user, f"rasm: {desc}", "error", "balans yetarli emas")
+        return
+    if hold.status == "disabled":
+        await _fail("🚫 Rasm chizdirish hozircha o'chirilgan.")
+        return
+
+    data = await ai_draw.draw_image(uid, desc)
+    if not data:
+        ai_draw.release(hold, "inline rasm chizilmadi")
+        await _fail("❌ Rasmni chizib bo'lmadi. Pul yechilmadi.")
+        _log_inline(user, f"rasm: {desc}", "error", "rasm chizilmadi")
+        return
+    path = None
+    try:
+        import os
+        fd, path = tempfile.mkstemp(suffix=".jpg")
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        url = inline_media.publish(path, "photo")
+        await context.bot.edit_message_media(
+            inline_message_id=inline_message_id,
+            media=InputMediaPhoto(media=url, caption=f"🎨 {desc[:200]}\n\n🤖 Talaba AI — @{BOT_USERNAME}"),
+            reply_markup=INLINE_MESSAGE_MARKUP,
+        )
+    except Exception as e:
+        logger.error(f"🎨 Inline rasmni joylashda xato: {type(e).__name__}: {e}", exc_info=True)
+        ai_draw.release(hold, "inline rasm joylanmadi")
+        await _fail("❌ Rasmni shu yerga joylab bo'lmadi. Pul yechilmadi.")
+        _log_inline(user, f"rasm: {desc}", "error", f"joylashda xato: {type(e).__name__}")
+        return
+    finally:
+        if path:
+            try:
+                import os
+                os.remove(path)
+            except OSError:
+                pass
+    ai_draw.commit(hold)
+    _log_inline(user, f"rasm: {desc}", "ok")
+
 
 
 async def _handle_course_work(

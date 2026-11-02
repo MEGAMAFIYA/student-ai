@@ -180,14 +180,14 @@ class FeatureChargeTests(unittest.TestCase):
 
     def test_paid_feature_charges_correct_amount(self):
         wallet.credit_balance(1, 20000, "boshlang'ich")
-        result = wallet.charge_for_feature(1, "course_work")  # standart narx 10000
+        result = wallet.charge_for_feature(1, "course_work_20")  # standart narx 10000
         self.assertTrue(result.ok)
         self.assertEqual(result.reason, "charged")
         self.assertEqual(wallet.get_balance(1), 10000)
 
     def test_insufficient_balance_blocks_feature(self):
         wallet.credit_balance(1, 5000, "boshlang'ich")
-        result = wallet.charge_for_feature(1, "course_work")  # narx 10000
+        result = wallet.charge_for_feature(1, "course_work_20")  # narx 10000
         self.assertFalse(result.ok)
         self.assertEqual(result.reason, "insufficient")
         self.assertEqual(result.price, 10000)
@@ -197,8 +197,8 @@ class FeatureChargeTests(unittest.TestCase):
 
     def test_disabled_feature_blocks_even_with_balance(self):
         wallet.credit_balance(1, 100000, "boshlang'ich")
-        wallet.set_feature_enabled("course_work", False)
-        result = wallet.charge_for_feature(1, "course_work")
+        wallet.set_feature_enabled("course_work_20", False)
+        result = wallet.charge_for_feature(1, "course_work_20")
         self.assertFalse(result.ok)
         self.assertEqual(result.reason, "disabled")
         self.assertEqual(wallet.get_balance(1), 100000)
@@ -212,8 +212,8 @@ class FeatureChargeTests(unittest.TestCase):
         self.assertEqual(wallet.get_balance(1), 0)
 
     def test_zero_price_makes_feature_free(self):
-        wallet.set_feature_price("course_work", 0)
-        result = wallet.charge_for_feature(1, "course_work")
+        wallet.set_feature_price("course_work_20", 0)
+        result = wallet.charge_for_feature(1, "course_work_20")
         self.assertTrue(result.ok)
         self.assertEqual(result.reason, "free")
 
@@ -362,7 +362,7 @@ class ConcurrencyTests(unittest.TestCase):
         lock = threading.Lock()
 
         def worker():
-            r = wallet.charge_for_feature(1, "course_work")
+            r = wallet.charge_for_feature(1, "course_work_20")
             with lock:
                 results.append(r.ok)
 
@@ -464,7 +464,7 @@ class ReservationBasicTests(unittest.TestCase):
 
     def test_successful_reservation_then_completion_debits_once(self):
         wallet.credit_balance(1, 20000, "boshlang'ich")
-        result = wallet.reserve_for_feature(1, "course_work")  # narx 10000
+        result = wallet.reserve_for_feature(1, "course_work_20")  # narx 10000
         self.assertTrue(result.ok)
         self.assertEqual(result.reason, "reserved")
         self.assertIsNotNone(result.reservation_id)
@@ -483,7 +483,7 @@ class ReservationBasicTests(unittest.TestCase):
 
     def test_failed_service_triggers_automatic_release(self):
         wallet.credit_balance(1, 20000, "boshlang'ich")
-        result = wallet.reserve_for_feature(1, "course_work")
+        result = wallet.reserve_for_feature(1, "course_work_20")
         self.assertTrue(result.ok)
 
         ok = wallet.release_reservation(result.reservation_id, reason="AI xato qildi")
@@ -495,7 +495,7 @@ class ReservationBasicTests(unittest.TestCase):
 
     def test_insufficient_available_balance_blocks_reservation(self):
         wallet.credit_balance(1, 5000, "boshlang'ich")
-        result = wallet.reserve_for_feature(1, "course_work")  # narx 10000
+        result = wallet.reserve_for_feature(1, "course_work_20")  # narx 10000
         self.assertFalse(result.ok)
         self.assertEqual(result.reason, "insufficient")
         self.assertEqual(result.available, 5000)
@@ -510,7 +510,7 @@ class ReservationBasicTests(unittest.TestCase):
 
     def test_expired_reservation_is_auto_released_and_frees_balance(self):
         wallet.credit_balance(1, 20000, "boshlang'ich")
-        result = wallet.reserve_for_feature(1, "course_work")
+        result = wallet.reserve_for_feature(1, "course_work_20")
         # Muddatini sun'iy ravishda o'tkazib yuboramiz (orphaned/crash simulyatsiyasi).
         wallet._data["reservations"][result.reservation_id]["expires_at"] = "2000-01-01T00:00:00+00:00"
 
@@ -521,7 +521,7 @@ class ReservationBasicTests(unittest.TestCase):
 
     def test_duplicate_release_is_idempotent(self):
         wallet.credit_balance(1, 20000, "boshlang'ich")
-        result = wallet.reserve_for_feature(1, "course_work")
+        result = wallet.reserve_for_feature(1, "course_work_20")
         first = wallet.release_reservation(result.reservation_id, reason="xato")
         second = wallet.release_reservation(result.reservation_id, reason="qayta urinish")
         third = wallet.release_reservation(result.reservation_id, reason="yana")
@@ -532,7 +532,7 @@ class ReservationBasicTests(unittest.TestCase):
 
     def test_duplicate_completion_does_not_double_debit(self):
         wallet.credit_balance(1, 20000, "boshlang'ich")
-        result = wallet.reserve_for_feature(1, "course_work")
+        result = wallet.reserve_for_feature(1, "course_work_20")
         first = wallet.complete_reservation(result.reservation_id)
         second = wallet.complete_reservation(result.reservation_id)
         third = wallet.complete_reservation(result.reservation_id)
@@ -543,7 +543,7 @@ class ReservationBasicTests(unittest.TestCase):
 
     def test_cannot_release_already_completed_reservation(self):
         wallet.credit_balance(1, 20000, "boshlang'ich")
-        result = wallet.reserve_for_feature(1, "course_work")
+        result = wallet.reserve_for_feature(1, "course_work_20")
         wallet.complete_reservation(result.reservation_id)
         ok = wallet.release_reservation(result.reservation_id, reason="kech qoldi")
         self.assertFalse(ok)
@@ -551,7 +551,7 @@ class ReservationBasicTests(unittest.TestCase):
 
     def test_cannot_complete_already_released_reservation(self):
         wallet.credit_balance(1, 20000, "boshlang'ich")
-        result = wallet.reserve_for_feature(1, "course_work")
+        result = wallet.reserve_for_feature(1, "course_work_20")
         wallet.release_reservation(result.reservation_id, reason="xato")
         ok = wallet.complete_reservation(result.reservation_id)
         self.assertFalse(ok)
@@ -571,7 +571,7 @@ class ReservationConcurrencyTests(unittest.TestCase):
 
         def worker():
             try:
-                r = wallet.reserve_for_feature(1, "course_work")
+                r = wallet.reserve_for_feature(1, "course_work_20")
                 with lock:
                     results.append(r.ok)
             except wallet.WalletError:
@@ -593,7 +593,7 @@ class ReservationConcurrencyTests(unittest.TestCase):
         chaqiruvi "ko'rmaydi" (chunki debit_balance faqat balance'ga qaraydi) —
         LEKIN balans baribir hech qachon manfiy bo'lib qolmasligi kerak."""
         wallet.credit_balance(1, 10000, "boshlang'ich")
-        result = wallet.reserve_for_feature(1, "course_work")  # 10000 band qilindi, available=0
+        result = wallet.reserve_for_feature(1, "course_work_20")  # 10000 band qilindi, available=0
         self.assertTrue(result.ok)
 
         # Parallel ravishda balansdan to'g'ridan-to'g'ri yechishga urinamiz.
@@ -627,7 +627,7 @@ class ReservationConcurrencyTests(unittest.TestCase):
         release HECH QACHON chaqirilmagan) holatni simulyatsiya qiladi —
         muddat o'tgach reservation avtomatik ozod bo'lishi SHART."""
         wallet.credit_balance(1, 10000, "boshlang'ich")
-        result = wallet.reserve_for_feature(1, "course_work")
+        result = wallet.reserve_for_feature(1, "course_work_20")
         self.assertEqual(wallet.get_available_balance(1), 0)
 
         # "Crash" simulyatsiyasi: process hech qachon complete/release chaqirmadi,
@@ -664,7 +664,7 @@ class DuplicatePaymentApprovalRefundAndConcurrencyTests(unittest.TestCase):
         yechilmagani uchun balans bir marta ham o'zgarmaydi, lekin muhimi —
         ikkinchi chaqiruv HECH NARSA qilmaydi)."""
         wallet.credit_balance(7, 20000, "boshlang'ich")
-        result = wallet.reserve_for_feature(7, "course_work")
+        result = wallet.reserve_for_feature(7, "course_work_20")
         balance_before = wallet.get_balance(7)
         first = wallet.release_reservation(result.reservation_id, reason="AI xato")
         second = wallet.release_reservation(result.reservation_id, reason="qayta urinish")
@@ -684,7 +684,7 @@ class DuplicatePaymentApprovalRefundAndConcurrencyTests(unittest.TestCase):
 
         def worker():
             barrier.wait()  # ikkalasi ham AYNAN bir vaqtda urinsin
-            r = wallet.reserve_for_feature(42, "course_work")
+            r = wallet.reserve_for_feature(42, "course_work_20")
             with lock:
                 outcomes.append(r.reason)
 
@@ -703,7 +703,7 @@ class DuplicatePaymentApprovalRefundAndConcurrencyTests(unittest.TestCase):
         (masalan admin to'lovni tasdiqlashi) kelsa — ikkalasi ham xavfsiz
         birgalikda ishlashi kerak (balans hech qachon buzilmasin)."""
         wallet.credit_balance(50, 10000, "boshlang'ich")
-        result = wallet.reserve_for_feature(50, "course_work")  # available=0
+        result = wallet.reserve_for_feature(50, "course_work_20")  # available=0
         self.assertTrue(result.ok)
 
         def credit_worker():
@@ -727,7 +727,7 @@ class DuplicatePaymentApprovalRefundAndConcurrencyTests(unittest.TestCase):
         """Bitta reservation'ni bir nechta thread PARALLEL ravishda release
         qilishga urinsa — faqat BITTASI muvaffaqiyatli bo'lishi kerak."""
         wallet.credit_balance(60, 10000, "boshlang'ich")
-        result = wallet.reserve_for_feature(60, "course_work")
+        result = wallet.reserve_for_feature(60, "course_work_20")
         outcomes = []
         lock = threading.Lock()
         barrier = threading.Barrier(10)
@@ -752,7 +752,7 @@ class DuplicatePaymentApprovalRefundAndConcurrencyTests(unittest.TestCase):
         complete (finalize) qilishga urinsa — balans FAQAT BIR MARTA
         kamayishi kerak (double debit himoyasi race condition ostida ham)."""
         wallet.credit_balance(70, 10000, "boshlang'ich")
-        result = wallet.reserve_for_feature(70, "course_work")
+        result = wallet.reserve_for_feature(70, "course_work_20")
         outcomes = []
         lock = threading.Lock()
         barrier = threading.Barrier(10)
