@@ -418,3 +418,81 @@ class DevFlow(AdsBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EditAd(AdsBase):
+    """✏️ Reklamani o'chirmasdan tahrirlash."""
+
+    def _ad(self):
+        return storage.add_ad(-1001, "Guruh A", "Eski matn", 3, 1)
+
+    def test_view_keyboard_has_edit_button(self):
+        ad = self._ad()
+        cbs = [b.callback_data for row in ads.view_keyboard(ad["id"]).inline_keyboard for b in row]
+        self.assertIn(f"dev:adsedit:{ad['id']}", cbs)
+        self.assertIn("adsedit", ads.ACTIONS)
+
+    def test_edit_menu_has_three_fields(self):
+        ad = self._ad()
+        cbs = [b.callback_data for row in ads.edit_menu_keyboard(ad["id"]).inline_keyboard for b in row]
+        for f in ("text", "group", "min"):
+            self.assertIn(f"dev:adseditf:{ad['id']}:{f}", cbs)
+
+    async def test_edit_text_keeps_ad_and_id(self):
+        ad = self._ad()
+        new = ads.apply_edit(self.app(), ad["id"], text="Yangi matn")
+        self.assertEqual(new["text"], "Yangi matn")
+        self.assertEqual(new["id"], ad["id"])
+        self.assertEqual(len(storage.get_ads()), 1)
+
+    async def test_edit_interval_reschedules_task(self):
+        ad = self._ad()
+        app = self.app()
+        ads.start_ad(app, ad)
+        old_task = ads._tasks[ad["id"]]
+        new = ads.apply_edit(app, ad["id"], interval_min=7)
+        await asyncio.sleep(0)
+        self.assertEqual(new["interval_min"], 7)
+        self.assertIsNot(ads._tasks[ad["id"]], old_task)
+
+    async def test_edit_unknown_ad_returns_none(self):
+        self.assertIsNone(ads.apply_edit(self.app(), "yoq", text="x"))
+
+
+class CancelRegistryTest(unittest.IsolatedAsyncioTestCase):
+    async def test_cancel_stops_running_task(self):
+        import cancel_registry
+        started = asyncio.Event()
+        done = []
+
+        async def job():
+            started.set()
+            try:
+                await asyncio.sleep(30)
+                done.append("finished")
+            finally:
+                cancel_registry.untrack(1, 2, asyncio.current_task())
+
+        task = asyncio.create_task(job())
+        cancel_registry.track(1, 2, task)
+        await started.wait()
+        self.assertEqual(cancel_registry.cancel_user_jobs(1, 2), 1)
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertEqual(done, [])
+        self.assertEqual(cancel_registry.active_count(1, 2), 0)
+
+    async def test_other_users_not_cancelled(self):
+        import cancel_registry
+        task = asyncio.create_task(asyncio.sleep(5))
+        cancel_registry.track(1, 3, task)
+        self.assertEqual(cancel_registry.cancel_user_jobs(1, 2), 0)
+        self.assertFalse(task.cancelled())
+        task.cancel()
+        cancel_registry.untrack(1, 3, task)
+
+    async def test_current_task_is_excluded(self):
+        import cancel_registry
+        cancel_registry.track(5, 5, asyncio.current_task())
+        self.assertEqual(cancel_registry.cancel_user_jobs(5, 5), 0)
+        cancel_registry.untrack(5, 5, asyncio.current_task())

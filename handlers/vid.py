@@ -19,6 +19,8 @@ va tugagach albatta o'chiriladi (finally blokida).
 
 import asyncio
 import logging
+
+from cancel_registry import cancel_markup
 import re
 import shutil
 import tempfile
@@ -63,7 +65,7 @@ async def vid_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE, override_t
         await update.message.reply_text("🎬 Video nomi yoki qidiruv so'rovini yuboring:")
         return
     logger.info("🎬 VID_REQUEST_START chat_id=%s user_id=%s url=%s", chat_id, user_id, url)
-    status = await update.message.reply_text("⏳ Video yuklab olinmoqda, biroz kuting...")
+    status = await update.message.reply_text("⏳ Video yuklab olinmoqda, biroz kuting...", reply_markup=cancel_markup())
     await context.bot.send_chat_action(chat_id, ChatAction.UPLOAD_VIDEO)
 
     # Har bir so'rov uchun ALOHIDA vaqtinchalik papka — parallel

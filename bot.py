@@ -24,6 +24,7 @@ import telegram.error
 from telegram import BotCommand, BotCommandScopeDefault, BotCommandScopeAllGroupChats, BotCommandScopeChat, InlineQueryResultPhoto
 import business_storage
 from telegram.ext import (
+    Application,
     ApplicationBuilder,
     ApplicationHandlerStop,
     CommandHandler,
@@ -41,6 +42,7 @@ import config
 import storage
 from config import TELEGRAM_TOKEN, PUBLIC_BASE_URL
 import pending_input
+import cancel_registry
 import wallet
 import webapp_security
 import mobile_auth
@@ -1148,6 +1150,43 @@ def start_health_server():
 
 
 # ============================================================
+# ❌ BEKOR QILISH (markaziy)
+# ============================================================
+
+def _cancel_fallbacks(command_callback=None):
+    """Har bir ConversationHandler uchun bir xil fallback'lar: /cancel buyrug'i VA har bir
+    xabar ostidagi '❌ Bekor qilish' tugmasi (callback_data="cancel:all")."""
+    return [
+        CommandHandler("cancel", command_callback or menu.cancel_cmd),
+        CallbackQueryHandler(menu.cancel_cb, pattern=r"^cancel:all$"),
+    ]
+
+
+class CancellableApplication(Application):
+    """Har bir update'ni qayta ishlayotgan vazifani (asyncio.Task) cancel_registry'da qayd etadi —
+    shu orqali '❌ Bekor qilish' / /cancel ishlab turgan jarayonning o'zini ham to'xtata oladi
+    (faqat user_data tozalanib, vazifa davom etib ketmaydi)."""
+
+    async def process_update(self, update):
+        chat_id = user_id = None
+        try:
+            chat = getattr(update, "effective_chat", None)
+            user = getattr(update, "effective_user", None)
+            chat_id = chat.id if chat else None
+            user_id = user.id if user else None
+        except Exception:
+            pass
+        task = asyncio.current_task() if user_id is not None else None
+        if task is not None:
+            cancel_registry.track(chat_id, user_id, task)
+        try:
+            await super().process_update(update)
+        finally:
+            if task is not None:
+                cancel_registry.untrack(chat_id, user_id, task)
+
+
+# ============================================================
 # CONVERSATION HANDLERLAR
 # ============================================================
 
@@ -1166,7 +1205,7 @@ def build_kino_conv():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, kino.kino_receive_title),
             ],
         },
-        fallbacks=[CommandHandler("cancel", kino.kino_cancel)],
+        fallbacks=_cancel_fallbacks(kino.kino_cancel),
         name="kino_conv",
         allow_reentry=True,
     )
@@ -1189,7 +1228,7 @@ def build_course_work_conv():
                 CallbackQueryHandler(course_work.upload_done, pattern="^cwup:(confirm|cancel)$"),
             ],
         },
-        fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
+        fallbacks=_cancel_fallbacks(),
         name="course_work_conv",
         allow_reentry=True,
     )
@@ -1209,7 +1248,7 @@ def build_translate_conv():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, translate_handler.custom_lang_chosen)
             ],
         },
-        fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
+        fallbacks=_cancel_fallbacks(),
         name="translate_conv",
         allow_reentry=True,
     )
@@ -1224,7 +1263,7 @@ def build_images_pdf_conv():
                 CallbackQueryHandler(images_to_pdf.confirm, pattern="^imgpdf:confirm$"),
             ],
         },
-        fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
+        fallbacks=_cancel_fallbacks(),
         name="images_pdf_conv",
         allow_reentry=True,
     )
@@ -1237,7 +1276,7 @@ def build_edit_pdf_conv():
             edit_pdf.EP_WAIT_PDF: [MessageHandler(filters.Document.PDF, edit_pdf.receive_pdf)],
             edit_pdf.EP_WAIT_INSTRUCTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_pdf.receive_instruction)],
         },
-        fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
+        fallbacks=_cancel_fallbacks(),
         name="edit_pdf_conv",
         allow_reentry=True,
     )
@@ -1252,7 +1291,7 @@ def build_guide_conv():
                 CallbackQueryHandler(guide.finish, pattern="^guide:finish$"),
             ],
         },
-        fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
+        fallbacks=_cancel_fallbacks(),
         name="guide_conv",
         allow_reentry=True,
     )
@@ -1265,7 +1304,7 @@ def build_pptx_conv():
             pptx_gen.PX_TOPIC: [MessageHandler(filters.TEXT & ~filters.COMMAND, pptx_gen.receive_topic)],
             pptx_gen.PX_COUNT: [CallbackQueryHandler(pptx_gen.receive_count, pattern="^pptx:count:")],
         },
-        fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
+        fallbacks=_cancel_fallbacks(),
         name="pptx_conv",
         allow_reentry=True,
     )
@@ -1279,7 +1318,7 @@ def build_essay_conv():
             essay.ES_PAGES: [MessageHandler(filters.TEXT & ~filters.COMMAND, essay.receive_pages)],
             essay.ES_TOPIC: [MessageHandler(filters.TEXT & ~filters.COMMAND, essay.receive_topic_and_generate)],
         },
-        fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
+        fallbacks=_cancel_fallbacks(),
         name="essay_conv",
         allow_reentry=True,
     )
@@ -1295,7 +1334,7 @@ def build_quiz_conv():
                 CallbackQueryHandler(quiz.receive_answer, pattern="^quiz:ans:"),
             ],
         },
-        fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
+        fallbacks=_cancel_fallbacks(),
         name="quiz_conv",
         allow_reentry=True,
     )
@@ -1310,7 +1349,7 @@ def build_solve_conv():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, solve.receive_text),
             ],
         },
-        fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
+        fallbacks=_cancel_fallbacks(),
         name="solve_conv",
         allow_reentry=True,
     )
@@ -1324,7 +1363,7 @@ def build_summarize_conv():
                 MessageHandler((filters.TEXT | filters.Document.PDF) & ~filters.COMMAND, summarize.receive_content),
             ],
         },
-        fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
+        fallbacks=_cancel_fallbacks(),
         name="summarize_conv",
         allow_reentry=True,
     )
@@ -1336,7 +1375,7 @@ def build_grammar_conv():
         states={
             grammar.GR_WAIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, grammar.receive_text)],
         },
-        fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
+        fallbacks=_cancel_fallbacks(),
         name="grammar_conv",
         allow_reentry=True,
     )
@@ -1354,7 +1393,7 @@ def build_citation_conv():
                 CallbackQueryHandler(citation.finish, pattern="^cite:finish$"),
             ],
         },
-        fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
+        fallbacks=_cancel_fallbacks(),
         name="citation_conv",
         allow_reentry=True,
     )
@@ -1371,7 +1410,7 @@ def build_reminders_conv():
             reminders.RM_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, reminders.receive_text)],
             reminders.RM_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, reminders.receive_time)],
         },
-        fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
+        fallbacks=_cancel_fallbacks(),
         name="reminders_conv",
         allow_reentry=True,
     )
@@ -1391,7 +1430,7 @@ def build_wallet_topup_conv():
             wallet_ui.WT_METHOD: [CallbackQueryHandler(wallet_ui.method_chosen, pattern="^wallet:method:")],
             wallet_ui.WT_RECEIPT: [MessageHandler(filters.PHOTO | filters.Document.ALL, wallet_ui.receive_receipt)],
         },
-        fallbacks=[CommandHandler("cancel", menu.cancel_cmd)],
+        fallbacks=_cancel_fallbacks(),
         name="wallet_topup_conv",
         allow_reentry=True,
     )
@@ -1429,7 +1468,7 @@ def build_developer_conv():
                 CallbackQueryHandler(developer.on_callback, pattern="^dev:"),
             ],
         },
-        fallbacks=[CommandHandler("cancel", developer.cancel)],
+        fallbacks=_cancel_fallbacks(developer.cancel),
         name="developer_conv",
         # allow_reentry=True: agar admin /developer buyrug'ini istalgan
         # bosqichda (masalan "yangi kalit yuboring" kutib turganida) qayta
@@ -1475,6 +1514,7 @@ def main():
 
     app = (
         ApplicationBuilder()
+        .application_class(CancellableApplication)
         .token(TELEGRAM_TOKEN)
         .concurrent_updates(CONCURRENT_UPDATES)
         .connect_timeout(60)
@@ -1534,6 +1574,8 @@ def main():
 
     app.add_handler(CommandHandler("start", menu.start_cmd))
     app.add_handler(CommandHandler("cancel", menu.cancel_cmd))
+    # ❌ Conversation tashqarisida ishlayotgan jarayonlar uchun ham (conversation fallback'lari bundan OLDIN tekshiriladi).
+    app.add_handler(CallbackQueryHandler(menu.cancel_cb, pattern=r"^cancel:all$"))
     app.add_handler(CommandHandler("yoqish", menu.group_enable_cmd))
     app.add_handler(CommandHandler("ochirish", menu.group_disable_cmd))
     # 🎁 /tabrik — private va group ikkalasida ham (filtersiz CommandHandler

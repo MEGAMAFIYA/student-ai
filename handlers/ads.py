@@ -49,7 +49,8 @@ MAX_FAILURES = 5             # ketma-ket shuncha xatodan keyin reklama to'xtatil
 RESTART_FIRST_DELAY_SEC = 60  # qayta ishga tushgandan keyin birinchi yuborishgacha (maks.)
 BUTTON_LABEL = "🤖 Talaba AI"
 
-ACTIONS = {"ads", "adsadd", "adsview", "adsdel", "adsdelyes", "adsmin", "adsok"}
+ACTIONS = {"ads", "adsadd", "adsview", "adsdel", "adsdelyes", "adsmin", "adsok",
+           "adsedit", "adseditf", "adseditmin"}
 
 # Bu xatolar takrorlanmaydi — yuborishning o'zi imkonsiz bo'lib qolgan (Telethon
 # xato klasslari nomi bo'yicha tekshiriladi: Telethon testlarda bo'lmasligi mumkin).
@@ -174,6 +175,7 @@ def view_text(ad: dict) -> str:
 
 def view_keyboard(ad_id: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✏️ Tahrirlash", callback_data=f"dev:adsedit:{ad_id}")],
         [InlineKeyboardButton("🗑 To'xtatish va o'chirish", callback_data=f"dev:adsdel:{ad_id}")],
         [InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:ads")],
     ])
@@ -234,6 +236,76 @@ def confirm_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("❌ Bekor qilish", callback_data="dev:ads")],
     ])
 
+
+
+# ============================================================
+# ✏️ Tahrirlash (reklamani o'chirmasdan ma'lumotini o'zgartirish)
+# ============================================================
+
+def edit_menu_text(ad: dict) -> str:
+    return (
+        "✏️ <b>Reklamani tahrirlash</b>\n\n"
+        f"📍 Guruh: <b>{_esc(ad.get('chat_title') or '—')}</b> (<code>{ad['chat_id']}</code>)\n"
+        f"⏱ Interval: har <b>{ad['interval_min']}</b> daqiqada\n\n"
+        f"💬 Matn:\n{_esc(_preview(ad['text'], 600))}\n\n"
+        "Qaysi ma'lumotni o'zgartirmoqchisiz?"
+    )
+
+
+def edit_menu_keyboard(ad_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("💬 Matnni o'zgartirish", callback_data=f"dev:adseditf:{ad_id}:text")],
+        [InlineKeyboardButton("📍 Guruhni o'zgartirish", callback_data=f"dev:adseditf:{ad_id}:group")],
+        [InlineKeyboardButton("⏱ Intervalni o'zgartirish", callback_data=f"dev:adseditf:{ad_id}:min")],
+        [InlineKeyboardButton("⬅️ Orqaga", callback_data=f"dev:adsview:{ad_id}")],
+    ])
+
+
+def _edit_cancel(ad_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Bekor qilish", callback_data=f"dev:adsedit:{ad_id}")]])
+
+
+def edit_text_prompt(ad: dict) -> str:
+    return (
+        "✏️ <b>Matnni o'zgartirish</b>\n\n"
+        f"Hozirgi matn:\n{_esc(_preview(ad['text'], 600))}\n\n"
+        "Yangi <b>reklama matnini</b> yuboring (qalin, kursiv, havola formatlari saqlanadi)."
+    )
+
+
+def edit_group_prompt(ad: dict) -> str:
+    return (
+        "✏️ <b>Guruhni o'zgartirish</b>\n\n"
+        f"Hozirgi guruh: <b>{_esc(ad.get('chat_title') or '—')}</b> (<code>{ad['chat_id']}</code>)\n\n"
+        "Yangi <b>guruh ID</b> raqamini (yoki <code>@username</code>) yuboring."
+    )
+
+
+def edit_minutes_prompt(ad: dict) -> str:
+    return (
+        "✏️ <b>Intervalni o'zgartirish</b>\n\n"
+        f"Hozir: har <b>{ad['interval_min']}</b> daqiqada.\n"
+        f"Yangi qiymatni tanlang ({MIN_INTERVAL}–{MAX_INTERVAL}) yoki raqam yozing."
+    )
+
+
+def edit_minutes_keyboard(ad_id: str) -> InlineKeyboardMarkup:
+    nums = list(range(MIN_INTERVAL, MAX_INTERVAL + 1))
+    rows = [
+        [InlineKeyboardButton(str(n), callback_data=f"dev:adseditmin:{ad_id}:{n}") for n in nums[i:i + 5]]
+        for i in range(0, len(nums), 5)
+    ]
+    rows.append([InlineKeyboardButton("❌ Bekor qilish", callback_data=f"dev:adsedit:{ad_id}")])
+    return InlineKeyboardMarkup(rows)
+
+
+def apply_edit(application, ad_id: str, **fields) -> dict | None:
+    """Reklamani saqlangan holda yangilaydi. Interval yoki guruh o'zgarsa, fon vazifasi
+    yangi sozlama bilan qayta rejalashtiriladi (matn har yuborishda storage'dan o'qiladi)."""
+    ad = storage.update_ad(ad_id, **fields)
+    if ad and ("interval_min" in fields or "chat_id" in fields):
+        start_ad(application, ad)
+    return ad
 
 # ============================================================
 # Guruhni tekshirish
@@ -499,7 +571,56 @@ async def handle_dev_callback(action, parts, update, context, query, DEV_MENU, D
         await edit(query, group_prompt_text(), reply_markup=_back("dev:ads"), parse_mode="HTML")
         return DEV_WAIT_TEXT
 
+    if action == "adsedit":
+        context.user_data.pop("dev_action", None)
+        ad = storage.get_ad(parts[2]) if len(parts) > 2 else None
+        if not ad:
+            await edit(query, "⚠️ Bu reklama topilmadi (o'chirilgan bo'lishi mumkin).",
+                       reply_markup=_back("dev:ads"), parse_mode="HTML")
+            return DEV_MENU
+        await edit(query, edit_menu_text(ad), reply_markup=edit_menu_keyboard(ad["id"]), parse_mode="HTML")
+        return DEV_MENU
+
+    if action == "adseditf":
+        ad_id = parts[2] if len(parts) > 2 else ""
+        field = parts[3] if len(parts) > 3 else ""
+        ad = storage.get_ad(ad_id)
+        if not ad or field not in ("text", "group", "min"):
+            await edit(query, "⚠️ Bu reklama topilmadi (o'chirilgan bo'lishi mumkin).",
+                       reply_markup=_back("dev:ads"), parse_mode="HTML")
+            return DEV_MENU
+        context.user_data["dev_action"] = {"type": f"ads_edit_{field}", "ad_id": ad_id}
+        if field == "text":
+            await edit(query, edit_text_prompt(ad), reply_markup=_edit_cancel(ad_id), parse_mode="HTML")
+        elif field == "group":
+            await edit(query, edit_group_prompt(ad), reply_markup=_edit_cancel(ad_id), parse_mode="HTML")
+        else:
+            await edit(query, edit_minutes_prompt(ad), reply_markup=edit_minutes_keyboard(ad_id), parse_mode="HTML")
+        return DEV_WAIT_TEXT
+
+    if action == "adseditmin":
+        ad_id = parts[2] if len(parts) > 2 else ""
+        try:
+            minutes = int(parts[3])
+        except (IndexError, ValueError):
+            minutes = 0
+        ad = storage.get_ad(ad_id)
+        if not ad:
+            await edit(query, "⚠️ Bu reklama topilmadi (o'chirilgan bo'lishi mumkin).",
+                       reply_markup=_back("dev:ads"), parse_mode="HTML")
+            return DEV_MENU
+        if not (MIN_INTERVAL <= minutes <= MAX_INTERVAL):
+            await edit(query, "⚠️ Daqiqa noto'g'ri.\n\n" + edit_minutes_prompt(ad),
+                       reply_markup=edit_minutes_keyboard(ad_id), parse_mode="HTML")
+            return DEV_WAIT_TEXT
+        context.user_data.pop("dev_action", None)
+        ad = apply_edit(context.application, ad_id, interval_min=minutes)
+        await edit(query, "✅ Interval yangilandi.\n\n" + edit_menu_text(ad),
+                   reply_markup=edit_menu_keyboard(ad_id), parse_mode="HTML")
+        return DEV_MENU
+
     if action == "adsview":
+        context.user_data.pop("dev_action", None)
         ad = storage.get_ad(parts[2]) if len(parts) > 2 else None
         if not ad:
             await edit(query, "⚠️ Bu reklama topilmadi (o'chirilgan bo'lishi mumkin).",
@@ -554,7 +675,9 @@ async def handle_dev_callback(action, parts, update, context, query, DEV_MENU, D
             await edit(query, "⚠️ Reklama sessiyasi topilmadi (allaqachon tasdiqlangan bo'lishi mumkin).\n\n"
                        + menu_text(), reply_markup=menu_keyboard(), parse_mode="HTML")
             return DEV_MENU
-        await edit(query, "⏳ Guruh tekshirilmoqda va birinchi xabar yuborilmoqda...", parse_mode="HTML")
+        import cancel_registry
+        await edit(query, "⏳ Guruh tekshirilmoqda va birinchi xabar yuborilmoqda...",
+                   reply_markup=cancel_registry.cancel_markup(), parse_mode="HTML")
         try:
             ad = await activate(
                 context.application,
@@ -591,6 +714,62 @@ async def handle_dev_text(action, update, context, DEV_MENU, DEV_WAIT_TEXT):
     kind = action.get("type")
     message = update.message
     raw = (message.text or "").strip()
+
+    if kind == "ads_edit_text":
+        ad = storage.get_ad(action.get("ad_id"))
+        if not ad:
+            await edit_menu(context, "⚠️ Bu reklama topilmadi (o'chirilgan bo'lishi mumkin).\n\n" + menu_text(), menu_keyboard())
+            return DEV_MENU
+        if not raw:
+            context.user_data["dev_action"] = action
+            return DEV_WAIT_TEXT
+        if len(raw) > MAX_TEXT_LEN:
+            await edit_menu(
+                context,
+                f"⚠️ Matn juda uzun ({len(raw)} belgi). Telegram chegarasi — {MAX_TEXT_LEN} belgi.\n\n" + edit_text_prompt(ad),
+                _edit_cancel(ad["id"]),
+            )
+            context.user_data["dev_action"] = action
+            return DEV_WAIT_TEXT
+        context.user_data.pop("dev_action", None)
+        ad = apply_edit(context.application, ad["id"], text=message.text_html)
+        await edit_menu(context, "✅ Matn yangilandi.\n\n" + edit_menu_text(ad), edit_menu_keyboard(ad["id"]))
+        return DEV_MENU
+
+    if kind == "ads_edit_group":
+        ad = storage.get_ad(action.get("ad_id"))
+        if not ad:
+            await edit_menu(context, "⚠️ Bu reklama topilmadi (o'chirilgan bo'lishi mumkin).\n\n" + menu_text(), menu_keyboard())
+            return DEV_MENU
+        chat, error = await check_group(raw)
+        if error:
+            await edit_menu(context, f"⚠️ <code>{_esc(raw[:40])}</code>: {error}\n\n" + edit_group_prompt(ad),
+                            _edit_cancel(ad["id"]))
+            context.user_data["dev_action"] = action
+            return DEV_WAIT_TEXT
+        title = chat.title or str(chat.id)
+        context.user_data.pop("dev_action", None)
+        ad = apply_edit(context.application, ad["id"], chat_id=int(chat.id), chat_title=str(title)[:120])
+        await edit_menu(context, "✅ Guruh yangilandi.\n\n" + edit_menu_text(ad), edit_menu_keyboard(ad["id"]))
+        return DEV_MENU
+
+    if kind == "ads_edit_min":
+        ad = storage.get_ad(action.get("ad_id"))
+        if not ad:
+            await edit_menu(context, "⚠️ Bu reklama topilmadi (o'chirilgan bo'lishi mumkin).\n\n" + menu_text(), menu_keyboard())
+            return DEV_MENU
+        if not raw.isdigit() or not (MIN_INTERVAL <= int(raw) <= MAX_INTERVAL):
+            await edit_menu(
+                context,
+                f"⚠️ Faqat {MIN_INTERVAL} dan {MAX_INTERVAL} gacha butun son kiriting.\n\n" + edit_minutes_prompt(ad),
+                edit_minutes_keyboard(ad["id"]),
+            )
+            context.user_data["dev_action"] = action
+            return DEV_WAIT_TEXT
+        context.user_data.pop("dev_action", None)
+        ad = apply_edit(context.application, ad["id"], interval_min=int(raw))
+        await edit_menu(context, "✅ Interval yangilandi.\n\n" + edit_menu_text(ad), edit_menu_keyboard(ad["id"]))
+        return DEV_MENU
 
     if kind == "ads_group":
         chat, error = await check_group(raw)

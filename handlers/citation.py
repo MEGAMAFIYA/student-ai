@@ -9,6 +9,8 @@ mumkin.
 import asyncio
 import logging
 
+from cancel_registry import cancel_markup
+
 from telegram import Update, InputFile, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
@@ -102,6 +104,7 @@ async def receive_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(
         f"{_SOURCE_TYPES.get(source_type, '')}\n\nMa'lumotlarni yozing (bitta xabarda, vergul bilan ajratib):\n<i>{hint}</i>",
         parse_mode=ParseMode.HTML,
+        reply_markup=cancel_markup(),
     )
     return CT_DETAILS
 
@@ -113,7 +116,7 @@ async def receive_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     logger.info(f"📚 Iqtibos so'rovi: chat_id={chat_id}, uslub={style}, turi={source_type}.")
 
-    status = await update.message.reply_text("⏳ Iqtibos tuziladi...")
+    status = await update.message.reply_text("⏳ Iqtibos tuziladi...", reply_markup=cancel_markup())
 
     system = _SYSTEM_TEMPLATE.format(style=style)
     prompt = f"Manba turi: {_SOURCE_TYPES.get(source_type, source_type)}\nMa'lumotlar: {details}"

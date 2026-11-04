@@ -6,6 +6,8 @@ AI har biriga javob yozib, kichik harflarda PDF qo'llanma qilib beradi.
 import asyncio
 import logging
 
+from cancel_registry import cancel_markup
+
 from telegram import Update, InputFile, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 
@@ -38,6 +40,7 @@ async def entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Savollaringizni yuboring (bitta xabarda bir nechta savol bo'lsa, "
             "har birini alohida qatorga yozing). Tugagach, '✅ Tayyor' tugmasini bosing.",
             parse_mode="Markdown",
+            reply_markup=cancel_markup(),
         )
     except Exception as e:
         logger.error(f"📖 Qo'llanma menyusini ochishda xato (user_id={user.id if user else '?'}): {type(e).__name__}: {e}", exc_info=True)
@@ -69,7 +72,7 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     chat_id = update.effective_chat.id
     logger.info(f"📖 Qo'llanma tayyorlash boshlandi: chat_id={chat_id}, {len(questions)} ta savol.")
-    await query.edit_message_text(f"⏳ {len(questions)} ta savolga javob tayyorlanmoqda...")
+    await query.edit_message_text(f"⏳ {len(questions)} ta savolga javob tayyorlanmoqda...", reply_markup=cancel_markup())
 
     system = (
         "Siz bilimdon o'qituvchisiz. Berilgan savolga aniq, qisqa va to'g'ri javob bering. "
@@ -87,7 +90,7 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parts.append(f"# {q}\n{q} - {answer}")
 
         try:
-            await query.edit_message_text(f"⏳ Javoblar tayyorlanmoqda... ({i}/{len(questions)})")
+            await query.edit_message_text(f"⏳ Javoblar tayyorlanmoqda... ({i}/{len(questions)})", reply_markup=cancel_markup())
         except Exception:
             pass
 

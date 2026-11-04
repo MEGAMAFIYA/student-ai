@@ -8,7 +8,10 @@ yuborilsa pul yechiladi (chizilmasa — yechilmaydi).
 """
 
 import io
+import asyncio
 import logging
+
+from cancel_registry import cancel_markup
 import re
 import uuid
 
@@ -97,7 +100,7 @@ async def confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❌ Rasm chizish bekor qilindi.")
         return
     await query.answer()
-    await query.edit_message_text("⏳ Rasm chizilmoqda... (1 daqiqagacha vaqt olishi mumkin)")
+    await query.edit_message_text("⏳ Rasm chizilmoqda... (1 daqiqagacha vaqt olishi mumkin)", reply_markup=cancel_markup())
     chat_id = query.message.chat_id
     await _draw_and_send(context, chat_id, query.from_user.id, entry["desc"], status_msg=query.message)
 
@@ -118,7 +121,12 @@ async def _draw_and_send(context, chat_id: int, user_id: int, desc: str, status_
         await context.bot.send_chat_action(chat_id, ChatAction.UPLOAD_PHOTO)
     except Exception:
         pass
-    data = await ai_draw.draw_image(user_id, desc)
+    try:
+        data = await ai_draw.draw_image(user_id, desc)
+    except asyncio.CancelledError:
+        # ❌ Foydalanuvchi bekor qildi — band qilingan pul ozod qilinadi.
+        ai_draw.release(hold, "foydalanuvchi bekor qildi")
+        raise
     if not data:
         ai_draw.release(hold, "rasm chizilmadi")
         text = "❌ Rasmni chizib bo'lmadi (AI xizmati javob bermadi yoki so'rov rad etildi). Pul yechilmadi."

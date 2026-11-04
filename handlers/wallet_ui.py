@@ -38,6 +38,8 @@ ravishda avtomatikani xohlamagan holat uchun).
 import functools
 import json
 import logging
+
+from cancel_registry import cancel_markup
 import re
 from urllib.parse import quote
 from io import BytesIO
@@ -425,7 +427,7 @@ async def receive_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Iltimos, chek RASMINI yoki PDF faylini yuboring.")
         return WT_RECEIPT
 
-    status_msg = await update.message.reply_text("⏳ Chek tahlil qilinmoqda...")
+    status_msg = await update.message.reply_text("⏳ Chek tahlil qilinmoqda...", reply_markup=cancel_markup())
 
     tg_file = await context.bot.get_file(file_id)
     bio = BytesIO()

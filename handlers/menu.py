@@ -148,17 +148,55 @@ async def universal_selected(update: Update, context: ContextTypes.DEFAULT_TYPE)
         raise
 
 
-async def cancel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # 💰 Agar shu suhbat ichida band qilingan (reserved) pul bo'lsa —
-    # /cancel bosilganda DARHOL ozod qilinadi (20 daqiqalik avtomatik
-    # muddat tugashini kutmasdan). Bu BARCHA pullik funksiyalar uchun
-    # (course_work_conv, essay_conv, pptx_conv va h.k.) BITTA umumiy
-    # fallback orqali ishlaydi, chunki hammasi shu cancel_cmd'ni ishlatadi.
+def _cancel_everything(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Foydalanuvchining BARCHA jarayonlarini to'xtatadi: ishlayotgan vazifalar,
+    kutish holati, band qilingan pul va suhbat ma'lumotlari. To'xtatilgan vazifalar soni qaytadi."""
+    import cancel_registry
+    import pending_input
+
+    chat = update.effective_chat
+    user = update.effective_user
+    chat_id = chat.id if chat else None
+    user_id = user.id if user else None
+
+    # 💰 Band qilingan (reserved) pul bo'lsa — DARHOL ozod qilinadi.
     reservation = context.user_data.get("_reservation")
     if reservation:
-        wallet.release_reservation(reservation["reservation_id"], reason="user_cancelled")
+        try:
+            wallet.release_reservation(reservation["reservation_id"], reason="user_cancelled")
+        except Exception as exc:
+            logger.warning("❌ Pulni ozod qilishda xato: %s: %s", type(exc).__name__, exc)
+
+    # ⏹ Ishlayotgan vazifalarni (AI, PDF, video...) to'xtatish — shu bo'lmasa jarayon davom etaveradi.
+    stopped = cancel_registry.cancel_user_jobs(chat_id, user_id)
+    if chat_id is not None and user_id is not None:
+        pending_input.clear_pending(chat_id, user_id)
     context.user_data.clear()
+    return stopped
+
+
+async def cancel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    _cancel_everything(update, context)
     await update.message.reply_text("❌ Bekor qilindi.", reply_markup=main_menu_keyboard())
+    return ConversationHandler.END
+
+
+async def cancel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Har qanday xabar ostidagi '❌ Bekor qilish' tugmasi (callback_data="cancel:all")."""
+    query = update.callback_query
+    _cancel_everything(update, context)
+    try:
+        await query.answer("❌ Bekor qilindi")
+    except Exception:
+        pass
+    try:
+        await query.edit_message_text("❌ Bekor qilindi.", reply_markup=main_menu_keyboard())
+    except Exception:
+        # Xabar tahrirlab bo'lmasa (rasm/hujjat, eskirgan va h.k.) — yangi xabar yuboramiz.
+        try:
+            await query.message.reply_text("❌ Bekor qilindi.", reply_markup=main_menu_keyboard())
+        except Exception as exc:
+            logger.info("❌ Bekor qilish xabarini yuborib bo'lmadi: %s: %s", type(exc).__name__, exc)
     return ConversationHandler.END
 
 

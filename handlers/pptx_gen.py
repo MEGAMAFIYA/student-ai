@@ -8,6 +8,8 @@ izchil dizaynli .pptx fayl quriladi va yuboriladi.
 import asyncio
 import json
 import logging
+
+from cancel_registry import cancel_markup
 import re
 
 from telegram import Update, InputFile, InlineKeyboardButton, InlineKeyboardMarkup
@@ -56,6 +58,7 @@ async def entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📊 *Taqdimot (PPTX) tayyorlash*\n\n"
             "Taqdimot qaysi mavzuda bo'lishi kerak? Mavzuni yozing:",
             parse_mode=ParseMode.MARKDOWN,
+            reply_markup=cancel_markup(),
         )
     except Exception as e:
         logger.error(f"📊 Taqdimot menyusini ochishda xato (user_id={user.id if user else '?'}): {type(e).__name__}: {e}", exc_info=True)
@@ -86,7 +89,7 @@ async def receive_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id if update.effective_user else 0
 
     logger.info(f"📊 Taqdimot so'rovi: chat_id={chat_id}, mavzu='{topic}', slaydlar soni={count}.")
-    await query.edit_message_text(f"⏳ *{topic}* mavzusida {count} slaydlik taqdimot tayyorlanmoqda...", parse_mode=ParseMode.MARKDOWN)
+    await query.edit_message_text(f"⏳ *{topic}* mavzusida {count} slaydlik taqdimot tayyorlanmoqda...", parse_mode=ParseMode.MARKDOWN, reply_markup=cancel_markup())
     await context.bot.send_chat_action(chat_id, ChatAction.UPLOAD_DOCUMENT)
 
     slides = await _generate_slides(topic, count)

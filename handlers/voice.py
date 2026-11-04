@@ -7,6 +7,8 @@ xuddi ovozli xabarni matn qilib yozgandek.
 """
 
 import logging
+
+from cancel_registry import cancel_markup
 from io import BytesIO
 
 from telegram import Update
@@ -51,7 +53,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"🎙 Ovozli xabar qabul qilindi: chat_id={chat_id}, davomiyligi={voice.duration}s, hajmi={voice.file_size} bayt.")
 
     await context.bot.send_chat_action(chat_id, ChatAction.TYPING)
-    status = await message.reply_text("⏳ Ovozli xabar tinglanmoqda...")
+    status = await message.reply_text("⏳ Ovozli xabar tinglanmoqda...", reply_markup=cancel_markup())
 
     try:
         file = await context.bot.get_file(voice.file_id)

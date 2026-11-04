@@ -7,6 +7,8 @@ qaytaradi.
 import asyncio
 import logging
 
+from cancel_registry import cancel_markup
+
 from telegram import Update, InputFile
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode, ChatAction
@@ -44,6 +46,7 @@ async def entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             "✅ *Imlo/Grammatika tekshirish*\n\nTekshirilishi kerak bo'lgan matnni yuboring:",
             parse_mode=ParseMode.MARKDOWN,
+            reply_markup=cancel_markup(),
         )
     except Exception as e:
         logger.error(f"✅ Imlo tekshirish menyusini ochishda xato (user_id={user.id if user else '?'}): {type(e).__name__}: {e}", exc_info=True)
@@ -58,7 +61,7 @@ async def receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"✅ Imlo tekshirish so'rovi: chat_id={chat_id}, uzunlik={len(text)} belgi.")
 
     await context.bot.send_chat_action(chat_id, ChatAction.TYPING)
-    status = await update.message.reply_text("⏳ Matn tekshirilmoqda...")
+    status = await update.message.reply_text("⏳ Matn tekshirilmoqda...", reply_markup=cancel_markup())
 
     result = await ask_ai(GRAMMAR_AI, text, _SYSTEM)
 

@@ -20,6 +20,8 @@ import asyncio
 import contextvars
 import json
 import logging
+
+from cancel_registry import cancel_markup
 import os
 import re
 
@@ -523,6 +525,7 @@ async def receive_topic_and_generate(update: Update, context: ContextTypes.DEFAU
         "Bu bir necha daqiqa vaqt olishi mumkin (bo'lim-bo'lim yozib chiqiladi). "
         "Reja tuzilmoqda...",
         parse_mode=ParseMode.MARKDOWN,
+        reply_markup=cancel_markup(),
     )
 
     uploads = list(context.user_data.get("cw_uploads") or [])
@@ -728,7 +731,7 @@ async def _generate_course_work_impl(topic: str, pages: int, status_msg=None, im
     async def _status(text):
         if status_msg:
             try:
-                await status_msg.edit_text(text, parse_mode=ParseMode.MARKDOWN)
+                await status_msg.edit_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=cancel_markup())
             except Exception:
                 pass
 

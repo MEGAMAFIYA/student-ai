@@ -5,6 +5,8 @@ tasdiqlagach barchasi ketma-ket PDF ga joylanadi.
 
 import asyncio
 import logging
+
+from cancel_registry import cancel_markup
 from io import BytesIO
 
 from telegram import Update, InputFile, InlineKeyboardButton, InlineKeyboardMarkup
@@ -37,6 +39,7 @@ async def entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Suratlarni birma-bir yuboring. Barchasini yuborib bo'lgach, "
             "'✅ Tasdiqlash' tugmasini bosing.",
             parse_mode="Markdown",
+            reply_markup=cancel_markup(),
         )
     except Exception as e:
         logger.error(f"🖼 Suratlarni PDF menyusini ochishda xato (user_id={user.id if user else '?'}): {type(e).__name__}: {e}", exc_info=True)
@@ -70,7 +73,7 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return IMG_COLLECTING
 
     logger.info(f"🖼 PDF yig'ish tasdiqlandi: {len(images)} ta rasm, chat_id={update.effective_chat.id}.")
-    await query.edit_message_text(f"⏳ {len(images)} ta rasmdan PDF tayyorlanmoqda...")
+    await query.edit_message_text(f"⏳ {len(images)} ta rasmdan PDF tayyorlanmoqda...", reply_markup=cancel_markup())
 
     try:
         pdf_buf = await asyncio.to_thread(images_to_pdf, images)

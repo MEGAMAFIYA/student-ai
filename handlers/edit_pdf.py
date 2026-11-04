@@ -5,6 +5,8 @@ AI matnni ko'rsatmaga muvofiq tuzatib, qayta PDF qilib qaytaradi.
 
 import asyncio
 import logging
+
+from cancel_registry import cancel_markup
 from io import BytesIO
 
 from telegram import Update, InputFile
@@ -36,6 +38,7 @@ async def entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "⚠️ Eslatma: hujjat matn asosida qayta tuziladi, shuning uchun "
             "original grafik dizayn saqlanmaydi, faqat matn mazmuni saqlanadi.",
             parse_mode="Markdown",
+            reply_markup=cancel_markup(),
         )
     except Exception as e:
         logger.error(f"📝 PDF tahrirlash menyusini ochishda xato (user_id={user.id if user else '?'}): {type(e).__name__}: {e}", exc_info=True)
@@ -79,7 +82,7 @@ async def receive_instruction(update: Update, context: ContextTypes.DEFAULT_TYPE
     logger.info(f"📝 Tahrirlash so'rovi: chat_id={chat_id}, fayl='{filename}', ko'rsatma='{instruction[:100]}'.")
 
     await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
-    status = await update.message.reply_text("⏳ Hujjat tahrirlanmoqda...")
+    status = await update.message.reply_text("⏳ Hujjat tahrirlanmoqda...", reply_markup=cancel_markup())
 
     system = (
         "Siz hujjatlarni tahrirlovchi yordamchisiz. Sizga hujjatning to'liq matni va "

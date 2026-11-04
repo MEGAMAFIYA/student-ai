@@ -5,6 +5,8 @@ tarjima asl format (matn/PDF) da qaytariladi.
 
 import asyncio
 import logging
+
+from cancel_registry import cancel_markup
 from io import BytesIO
 
 from telegram import Update, InputFile, InlineKeyboardButton, InlineKeyboardMarkup
@@ -46,6 +48,7 @@ async def entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             "🌐 *Tarjima qilish*\n\nTarjima qilinishi kerak bo'lgan matn yoki PDF faylni yuboring.",
             parse_mode=ParseMode.MARKDOWN,
+            reply_markup=cancel_markup(),
         )
     except Exception as e:
         logger.error(f"🌐 Tarjima menyusini ochishda xato (user_id={user.id if user else '?'}): {type(e).__name__}: {e}", exc_info=True)
@@ -91,7 +94,7 @@ async def lang_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("✍️ Tilni yozib yuboring (masalan: Turkcha, Fransuzcha):")
             return TR_WAIT_CUSTOM_LANG
 
-        await query.edit_message_text(f"⏳ {LANGUAGES[code]} tiliga tarjima qilinmoqda...")
+        await query.edit_message_text(f"⏳ {LANGUAGES[code]} tiliga tarjima qilinmoqda...", reply_markup=cancel_markup())
         await _do_translate(update, context, LANGUAGES[code], edit_query=query)
     except Exception as e:
         logger.error(f"🌐 Til tanlashda xato: {type(e).__name__}: {e}", exc_info=True)
@@ -101,7 +104,7 @@ async def lang_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def custom_lang_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang_name = update.message.text.strip()
-    status = await update.message.reply_text(f"⏳ {lang_name} tiliga tarjima qilinmoqda...")
+    status = await update.message.reply_text(f"⏳ {lang_name} tiliga tarjima qilinmoqda...", reply_markup=cancel_markup())
     await _do_translate(update, context, lang_name, status_msg=status)
     return ConversationHandler.END
 

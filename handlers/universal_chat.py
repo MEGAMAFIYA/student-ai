@@ -17,6 +17,8 @@ asosiy matn handler.
 
 import asyncio
 import logging
+
+from cancel_registry import cancel_markup
 import re
 from io import BytesIO
 
@@ -291,6 +293,7 @@ async def _try_course_work(update: Update, context: ContextTypes.DEFAULT_TYPE, t
         f"💬 Bu so'rovni *Kurs ishi* funksiyasiga yubordim.\n"
         f"⏳ *{topic}* mavzusida {pages}+ betlik kurs ishi tayyorlanmoqda...\nReja tuzilmoqda...",
         parse_mode=ParseMode.MARKDOWN,
+        reply_markup=cancel_markup(),
     )
 
     try:
@@ -350,6 +353,7 @@ async def _try_translate(update: Update, context: ContextTypes.DEFAULT_TYPE, tex
     status = await update.message.reply_text(
         f"💬 Bu so'rovni *Tarjima* funksiyasiga yubordim.\n⏳ {target} tiliga tarjima qilinmoqda...",
         parse_mode=ParseMode.MARKDOWN,
+        reply_markup=cancel_markup(),
     )
 
     system = (
