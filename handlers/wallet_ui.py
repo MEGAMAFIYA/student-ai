@@ -49,6 +49,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode, ChatAction
 
 import config
+import hisobchi  # 🧮 admin hisobchi
 import wallet
 import receipt_check
 from ai_clients import ask_gemini_multimodal
@@ -708,6 +709,9 @@ async def finalize_success(context: ContextTypes.DEFAULT_TYPE, update: Update | 
 
     ok = wallet.complete_reservation(reservation["reservation_id"])
     price = reservation["price"]
+    if ok:
+        hisobchi.on_paid_done(update.effective_user.id if update is not None and update.effective_user else 0,
+                              reservation.get("feature_id", ""), price)
     chat = chat_id or (update.effective_chat.id if update is not None else None)
     if ok and chat is not None:
         text = f"✅ Tayyor!\n💰 {_fmt_sum(price)} yechildi."
@@ -735,6 +739,9 @@ async def finalize_failure(context: ContextTypes.DEFAULT_TYPE, update: Update | 
 
     ok = wallet.release_reservation(reservation["reservation_id"], reason=reason or "xizmat muvaffaqiyatsiz tugadi")
     price = reservation["price"]
+    if ok:
+        hisobchi.on_job_fail(update.effective_user.id if update is not None and update.effective_user else 0,
+                             reservation.get("feature_id", ""), reason)
     chat = chat_id or (update.effective_chat.id if update is not None else None)
     if ok and chat is not None:
         text = f"❌ Xizmatni bajarishda xatolik yuz berdi.\n💰 {_fmt_sum(price)} hisobingizga qaytarildi."

@@ -32,6 +32,7 @@ from telegram.constants import ParseMode, ChatAction
 from config import COURSE_WORK_AI
 import config
 from ai_clients import ask_ai, ask_ai_with_source
+import hisobchi
 import user_ai_keys
 import wallet
 import ai_draw
@@ -541,6 +542,7 @@ async def _generate_and_send(update, context, topic: str, pages: int, status, n_
     # bilan o'ralgan) oqimda kuzatiladi — universal_chat/inline'dagi bepul
     # chaqiruvlar bunga aloqasi yo'q (source_tracker=None qoladi).
     source_tracker = {"used_user_key": False, "used_bot_key": False, "last_user_key_failure": ""} if user_id else None
+    hisobchi.set_detail(topic=topic, pages=pages)  # 🧮 admin hisobchi uchun mavzu/hajm
 
     image_opts = dict(course_images.resolve_settings(user_id))
     image_opts.update(enabled=n_images > 0, count=max(1, n_images), ai_only=True)

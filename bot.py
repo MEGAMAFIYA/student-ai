@@ -21,7 +21,7 @@ from threading import Thread, Timer
 from urllib.parse import urlparse, parse_qs
 
 import telegram.error
-from telegram import BotCommand, BotCommandScopeDefault, BotCommandScopeAllGroupChats, BotCommandScopeChat, InlineQueryResultPhoto
+from telegram import Update, BotCommand, BotCommandScopeDefault, BotCommandScopeAllGroupChats, BotCommandScopeChat, InlineQueryResultPhoto
 import business_storage
 from telegram.ext import (
     Application,
@@ -35,10 +35,12 @@ from telegram.ext import (
     ChosenInlineResultHandler,
     ChatMemberHandler,
     BusinessConnectionHandler,
+    TypeHandler,
     filters,
 )
 
 import config
+import hisobchi
 import storage
 from config import TELEGRAM_TOKEN, PUBLIC_BASE_URL
 import pending_input
@@ -57,7 +59,7 @@ from handlers import (
     menu, universal_chat, course_work, ai_image, translate as translate_handler, images_to_pdf,
     edit_pdf, guide, inline_query, developer, pptx_gen, essay, quiz, solve, summarize, managed_tests,
     grammar, citation, my_files, reminders, voice, wallet_ui, tabrik, rasim,
-    vid, qoshiq, kino, mention_dispatch, pro_tabrik, my_cabinet, payment_notify, payment_auto,
+    vid, qoshiq, kino, hisobchi_cmd, mention_dispatch, pro_tabrik, my_cabinet, payment_notify, payment_auto,
 )
 from pdf_tools import make_pdf
 
@@ -147,7 +149,10 @@ async def _post_init(application):
         logger.warning(f"🧭 Bot username'ni get_me() orqali olishda xato (fallback ishlatiladi): {e}")
 
     if config.ADMIN_IDS:
-        admin_commands = BOT_COMMANDS + [BotCommand("developer", "🔧 AI sozlamalari (faqat admin)")]
+        admin_commands = BOT_COMMANDS + [
+            BotCommand("developer", "🔧 AI sozlamalari (faqat admin)"),
+            BotCommand("hisobchi", "🧮 Bot hisoboti (faqat admin)"),
+        ]
         for admin_id in config.ADMIN_IDS:
             try:
                 await application.bot.set_my_commands(
@@ -1554,6 +1559,9 @@ def main():
     # 👥 Moliya > Foydalanuvchilar uchun barcha bot foydalanuvchilarini
     # doimiy qayd etamiz. Profil (username/ism) keyinchalik admin ro'yxatida
     # ko'rsatiladi; handler block=False bo'lgani uchun asosiy oqimni kutdirmaydi.
+    # 🧮 Hisobchi: har bir update uchun AI-iz (trace). block=True, lekin faqat xotirada
+    # kichik lug'at yaratadi (mikrosekund) — hech narsani kutmaydi va hech qachon xato bermaydi.
+    app.add_handler(TypeHandler(Update, hisobchi_cmd.begin_trace), group=-3)
     app.add_handler(MessageHandler(filters.ALL, _track_user_message, block=False), group=-2)
     app.add_handler(CallbackQueryHandler(_chat_game_callback, pattern=r"^cg:", block=True), group=0)
     app.add_handler(CallbackQueryHandler(_track_user_callback, pattern=".*", block=False), group=-2)
@@ -1654,6 +1662,9 @@ def main():
     app.add_handler(CommandHandler("kino_migration", kino.kino_migration))
     app.add_handler(CommandHandler("kino_check", kino.kino_check))
     app.add_handler(CommandHandler("kino_quality", kino.kino_quality))
+    # 🧮 /hisobchi — faqat admin (handler ichida ham tekshiriladi)
+    app.add_handler(CommandHandler("hisobchi", hisobchi_cmd.hisobchi_cmd))
+    app.add_handler(CallbackQueryHandler(hisobchi_cmd.hisobchi_callback, pattern=r"^hsb:"))
 
     app.add_handler(CallbackQueryHandler(menu.universal_selected, pattern="^menu:universal$"))
     app.add_handler(CallbackQueryHandler(menu.back_to_menu, pattern="^menu:back$"))

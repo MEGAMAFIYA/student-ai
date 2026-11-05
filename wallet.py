@@ -48,6 +48,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import config
+import hisobchi  # 🧮 admin hisobchi (faqat xotiraga yozadi, lock ichida ham xavfsiz)
 
 logger = logging.getLogger(__name__)
 
@@ -379,6 +380,7 @@ def _new_tx_locked(user_id: int, tx_type: str, amount: int, balance_before: int,
     _data["transactions"].append(tx)
     if len(_data["transactions"]) > MAX_TRANSACTIONS_TOTAL:
         del _data["transactions"][: len(_data["transactions"]) - MAX_TRANSACTIONS_TOTAL]
+    hisobchi.on_tx(tx)
     return tx
 
 

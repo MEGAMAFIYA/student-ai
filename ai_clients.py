@@ -33,6 +33,7 @@ import httpx
 import google.generativeai as genai
 
 import config
+import hisobchi  # 🧮 admin hisobchi: faqat xotiraga yozadi, hech qachon xato bermaydi
 
 logger = logging.getLogger(__name__)
 
@@ -317,6 +318,7 @@ async def ask_ai(
                     continue
                 label = f"{config.PROVIDER_LABELS.get(prov, prov.capitalize())} kalit #{idx}"
                 result, status, detail = await _dispatch(prov, key, model, "", prompt, system, history, label)
+                hisobchi.ai_call(prov, idx, model, bool(result), "ok" if result else status)
                 if result:
                     return result
                 logger.warning(f"{label} ishlamadi ({_STATUS_LABELS.get(status, status)}) — navbatdagi kalitga o'tilmoqda...")
@@ -326,6 +328,7 @@ async def ask_ai(
             key, model = cfg.get("api_key", ""), cfg.get("model", "")
             label = config.PROVIDER_LABELS.get(prov, prov.capitalize())
             result, status, detail = await _dispatch(prov, key, model, cfg.get("base_url", ""), prompt, system, history, label)
+            hisobchi.ai_call(prov, 0, model, bool(result), "ok" if result else status)
             return result
         return None  # bu provider uchun na pool, na bitta-kalit sozlamasi bor — sinab bo'lmaydi
 
@@ -354,12 +357,14 @@ async def ask_ai(
             config.DEFAULT_GROQ_KEY, config.GROQ_FALLBACK_MODEL,
             config.PROVIDER_BASE_URLS["groq"], prompt, system, history, "Standart Groq (.env)",
         )
+        hisobchi.ai_call("groq", "env", config.GROQ_FALLBACK_MODEL, bool(result), "ok" if result else status)
         if result:
             logger.info("✅ Standart Groq kaliti (.env) muvaffaqiyatli javob berdi.")
             return result
         logger.warning("Standart Groq (.env) ham ishlamadi — oxirgi chora Pollinations'ga o'tilmoqda...")
 
     result = await _call_pollinations(prompt, system)
+    hisobchi.ai_call("pollinations", 0, "", bool(result), "ok" if result else "error")
     if not result:
         logger.error(
             "❌ Barcha sozlangan AI provayderlar (asosiy + /developer orqali qo'shilgan "
@@ -405,6 +410,7 @@ async def ask_ai_with_source(
                     continue
                 label = f"Shaxsiy kalit ({config.PROVIDER_LABELS.get(provider, provider.capitalize())} #{idx})"
                 result, status, detail = await _dispatch(provider, key, model, "", prompt, system, history, label)
+                hisobchi.ai_call(provider, idx, model, bool(result), "ok" if result else status, source="user")
                 if result:
                     logger.info(f"🔑 {label}: ✅ ishladi (user_id={user_id}).")
                     return result, "user_key", ""

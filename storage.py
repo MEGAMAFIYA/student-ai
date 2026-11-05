@@ -24,6 +24,7 @@ import uuid
 from datetime import datetime, timezone
 
 import config
+import hisobchi  # 🧮 admin hisobchi (faqat xotiraga yozadi)
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +113,7 @@ def record_file(user_id: int, file_type: str, title: str, file_id: str) -> None:
         if len(lst) > MAX_FILES_PER_USER:
             del lst[: len(lst) - MAX_FILES_PER_USER]
         _save()
+    hisobchi.on_file(user_id, file_type, title)
     logger.info(f"🗂 Fayl tarixga qo'shildi: user_id={user_id}, turi={file_type}, sarlavha='{title[:60]}'.")
 
 
@@ -208,6 +210,7 @@ def record_usage(function_key: str, user_id: int) -> None:
                 del by_date[old_day]
 
         _save()
+    hisobchi.on_usage(function_key, user_id)
     logger.info(f"📊 Foydalanish qayd etildi: funksiya='{function_key}', user_id={user_id}.")
 
 
