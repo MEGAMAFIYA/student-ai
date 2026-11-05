@@ -34,6 +34,7 @@ import sys
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 
+import time
 import github_dev
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes, ConversationHandler
@@ -42,6 +43,7 @@ import ai_clients
 import image_clients
 import render_api
 import render_env_pdf
+import render_keepalive
 import config
 import pro_subscription
 import storage
@@ -1105,6 +1107,19 @@ def _render_menu_text(services: list[dict], accounts: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _keepalive_status_line(service_id: str) -> str:
+    """😴 Uxlamaslik holati (yoqilgan/o'chiq + oxirgi ping natijasi)."""
+    if not storage.get_keepalive(service_id):
+        return "😴 Uxlamaslik: <code>o'chiq</code>\n"
+    last = render_keepalive.get_last_ping(service_id)
+    if not last:
+        return "😴 Uxlamaslik: ✅ <code>yoqilgan</code> (har 5 daqiqada ping)\n"
+    ago = max(0, int(time.time() - last["ts"]) // 60)
+    icon = "✅" if last["ok"] else "⚠️"
+    return (f"😴 Uxlamaslik: ✅ <code>yoqilgan</code>\n"
+            f"   oxirgi ping: {icon} <code>{_esc(last['detail'])}</code>, {ago} daq oldin\n")
+
+
 def _render_service_text(service: dict) -> str:
     sid = str(service.get("id", ""))
     status = service.get("suspended") or service.get("status") or "—"
@@ -1126,7 +1141,8 @@ def _render_service_text(service: dict) -> str:
         f"🌿 Branch: <code>{_esc(branch)}</code>\n"
         f"🔄 Auto Deploy: <code>{_esc(auto if auto is not None else '—')}</code>\n"
         f"🔗 Repo: <code>{_esc(repo)}</code>\n"
-        f"🌐 URL: <code>{_esc(url)}</code>\n\n"
+        f"🌐 URL: <code>{_esc(url)}</code>\n"
+        f"{_keepalive_status_line(sid)}\n"
         "Kerakli amalni tanlang:"
     )
 
@@ -1149,6 +1165,10 @@ def _render_service_keyboard_for(service: dict) -> InlineKeyboardMarkup:
         ],
         [InlineKeyboardButton("🟡 O'rta log", callback_data=f"dev:rlogs:{sid}:medium")],
         [InlineKeyboardButton("📄 Loglarni ko'chirish (PDF)", callback_data=f"dev:rpdf:{sid}")],
+        [InlineKeyboardButton(
+            "😴 Uxlamaslikni o'chirish" if storage.get_keepalive(sid) else "😴 Uxlamaslikni yoqish",
+            callback_data=f"dev:rkeep:{sid}",
+        )],
         [
             InlineKeyboardButton("⏸️ Resume" if suspended else "⏸️ Suspend", callback_data=f"dev:r{'resume' if suspended else 'suspend'}:{sid}"),
             InlineKeyboardButton("🔄 Yangilash", callback_data=f"dev:rsvc:{sid}"),
@@ -2323,6 +2343,44 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         except Exception as exc:
             await _render_api_error(query, exc)
+        return DEV_MENU
+
+    if action == "rkeep":
+        service_id = parts[2]
+        try:
+            service = context.user_data.get("render_service")
+            if not isinstance(service, dict) or str(service.get("id", "")) != service_id:
+                api_key = _render_api_key_for_service(context, service_id)
+                service = await render_api.get_service(api_key, service_id)
+                account = _render_account_for_service(context, service_id)
+                if account:
+                    service["_render_account_label"] = account["label"]
+                context.user_data["render_service"] = service
+            if storage.get_keepalive(service_id):
+                storage.remove_keepalive(service_id)
+                render_keepalive.forget(service_id)
+                note = "😴 <b>Uxlamaslik o'chirildi.</b>"
+            else:
+                url = render_api.get_public_url(service)
+                if not url:
+                    await _safe_edit_query(
+                        query,
+                        "❌ Bu servisning ochiq (public) URL manzili yo'q (worker/cron/private servis), "
+                        "shuning uchun ping yuborib bo'lmaydi.",
+                        reply_markup=_back_keyboard(f"dev:rsvc:{service_id}"), parse_mode="HTML",
+                    )
+                    return DEV_MENU
+                storage.set_keepalive(service_id, _render_service_name(service), url)
+                render_keepalive.start()  # allaqachon ishlayotgan bo'lsa e'tiborsiz qoldiriladi
+                # Birinchi pingni darhol yuboramiz (menyuni kutdirmasdan, fonda).
+                context.application.create_task(render_keepalive.ping_now(service_id))
+                note = "😴 <b>Uxlamaslik yoqildi.</b> Servisga har 5 daqiqada ping yuboriladi."
+            await _safe_edit_query(
+                query, note + "\n\n" + _render_service_text(service),
+                reply_markup=_render_service_keyboard_for(service), parse_mode="HTML",
+            )
+        except Exception as exc:
+            await _render_api_error(query, exc, f"dev:rsvc:{service_id}")
         return DEV_MENU
 
     if action == "rdeploy":

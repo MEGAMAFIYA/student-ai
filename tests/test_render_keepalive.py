@@ -118,5 +118,80 @@ class KeepaliveStorageTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(render_keepalive.get_last_ping("srv-2")["ok"])
 
 
+class KeepaliveLoopTests(unittest.IsolatedAsyncioTestCase):
+    """Fon tsikli: har servis o'z vazifasida, qat'iy jadval, o'chirilganlar tozalanadi."""
+
+    def setUp(self):
+        self._saved = dict(storage._data["keepalive"])
+        storage._data["keepalive"] = {}
+        self._patch = patch.object(storage, "_save", lambda: None)
+        self._patch.start()
+        render_keepalive._last_ping.clear()
+
+    def tearDown(self):
+        self._patch.stop()
+        storage._data["keepalive"] = self._saved
+        render_keepalive._last_ping.clear()
+        render_keepalive.stop()
+
+    def test_set_keepalive_rejects_bad_url(self):
+        with self.assertRaises(ValueError):
+            storage.set_keepalive("srv-x", "X", "javascript:alert(1)")
+        with self.assertRaises(ValueError):
+            storage.set_keepalive("srv-x", "X", "")
+
+    async def test_slow_service_does_not_delay_others(self):
+        storage.set_keepalive("slow", "Slow", "https://slow.example")
+        storage.set_keepalive("fast", "Fast", "https://fast.example")
+        done = []
+
+        async def fake_ping(url):
+            if "slow" in url:
+                await asyncio.sleep(0.5)
+            done.append(url)
+            return {"ts": 0, "ok": True, "status": 200, "detail": "HTTP 200"}
+
+        with patch.object(render_keepalive, "ping_url", fake_ping), \
+                patch.object(render_keepalive, "_START_DELAY", 0), \
+                patch.object(render_keepalive, "INTERVAL_SECONDS", 10):
+            render_keepalive.start()
+            await asyncio.sleep(0.15)
+            self.assertEqual(done, ["https://fast.example"])   # tez servis sekinini kutmadi
+            await asyncio.sleep(0.5)
+            self.assertIn("https://slow.example", done)
+
+    async def test_removed_service_result_is_pruned_and_no_overlap(self):
+        storage.set_keepalive("a", "A", "https://a.example")
+        calls = []
+
+        async def fake_ping(url):
+            calls.append(url)
+            await asyncio.sleep(0.3)               # interval (0.1) dan uzun — ustma-ust ping bo'lmasligi kerak
+            return {"ts": 0, "ok": True, "status": 200, "detail": "HTTP 200"}
+
+        with patch.object(render_keepalive, "ping_url", fake_ping), \
+                patch.object(render_keepalive, "_START_DELAY", 0), \
+                patch.object(render_keepalive, "INTERVAL_SECONDS", 0.1):
+            render_keepalive.start()
+            await asyncio.sleep(0.25)
+            self.assertEqual(len(calls), 1)         # oldingi ping tugamaguncha yangisi boshlanmadi
+            storage.remove_keepalive("a")
+            await asyncio.sleep(0.5)
+            self.assertIsNone(render_keepalive.get_last_ping("a"))
+
+    async def test_self_ping_is_opt_in(self):
+        env = {"RENDER_EXTERNAL_URL": "https://bot.onrender.com"}
+        with patch.dict(os.environ, env, clear=False):
+            os.environ.pop("KEEPALIVE_SELF", None)
+            self.assertEqual(render_keepalive._targets(), {})
+            os.environ["KEEPALIVE_SELF"] = "1"
+            try:
+                self.assertEqual(render_keepalive._targets()["__self__"]["url"], "https://bot.onrender.com")
+                storage.set_keepalive("srv-1", "A", "https://a.onrender.com")
+                self.assertNotIn("__self__", render_keepalive._targets())   # qo'lda yoqilgan ustuvor
+            finally:
+                os.environ.pop("KEEPALIVE_SELF", None)
+
+
 if __name__ == "__main__":
     unittest.main()

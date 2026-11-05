@@ -395,6 +395,9 @@ def remove_ad(ad_id: str) -> bool:
 # Faqat yoqish/o'chirish saqlanadi (oxirgi ping natijasi xotirada turadi).
 
 def set_keepalive(service_id: str, name: str, url: str) -> dict:
+    url = str(url or "").strip()
+    if not url.startswith(("http://", "https://")):
+        raise ValueError("Uxlamaslik uchun to'g'ri http(s) URL kerak")
     with _lock:
         item = {"name": str(name)[:120], "url": str(url), "enabled_ts": time.time()}
         _data["keepalive"][str(service_id)] = item
@@ -414,12 +417,14 @@ def remove_keepalive(service_id: str) -> bool:
 
 
 def get_keepalive(service_id: str) -> dict | None:
-    item = _data["keepalive"].get(str(service_id))
-    return dict(item) if item else None
+    with _lock:
+        item = _data["keepalive"].get(str(service_id))
+        return dict(item) if item else None
 
 
 def get_all_keepalive() -> dict:
-    return {sid: dict(item) for sid, item in _data["keepalive"].items()}
+    with _lock:
+        return {sid: dict(item) for sid, item in _data["keepalive"].items()}
 
 
 # ============================================================
