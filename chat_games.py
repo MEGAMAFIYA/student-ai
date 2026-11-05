@@ -165,6 +165,8 @@ def restart_room(room, uid):
             room.update(board=[None]*9, status="playing", winner=None, reason=None, turn="x", win_line=None, last_move=None)
         elif room.get("game") == "checkers":
             room.update(board=game._initial_checkers(), status="playing", winner=None, reason=None, turn="w", forced_piece=None, last_move=None, history=[], chat_selected={})
+        elif room.get("game") == "quoridor":
+            room.update(status="playing", winner=None, reason=None, turn="1", pawns={"1":[8,4],"2":[0,4]}, walls_left={"1":10,"2":10}, walls=[], wall_draft={})
         else:
             return False, "Bu o‘yin uchun qayta boshlash mavjud emas."
         room["updated_at"]=game.time.time(); room["version"]+=1; game._save()
@@ -349,6 +351,7 @@ def _ttt_kb(room):
 
 
 def render(room):
+    if room["game"]=="quoridor": return _q_text(room), _q_kb(room)
     if room["game"]=="checkers": return _checkers_text(room), _checkers_kb(room)
     if room["game"]=="memory": return _memory_text(room), _memory_kb(room)
     return _ttt_text(room), _ttt_kb(room)
@@ -471,4 +474,130 @@ def ttt_move(room, uid, index):
         elif all(x is not None for x in b): room["status"]="finished";room["reason"]="draw";room["winner"]=None
         else: room["turn"]=game._opp_mark(mark)
         room["version"]+=1;room["updated_at"]=game.time.time();game._save()
+    return True,None
+
+# ---------------- 🧱 Quoridor — 2 kishilik chat o'yini ----------------
+def _q_blocked(room, r1, c1, r2, c2):
+    for w in room.get("walls", []):
+        r,c,o=w["r"],w["c"],w["o"]
+        if o == "h" and c <= min(c1,c2) <= c+1 and c1==c2 and {r1,r2}=={r,r+1}:
+            return True
+        if o == "v" and r <= min(r1,r2) <= r+1 and r1==r2 and {c1,c2}=={c,c+1}:
+            return True
+    return False
+
+def _q_path_exists(room, start, player):
+    from collections import deque
+    goal = 0 if player == "1" else 8
+    q=deque([tuple(start)]); seen={tuple(start)}
+    while q:
+        r,c=q.popleft()
+        if r==goal: return True
+        for dr,dc in ((1,0),(-1,0),(0,1),(0,-1)):
+            nr,nc=r+dr,c+dc
+            if 0<=nr<9 and 0<=nc<9 and (nr,nc) not in seen and not _q_blocked(room,r,c,nr,nc):
+                seen.add((nr,nc)); q.append((nr,nc))
+    return False
+
+def _q_text(room):
+    names={uid:_name(p) for uid,p in room.get("players",{}).items()}
+    lines=["🧱 <b>QUORIDOR</b>", "", f"🔵 {names.get(room.get('p1'), '1-o‘yinchi')}  — devor: {room.get('walls_left',{}).get('1',10)}",
+           f"🔴 {names.get(room.get('p2'), '2-o‘yinchi')}  — devor: {room.get('walls_left',{}).get('2',10)}", ""]
+    board=[['·' for _ in range(9)] for _ in range(9)]
+    for w in room.get('walls',[]):
+        r,c,o=w['r'],w['c'],w['o']
+        if o=='h':
+            board[r][c]='━'; board[r][c+1]='━'; board[r+1][c]='━'; board[r+1][c+1]='━'
+        else:
+            board[r][c]='┃'; board[r+1][c]='┃'; board[r][c+1]='┃'; board[r+1][c+1]='┃'
+    for pid,pos in room.get('pawns',{}).items(): board[pos[0]][pos[1]]='🔵' if pid=='1' else '🔴'
+    lines += [' '.join(row) for row in board]
+    if room.get('status')=='lobby': lines += ['', 'Ikkinchi o‘yinchi qo‘shilishini kuting.']
+    elif room.get('status')=='playing':
+        p=room.get('turn'); lines += ['', f"🎯 Navbat: {names.get(room.get('p1' if p=='1' else 'p2'), p)}"]
+        if room.get('wall_draft',{}).get(p):
+            d=room['wall_draft'][p]; lines.append(f"🧱 Devor: {'gorizontal' if d.get('o')=='h' else 'vertikal'} • qator {('-' if d.get('r') is None else d.get('r')+1)} • ustun {('-' if d.get('c') is None else d.get('c')+1)}")
+            lines.append('Qator va ustunni tanlab, devorni tasdiqlang.')
+        else: lines.append('Yurish yoki devor qo‘yishni tanlang.')
+    elif room.get('status')=='finished': lines += ['', f"🏆 G‘olib: {names.get(room.get('p1' if room.get('winner')=='1' else 'p2'), 'o‘yinchi')}"]
+    return '\n'.join(lines)
+
+def _q_kb(room):
+    rid=room['id']; kb=[]
+    if room.get('status')=='lobby':
+        if len(room.get('players',{}))<2: kb.append([InlineKeyboardButton('👥 Qo‘shilish',callback_data=f'cg:join:{rid}')])
+    elif room.get('status')=='playing':
+        pid=room.get('turn'); draft=room.get('wall_draft',{}).get(pid)
+        if draft:
+            kb.append([InlineKeyboardButton('↔️ Gorizontal',callback_data=f'cg:qo:{rid}:h'),InlineKeyboardButton('↕️ Vertikal',callback_data=f'cg:qo:{rid}:v')])
+            kb.append([InlineKeyboardButton(f'Qator {i+1}',callback_data=f'cg:qr:{rid}:{i}') for i in range(4)])
+            kb.append([InlineKeyboardButton(f'Qator {i+5}',callback_data=f'cg:qr:{rid}:{i+4}') for i in range(4)])
+            kb.append([InlineKeyboardButton(f'Ustun {i+1}',callback_data=f'cg:qc:{rid}:{i}') for i in range(4)])
+            kb.append([InlineKeyboardButton(f'Ustun {i+5}',callback_data=f'cg:qc:{rid}:{i+4}') for i in range(4)])
+            if draft.get('r') is not None and draft.get('c') is not None: kb.append([InlineKeyboardButton('🧱 Devorni qo‘yish',callback_data=f'cg:qp:{rid}')])
+            kb.append([InlineKeyboardButton('❌ Bekor qilish',callback_data=f'cg:qx:{rid}')])
+        else:
+            kb += [[InlineKeyboardButton('⬆️',callback_data=f'cg:qm:{rid}:U')],
+                   [InlineKeyboardButton('⬅️',callback_data=f'cg:qm:{rid}:L'),InlineKeyboardButton('⬇️',callback_data=f'cg:qm:{rid}:D'),InlineKeyboardButton('➡️',callback_data=f'cg:qm:{rid}:R')],
+                   [InlineKeyboardButton('🧱 Devor qo‘yish',callback_data=f'cg:qd:{rid}')]]
+    if room.get('status')=='finished': kb.append([InlineKeyboardButton('🔄 Qayta boshlash',callback_data=f'cg:restart:{rid}')])
+    kb.append([InlineKeyboardButton('🔄 Yangilash',callback_data=f'cg:refresh:{rid}')])
+    return InlineKeyboardMarkup(kb)
+
+def quoridor_join(room, uid, user):
+    uid=str(int(uid))
+    with game.LOCK:
+        if uid not in room['players'] and len(room['players'])>=2: return False,'O‘yin xonasi to‘la.'
+        room['players'].setdefault(uid, {'name':user.full_name or user.username or uid,'joined_at':game.time.time()})
+        room['players'][uid]['name']=user.full_name or user.username or uid
+        ids=list(room['players'])
+        if len(ids)==2:
+            room['p1'],room['p2']=ids[0],ids[1]; room['status']='playing'; room['turn']='1'
+        room['version']+=1; room['updated_at']=game.time.time(); game._save()
+    return True,None
+
+def quoridor_action(room, uid, action, value=None):
+    uid=str(uid)
+    with game.LOCK:
+        if uid not in room.get('players',{}): return False,'Siz bu o‘yinda emassiz.'
+        if room.get('status')!='playing': return False,'O‘yin hali boshlanmagan yoki tugagan.'
+        pid='1' if uid==room.get('p1') else '2'
+        if pid!=room.get('turn'): return False,'Hozir navbat sizda emas.'
+        pos=room['pawns'][pid]
+        if action=='move':
+            delta={'U':(-1,0),'D':(1,0),'L':(0,-1),'R':(0,1)}.get(value)
+            if not delta: return False,'Yurish noto‘g‘ri.'
+            nr,nc=pos[0]+delta[0],pos[1]+delta[1]
+            if not(0<=nr<9 and 0<=nc<9) or _q_blocked(room,*pos,nr,nc): return False,'Bu tomonga yurib bo‘lmaydi.'
+            other='2' if pid=='1' else '1'; opos=room['pawns'][other]
+            if [nr,nc]==opos:
+                jr,jc=nr+delta[0],nc+delta[1]
+                if 0<=jr<9 and 0<=jc<9 and not _q_blocked(room,nr,nc,jr,jc): nr,nc=jr,jc
+                else: return False,'Raqib ortidan sakrash yo‘li yopiq.'
+            room['pawns'][pid]=[nr,nc]
+            if nr==(0 if pid=='1' else 8): room['status']='finished'; room['winner']=pid
+            else: room['turn']=other
+            room['wall_draft'].pop(pid,None)
+        elif action=='draft': room.setdefault('wall_draft',{})[pid]={'o':'h','r':None,'c':None}
+        elif action in ('orient','row','col'):
+            d=room.setdefault('wall_draft',{}).setdefault(pid,{'o':'h','r':None,'c':None})
+            if action=='orient' and value in ('h','v'): d['o']=value
+            elif action=='row' and 0<=int(value)<=7: d['r']=int(value)
+            elif action=='col' and 0<=int(value)<=7: d['c']=int(value)
+        elif action=='cancel': room.get('wall_draft',{}).pop(pid,None)
+        elif action=='place':
+            d=room.get('wall_draft',{}).get(pid)
+            if not d or d.get('r') is None or d.get('c') is None: return False,'Devor yo‘nalishi, qatori va ustunini tanlang.'
+            if room['walls_left'].get(pid,0)<=0: return False,'Devorlaringiz qolmagan.'
+            w={'r':d['r'],'c':d['c'],'o':d['o']}
+            walls=room.get('walls',[])
+            if w in walls or any(x['r']==w['r'] and x['c']==w['c'] and x['o']!=w['o'] for x in walls): return False,'Bu joy band.'
+            # Parallel devorlar bir-birining ustiga tushmasin.
+            if any(x['o']==w['o'] and x['r']==w['r'] and abs(x['c']-w['c'])<2 for x in walls) if w['o']=='h' else any(x['o']==w['o'] and x['c']==w['c'] and abs(x['r']-w['r'])<2 for x in walls): return False,'Devorlar ustma-ust tushmasligi kerak.'
+            walls.append(w)
+            if not _q_path_exists(room,room['pawns']['1'],'1') or not _q_path_exists(room,room['pawns']['2'],'2'):
+                walls.pop(); return False,'Bu devor yo‘lni butunlay to‘sib qo‘yadi.'
+            room['walls_left'][pid]-=1; room['wall_draft'].pop(pid,None); room['turn']='2' if pid=='1' else '1'
+        else: return False,'Noma’lum amal.'
+        room['version']+=1; room['updated_at']=game.time.time(); game._save()
     return True,None

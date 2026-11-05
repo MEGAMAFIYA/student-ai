@@ -369,12 +369,19 @@ async def on_inline_query(
             ("checkers","⚪ Rus shashkasi","2 kishi • majburiy urish • damka","⚪"),
             ("memory","🧠 Xotira o'yini","2 kishi • juftlik topish • katak/belgi tanlanadi","🧠"),
             ("tictactoe","❌⭕ X-O o'yini","2 kishi • 3x3 • qator/ustun/diagonal","❌"),
+            ("quoridor","🧱 Quoridor","2 kishi • yo‘l topish • 10 ta devor","🧱"),
         ]:
             rid=game.create_room(gkey,user.id)
             if not rid:
                 continue
-            if gkey in ("checkers", "tictactoe", "memory"):
-                if gkey == "checkers":
+            if gkey in ("checkers", "tictactoe", "memory", "quoridor"):
+                if gkey == "quoridor":
+                    kb = [[InlineKeyboardButton("👥 Qo‘shilish", callback_data=f"cg:join:{rid}")]]
+                    text = ("🧱 <b>Quoridor</b>\n\n"
+                            "2 kishilik strategik o‘yin. Har navbatda bitta katak yuring yoki raqib yo‘liga devor qo‘ying.\n"
+                            "Har bir o‘yinchida 10 ta devor bor. Raqib tomondagi oxirgi qatorga birinchi yetib boring.\n\n"
+                            "O‘yin Telegram chatining o‘zida, Mini App’siz ishlaydi.")
+                elif gkey == "checkers":
                     kb = [[InlineKeyboardButton("⚪ Oq", callback_data=f"cg:side:{rid}:w"), InlineKeyboardButton("⚫ Qora", callback_data=f"cg:side:{rid}:b")], [InlineKeyboardButton("👥 Qo‘shilish", callback_data=f"cg:join:{rid}")]]
                     text = ("⚪ <b>Rus shashkasi</b>\n\n"
                             "👥 1v1 o‘yin chatning o‘zida.\n"

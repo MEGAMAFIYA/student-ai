@@ -1102,7 +1102,9 @@ async def _chat_game_callback(update, context):
     if not room:
         await q.answer("O‘yin xonasi topilmadi yoki muddati o‘tgan.", show_alert=True); return
     try:
-        if action == "join": ok,err=chat_games.add_player(room,user.id,user)
+        if action == "join":
+            if room.get("game") == "quoridor": ok,err=chat_games.quoridor_join(room,user.id,user)
+            else: ok,err=chat_games.add_player(room,user.id,user)
         elif action == "side":
             ok,err=chat_games.add_player(room,user.id,user)
             if ok and room.get("status") == "lobby": ok,err=chat_games.choose_side(room,user.id,parts[3])
@@ -1119,6 +1121,13 @@ async def _chat_game_callback(update, context):
         elif action == "mf": ok,err=chat_games.memory_flip(room,user.id,int(parts[3]))
         elif action == "restart": ok,err=chat_games.restart_room(room,user.id)
         elif action == "refresh": ok,err=True,None
+        elif action == "qm": ok,err=chat_games.quoridor_action(room,user.id,"move",parts[3])
+        elif action == "qd": ok,err=chat_games.quoridor_action(room,user.id,"draft")
+        elif action == "qo": ok,err=chat_games.quoridor_action(room,user.id,"orient",parts[3])
+        elif action == "qr": ok,err=chat_games.quoridor_action(room,user.id,"row",parts[3])
+        elif action == "qc": ok,err=chat_games.quoridor_action(room,user.id,"col",parts[3])
+        elif action == "qp": ok,err=chat_games.quoridor_action(room,user.id,"place")
+        elif action == "qx": ok,err=chat_games.quoridor_action(room,user.id,"cancel")
         else: ok,err=False,"Noma’lum o‘yin tugmasi."
     except Exception:
         logger.exception("Chat game callback xatosi")

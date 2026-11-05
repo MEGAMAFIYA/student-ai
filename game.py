@@ -91,7 +91,7 @@ def _initial_checkers():
     return b
 
 def create_room(game, creator_id):
-    if game not in ("chess", "checkers", "memory", "tictactoe"): return None
+    if game not in ("chess", "checkers", "memory", "tictactoe", "quoridor"): return None
     _purge()
     rid=uuid.uuid4().hex[:24]
     room={
@@ -109,6 +109,13 @@ def create_room(game, creator_id):
         room.update({
             "board": [None]*9, "status":"lobby","winner":None,"reason":None,"turn":None,
             "win_line": None, "last_move": None,
+        })
+    elif game=="quoridor":
+        room.update({
+            "board": [[None for _ in range(9)] for _ in range(9)],
+            "status":"lobby", "winner":None, "reason":None, "turn":"1",
+            "pawns":{"1":[8,4], "2":[0,4]}, "walls_left":{"1":10,"2":10},
+            "walls":[], "wall_draft":{}, "players":{},
         })
     else:
         room.update({
