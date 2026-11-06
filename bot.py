@@ -1121,13 +1121,7 @@ async def _chat_game_callback(update, context):
         elif action == "mf": ok,err=chat_games.memory_flip(room,user.id,int(parts[3]))
         elif action == "restart": ok,err=chat_games.restart_room(room,user.id)
         elif action == "refresh": ok,err=True,None
-        elif action == "qm": ok,err=chat_games.quoridor_action(room,user.id,"move",parts[3])
-        elif action == "qd": ok,err=chat_games.quoridor_action(room,user.id,"draft")
-        elif action == "qo": ok,err=chat_games.quoridor_action(room,user.id,"orient",parts[3])
-        elif action == "qr": ok,err=chat_games.quoridor_action(room,user.id,"row",parts[3])
-        elif action == "qc": ok,err=chat_games.quoridor_action(room,user.id,"col",parts[3])
-        elif action == "qp": ok,err=chat_games.quoridor_action(room,user.id,"place")
-        elif action == "qx": ok,err=chat_games.quoridor_action(room,user.id,"cancel")
+        elif action in chat_games.Q_ACTIONS: ok,err=chat_games.quoridor_dispatch(room,user,action,parts[3:])
         else: ok,err=False,"Noma’lum o‘yin tugmasi."
     except Exception:
         logger.exception("Chat game callback xatosi")
@@ -1136,7 +1130,10 @@ async def _chat_game_callback(update, context):
         await q.answer(err or "Amal bajarilmadi.", show_alert=True); return
     text,kb=chat_games.render(room)
     try: await q.edit_message_text(text,reply_markup=kb,parse_mode="HTML")
-    except Exception: pass
+    except Exception as e:
+        # "message is not modified" — oddiy holat (masalan, Yangilash); boshqa xatolar jurnalga yoziladi.
+        if "not modified" not in str(e).lower():
+            logger.warning("Chat game edit_message_text xatosi (game=%s): %s", room.get("game"), e)
     await q.answer("✅" if action!="refresh" else "Yangilandi")
     # Xotira o'yinida mos kelmagan juftlik 1 soniya ko'rinadi, so'ng yopiladi.
     # Shu orada server memory_waiting orqali boshqa yurishlarni rad etadi.

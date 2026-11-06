@@ -134,6 +134,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         or normalized_game.strip() in {"♟ shaxmat", "⚪ rus shashkasi", "🧠 xotira o'yini", "❌⭕ x-o o'yini"}
         or normalized_game.startswith("🎮 o'yinni boshlash")
     )
+    # 🧱 Quoridor: inline natija chatga tushganda (ayniqsa botning shaxsiy chatida) xabar
+    # "🧱 QUORIDOR 🏆 ..." matni bilan oddiy Message sifatida ham keladi — AI javob bermasin.
+    if normalized_game.startswith("🧱 quoridor"):
+        is_game_result = True
     if is_game_result:
         logger.info("🎮 Game xonasi xabari AI oqimidan o'tkazilmadi: chat_id=%s", chat.id)
         return

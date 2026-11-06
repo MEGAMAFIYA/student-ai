@@ -111,11 +111,12 @@ def create_room(game, creator_id):
             "win_line": None, "last_move": None,
         })
     elif game=="quoridor":
+        # Qoidalar va boshlang'ich holat: quoridor.py (1-o'yinchi — xonani yaratgan, pastdan boshlaydi).
+        import quoridor as _quoridor
+        room.update(_quoridor.new_state())
         room.update({
-            "board": [[None for _ in range(9)] for _ in range(9)],
-            "status":"lobby", "winner":None, "reason":None, "turn":"1",
-            "pawns":{"1":[8,4], "2":[0,4]}, "walls_left":{"1":10,"2":10},
-            "walls":[], "wall_draft":{}, "players":{},
+            "board": [], "status":"lobby", "p1":str(int(creator_id)), "p2":None,
+            "surrender_ask":{},
         })
     else:
         room.update({
@@ -185,6 +186,7 @@ def join(rid, init_data):
     with LOCK:
         room=_room(rid)
         if not room: return None,"O'yin xonasi topilmadi yoki muddati o'tgan."
+        if room.get("game")=="quoridor": return None,"Quoridor faqat Telegram chatida (tugmalar orqali) o'ynaladi."
         if uid not in room["players"] and len(room["players"])>=2:
             return None,"Bu o'yin xonasi to'la. Faqat 2 kishi o'ynaydi."
         room["players"].setdefault(uid,{"side":None,"style":"classic","joined_at":time.time(),"name":user.get("first_name") or user.get("username") or uid})

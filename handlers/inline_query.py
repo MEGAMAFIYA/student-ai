@@ -252,7 +252,9 @@ TABRIK_BARE_RE = re.compile(r"^/tabrik(?:@\w+)?\s*$", re.IGNORECASE)
 KINO_RE = re.compile(r"^kino(?:\s+(.+))?$", re.IGNORECASE)
 # 🎮 GAME — 1v1 shaxmat / rus shashkasi. "@Student_ai_uz_bot game"
 # yozilganda aynan shu ikki o'yin ro'yxati chiqadi.
-GAME_RE = re.compile(r"^game$", re.IGNORECASE)
+# "@Bot game" — barcha o'yinlar; "@Bot quoridor" (yoki kvoridor/koridor) — faqat Quoridor.
+GAME_RE = re.compile(r"^(?:game|games|o['’‘`ʻ]?yin(?:lar)?)$", re.IGNORECASE)
+QUORIDOR_RE = re.compile(r"^(?:quoridor|kvoridor|koridor|kuoridor|quorridor)$", re.IGNORECASE)
 
 # 🎨 /rasim — ATAYLAB bo'sh query'ni ham qabul qiladi: do'st bilan chatda
 # shunchaki "@Student_ai_uz_bot" deb yozib to'xtash eng qulay/tabiiy
@@ -360,10 +362,11 @@ async def on_inline_query(
     # yaratilgan bo'ladi; tugma shu xonani Direct Mini App sifatida ochadi.
     # Server barcha yurishlarni qayta tekshiradi.
     # --------------------------------------------------------
-    if GAME_RE.match(query):
+    if GAME_RE.match(query) or QUORIDOR_RE.match(query):
         # Shashka va X-O Telegram chatining o'zida ishlaydi.
         # Faqat Shaxmat uchun Mini App URL kerak bo'lishi mumkin.
         results=[]
+        _only_quoridor = bool(QUORIDOR_RE.match(query))
         for gkey,title,desc,emoji in [
             ("chess","♟ Shaxmat","2 kishi • oq/qora • klassik yurish qoidalari","♟"),
             ("checkers","⚪ Rus shashkasi","2 kishi • majburiy urish • damka","⚪"),
@@ -371,16 +374,21 @@ async def on_inline_query(
             ("tictactoe","❌⭕ X-O o'yini","2 kishi • 3x3 • qator/ustun/diagonal","❌"),
             ("quoridor","🧱 Quoridor","2 kishi • yo‘l topish • 10 ta devor","🧱"),
         ]:
+            if _only_quoridor and gkey != "quoridor":
+                continue
             rid=game.create_room(gkey,user.id)
             if not rid:
                 continue
+            if gkey == "quoridor":
+                # Birinchi o'yinchining ismi/@username'i doskada ko'rinishi uchun.
+                chat_games.q_set_profile(game.ROOMS.get(rid) or {}, user)
             if gkey in ("checkers", "tictactoe", "memory", "quoridor"):
                 if gkey == "quoridor":
-                    kb = [[InlineKeyboardButton("👥 Qo‘shilish", callback_data=f"cg:join:{rid}")]]
-                    text = ("🧱 <b>Quoridor</b>\n\n"
-                            "2 kishilik strategik o‘yin. Har navbatda bitta katak yuring yoki raqib yo‘liga devor qo‘ying.\n"
-                            "Har bir o‘yinchida 10 ta devor bor. Raqib tomondagi oxirgi qatorga birinchi yetib boring.\n\n"
-                            "O‘yin Telegram chatining o‘zida, Mini App’siz ishlaydi.")
+                    # Xabar matni va tugmalar chat_games.render() bilan BIR XIL chiziladi —
+                    # chatga tushgan zahoti haqiqiy doska ko'rinadi (keyin har yurishda yangilanadi).
+                    _qroom = game.ROOMS.get(rid)
+                    text, _qkb = chat_games.render(_qroom)
+                    kb = _qkb.inline_keyboard
                 elif gkey == "checkers":
                     kb = [[InlineKeyboardButton("⚪ Oq", callback_data=f"cg:side:{rid}:w"), InlineKeyboardButton("⚫ Qora", callback_data=f"cg:side:{rid}:b")], [InlineKeyboardButton("👥 Qo‘shilish", callback_data=f"cg:join:{rid}")]]
                     text = ("⚪ <b>Rus shashkasi</b>\n\n"
