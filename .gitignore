@@ -30,3 +30,8 @@ mobile_auth.sqlite3
 mobile_auth.sqlite3-shm
 mobile_auth.sqlite3-wal
 backups/
+
+# Presentation / bot runtime data (never distribute credentials or user records)
+wallet_data.json
+hisobchi_data.json
+data/telegram_message_effects.json

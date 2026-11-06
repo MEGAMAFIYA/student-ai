@@ -1314,6 +1314,12 @@ def build_pptx_conv():
         states={
             pptx_gen.PX_TOPIC: [MessageHandler(filters.TEXT & ~filters.COMMAND, pptx_gen.receive_topic)],
             pptx_gen.PX_COUNT: [CallbackQueryHandler(pptx_gen.receive_count, pattern="^pptx:count:")],
+            pptx_gen.PX_DESIGN: [CallbackQueryHandler(pptx_gen.choose_design, pattern="^pptx:design:")],
+            pptx_gen.PX_FRAME: [CallbackQueryHandler(pptx_gen.choose_frame, pattern="^pptx:frame:")],
+            pptx_gen.PX_PALETTE: [CallbackQueryHandler(pptx_gen.choose_palette, pattern="^pptx:palette:")],
+            pptx_gen.PX_CUSTOM_COLOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, pptx_gen.receive_custom_color)],
+            pptx_gen.PX_FONT: [CallbackQueryHandler(pptx_gen.choose_font, pattern="^pptx:font:")],
+            pptx_gen.PX_CONFIRM: [CallbackQueryHandler(pptx_gen.choose_export, pattern="^pptx:pdf:")],
         },
         fallbacks=_cancel_fallbacks(),
         name="pptx_conv",
