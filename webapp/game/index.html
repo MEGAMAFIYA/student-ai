@@ -41,6 +41,10 @@
       </div></div>
       <button id="markReadyBtn" class="primary" disabled>✓ Tanlovni tasdiqlash</button>
     </div>
+    <div id="lobbyQuoridor" class="choices hidden">
+      <p class="q-lobby-text">🧱 <b>Quoridor</b>: 9×9 doska, har kimda 10 ta devor. Raqibingiz shu xonaga kirishi bilan o‘yin avtomatik boshlanadi.</p>
+      <button id="qShareBtn" class="primary">📤 Do‘stga havola yuborish</button>
+    </div>
     <div id="players" class="players"></div>
   </section>
 
@@ -57,7 +61,7 @@
       </div>
     </div>
 
-    <div class="boardWrap"><div id="board" class="board" aria-label="O‘yin doskasi"></div><div id="fx" class="fx"></div>
+    <div class="boardWrap"><div id="board" class="board" aria-label="O‘yin doskasi"></div><div id="qBoard" class="qboard hidden"></div><div id="fx" class="fx"></div>
       <div id="promoPicker" class="promo-picker hidden">
         <div class="promo-title">Kimga aylantirasiz?</div>
         <div class="promo-row">
@@ -69,6 +73,22 @@
       </div>
     </div>
     <div id="memScoreboard" class="mem-scoreboard hidden"></div>
+    <div id="qPanel" class="qpanel hidden">
+      <div id="qInfo" class="q-info"></div>
+      <div id="qModeRow" class="q-row">
+        <button id="qModeMove" class="tool q-mode">🚶 Yurish</button>
+        <button id="qModeWall" class="tool q-mode">🧱 Devor qo‘yish</button>
+        <button id="qRules" class="tool">📖 Qoidalar</button>
+      </div>
+      <div id="qWallRow" class="q-row hidden">
+        <button id="qOrH" class="tool q-or">↔️ Gorizontal</button>
+        <button id="qOrV" class="tool q-or">↕️ Vertikal</button>
+      </div>
+      <div id="qWallConfirm" class="q-row hidden">
+        <button id="qWallOk" class="primary q-ok" disabled>✅ Devorni qo‘yish</button>
+        <button id="qWallCancel" class="danger q-cancel">❌ Bekor qilish</button>
+      </div>
+    </div>
     <div class="actions">
       <button id="soundBtn" class="tool">🔊 Ovoz</button>
       <button id="callBtn" class="tool">📹 Kamera</button>
@@ -76,6 +96,7 @@
       <button id="resignBtn" class="danger">🏳 Taslim</button>
     </div>
     <div id="result" class="result hidden"></div>
+    <button id="rematchBtn" class="primary hidden">🔄 Qayta o‘ynash</button>
 
     <section class="chat game-chat">
       <div class="chat-title"><span>💬 Chat</span><span id="chatStatus" class="chat-status"></span></div>

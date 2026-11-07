@@ -126,6 +126,7 @@ def create_room(game, creator_id):
             "forced_piece":None, "last_move":None,"history":[],
         })
     room["players"][str(int(creator_id))]={"side":None,"style":"classic","joined_at":time.time(),"name":str(creator_id)}
+    if game=="quoridor": room["players"][str(int(creator_id))]["username"]=""
     with LOCK:
         ROOMS[rid]=room
         if len(ROOMS)>MAX_ROOMS:
@@ -170,6 +171,8 @@ def _public(room, uid):
             "win_line": room.get("win_line"),
             "last_move": room.get("last_move"),
         })
+    elif room["game"]=="quoridor":
+        base.update(_quoridor_public(room, uid))
     else:
         base.update({
             "last_move":room["last_move"],"forced_piece":room.get("forced_piece"),
@@ -186,7 +189,8 @@ def join(rid, init_data):
     with LOCK:
         room=_room(rid)
         if not room: return None,"O'yin xonasi topilmadi yoki muddati o'tgan."
-        if room.get("game")=="quoridor": return None,"Quoridor faqat Telegram chatida (tugmalar orqali) o'ynaladi."
+        if room.get("game")=="quoridor":
+            return _quoridor_join(room, uid, user)
         if uid not in room["players"] and len(room["players"])>=2:
             return None,"Bu o'yin xonasi to'la. Faqat 2 kishi o'ynaydi."
         room["players"].setdefault(uid,{"side":None,"style":"classic","joined_at":time.time(),"name":user.get("first_name") or user.get("username") or uid})
@@ -697,6 +701,169 @@ def _checkers_move(room,side,r,c,nr,nc):
         room["status"]="finished";room["winner"]=side;room["reason"]="no legal moves"
     return True,None
 
+# ---------------- 🧱 Quoridor (Mini App) ----------------
+# Qoidalar dvigateli: quoridor.py (sof mantiq). Bu yerda faqat xona holati,
+# o'yinchilar (p1/p2 -> Telegram user id) va xavfsizlik tekshiruvlari.
+# Barcha o'zgarishlar LOCK ostida bajariladi — bir vaqtdagi so'rovlar holatni buzmaydi.
+import quoridor as _qd
+
+_Q_CACHE = {}   # rid -> (version, legal_walls) — qimmat hisob faqat versiya o'zgarganda
+
+def _q_normalize(room):
+    """Eski/to'liq bo'lmagan xonalarni yangi sxemaga keltiradi (server qayta ishga tushgandan keyin ham xavfsiz)."""
+    for k,v in _qd.new_state().items(): room.setdefault(k,v)
+    if not isinstance(room.get("wall_draft"),dict): room["wall_draft"]={}
+    room.setdefault("players",{})
+    ids=list(room["players"])
+    if not room.get("p1") and ids: room["p1"]=ids[0]
+    if not room.get("p2") and len(ids)>1: room["p2"]=next((i for i in ids if i!=room.get("p1")),None)
+    room.setdefault("surrender_ask",{})
+    return room
+
+def _q_pid(room, uid):
+    uid=str(uid)
+    if uid==room.get("p1"): return "1"
+    if uid==room.get("p2"): return "2"
+    return None
+
+def _q_user_info(user, uid):
+    name=(user.get("first_name") or user.get("username") or uid)
+    last=user.get("last_name") or ""
+    full=(name+" "+last).strip() if last and user.get("first_name") else name
+    return str(full)[:48], str(user.get("username") or "")[:40]
+
+def _quoridor_join(room, uid, user):
+    """Mini App ochilganda: xona egasi (1-o'yinchi) kiradi yoki ikkinchi o'yinchi qo'shilib o'yin boshlanadi."""
+    _q_normalize(room)
+    name,uname=_q_user_info(user,uid)
+    if uid==room.get("p1") or uid==room.get("p2"):
+        pl=room["players"].setdefault(uid,{"joined_at":time.time()})
+        pl["name"]=name; pl["username"]=uname
+    elif room.get("status")=="lobby" and not room.get("p2"):
+        room["players"][uid]={"side":None,"style":"classic","joined_at":time.time(),"name":name,"username":uname}
+        room["p2"]=uid; room["status"]="playing"; room["turn"]="1"
+        room["version"]+=1
+    else:
+        return None,"Bu o'yin xonasi to'la yoki o'yin allaqachon boshlangan. Faqat 2 kishi o'ynaydi."
+    room["updated_at"]=time.time(); _save()
+    return _public(room,uid),None
+
+def _q_legal_walls(room):
+    """Hozirgi yurish egasi uchun qo'yish mumkin bo'lgan devorlar: ['h:r:c', 'v:r:c', ...] (versiya bo'yicha keshlanadi)."""
+    if room.get("status")!="playing" or room.get("winner"): return []
+    ver=room.get("version",0)
+    hit=_Q_CACHE.get(room["id"])
+    if hit and hit[0]==ver: return hit[1]
+    pid=room["turn"]; out=[]
+    if room["walls_left"].get(pid,0)>0:
+        for o in ("h","v"):
+            for r in range(_qd.WALL_ANCHORS):
+                for c in range(_qd.WALL_ANCHORS):
+                    if _qd.wall_error(room,pid,r,c,o) is None: out.append(f"{o}:{r}:{c}")
+    if len(_Q_CACHE)>400:
+        for k in list(_Q_CACHE)[:100]: _Q_CACHE.pop(k,None)
+    _Q_CACHE[room["id"]]=(ver,out)
+    return out
+
+def _quoridor_public(room, uid):
+    _q_normalize(room)
+    def pinfo(pid):
+        u=room.get("p1" if pid=="1" else "p2")
+        p=room["players"].get(u) if u else None
+        if not p: return None
+        return {"id":int(u),"name":p.get("name") or str(u),"username":p.get("username") or ""}
+    playing=room.get("status")=="playing" and not room.get("winner")
+    pid=_q_pid(room,uid)
+    winner=room.get("winner")
+    wuid=room.get("p1" if winner=="1" else "p2") if winner else None
+    return {
+        "winner": wuid,                       # umumiy interfeys uchun: g'olibning Telegram ID'si
+        "turn": room.get("turn"),             # "1" | "2"
+        "q": {
+            "pawns": room["pawns"], "walls": room["walls"], "walls_left": room["walls_left"],
+            "my_pid": pid, "winner_pid": winner, "last": room.get("last"),
+            "p1": pinfo("1"), "p2": pinfo("2"),
+            "legal_moves": ([list(m) for m in _qd.legal_moves(room,room["turn"])]
+                            if playing and pid==room["turn"] else []),
+            "legal_walls": (_q_legal_walls(room) if playing and pid==room["turn"] else []),
+        },
+        "share_url": room_url("quoridor", room["id"]),
+    }
+
+def _q_check(room, uid):
+    """(pid, xato) — o'yinchi shu xonada, o'yin davom etyapti va navbat uniki bo'lsa pid qaytadi."""
+    _q_normalize(room)
+    pid=_q_pid(room,uid)
+    if pid is None: return None,"Siz bu o'yinda emassiz."
+    if room.get("status")=="lobby": return None,"Raqib hali qo'shilmadi."
+    if room.get("winner") or room.get("status")!="playing": return None,"O'yin tugagan."
+    if room.get("turn")!=pid: return None,"Hozir navbat sizda emas."
+    return pid,None
+
+def _q_finish_if_won(room):
+    if room.get("winner"):
+        room["status"]="finished"
+        room["wall_draft"]={}
+
+def quoridor_move(rid, init_data, r, c):
+    user=_verify(init_data)
+    if not user:return None,"Sessiya tasdiqlanmadi."
+    uid=str(int(user["id"]))
+    if isinstance(r,bool) or isinstance(c,bool) or not isinstance(r,int) or not isinstance(c,int):
+        return None,"Katak koordinatasi noto'g'ri."
+    with LOCK:
+        room=_room(rid)
+        if not room or room.get("game")!="quoridor":return None,"Xona topilmadi."
+        pid,err=_q_check(room,uid)
+        if err:return None,err
+        ok,err=_qd.apply_move(room,pid,r,c)
+        if not ok:return None,err
+        _q_finish_if_won(room)
+        room["version"]+=1;room["updated_at"]=time.time();_save()
+        return _public(room,uid),None
+
+def quoridor_wall(rid, init_data, r, c, o):
+    user=_verify(init_data)
+    if not user:return None,"Sessiya tasdiqlanmadi."
+    uid=str(int(user["id"]))
+    if isinstance(r,bool) or isinstance(c,bool) or not isinstance(r,int) or not isinstance(c,int) or o not in ("h","v"):
+        return None,"Devor ma'lumoti noto'g'ri."
+    with LOCK:
+        room=_room(rid)
+        if not room or room.get("game")!="quoridor":return None,"Xona topilmadi."
+        pid,err=_q_check(room,uid)
+        if err:return None,err
+        ok,err=_qd.apply_wall(room,pid,r,c,o)
+        if not ok:return None,err
+        room["version"]+=1;room["updated_at"]=time.time();_save()
+        return _public(room,uid),None
+
+def _quoridor_resign(room, uid):
+    _q_normalize(room)
+    pid=_q_pid(room,uid)
+    if pid is None: return False,"Siz bu o'yinda emassiz."
+    if room.get("status")!="playing": return False,"O'yin davom etmayapti."
+    ok,err=_qd.surrender(room,pid)
+    if not ok: return False,err
+    room["status"]="finished"
+    room["version"]+=1; room["updated_at"]=time.time(); _save()
+    return True,None
+
+def _quoridor_rematch(room, uid):
+    """Ikkala o'yinchi ham rozi bo'lsa yangi o'yin; ranglar (boshlash huquqi) almashadi."""
+    _q_normalize(room)
+    if _q_pid(room,uid) is None: return False,"Siz bu o'yinda emassiz."
+    if room.get("status")!="finished": return False,"O'yin hali tugamagan."
+    if not room.get("p2"): return False,"Raqib yo'q."
+    votes=room.setdefault("rematch_votes",{}); votes[uid]=True
+    if len(votes)>=2:
+        room["p1"],room["p2"]=room["p2"],room["p1"]
+        room.update(_qd.new_state())
+        room["status"]="playing"; room["surrender_ask"]={}; room["rematch_votes"]={}
+    room["version"]+=1; room["updated_at"]=time.time(); _save()
+    return True,None
+
+
 # ---------------- API ----------------
 def move(rid,init_data,fr,to,promo="q"):
     user=_verify(init_data)
@@ -735,6 +902,10 @@ def resign(rid,init_data):
     with LOCK:
         room=_room(rid);p=room and room["players"].get(uid)
         if not p:return None,"Siz bu xonada emassiz."
+        if room["game"]=="quoridor":
+            ok,err=_quoridor_resign(room,uid)
+            if not ok: return None,err
+            return _public(room,uid),None
         if room["status"]=="playing":
             room["status"]="finished";room["reason"]="resignation"
             if room["game"] in ("memory","tictactoe"):
@@ -822,6 +993,10 @@ def rematch(rid,init_data):
     with LOCK:
         room=_room(rid)
         if not room or uid not in room["players"]:return None,"Xona topilmadi."
+        if room["game"]=="quoridor":
+            ok,err=_quoridor_rematch(room,uid)
+            if not ok: return None,err
+            return _public(room,uid),None
         room["rematch_votes"][uid]=True
         if len(room["rematch_votes"])==2:
             gkey=room["game"]
@@ -878,6 +1053,8 @@ def handle_post(handler):
     elif p=="/api/game/memory/flip":d,e=memory_flip(rid,init,body.get("index"))
     elif p=="/api/game/tictactoe/mark":d,e=choose_mark(rid,init,body.get("mark",""))
     elif p=="/api/game/tictactoe/move":d,e=tictactoe_move(rid,init,body.get("index"))
+    elif p=="/api/game/quoridor/move":d,e=quoridor_move(rid,init,body.get("r"),body.get("c"))
+    elif p=="/api/game/quoridor/wall":d,e=quoridor_wall(rid,init,body.get("r"),body.get("c"),body.get("o"))
     else:return _json(handler,404,{"ok":False,"error":"Not found"})
     return _json(handler,200 if not e else 400,{"ok":not bool(e),"data":d,"error":e})
 

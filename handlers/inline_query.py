@@ -87,6 +87,7 @@ MUHIM SOZLASH (config.py / .env orqali):
 """
 
 import asyncio
+import html
 import io
 import logging
 import re
@@ -382,14 +383,27 @@ async def on_inline_query(
             if gkey == "quoridor":
                 # Birinchi o'yinchining ismi/@username'i doskada ko'rinishi uchun.
                 chat_games.q_set_profile(game.ROOMS.get(rid) or {}, user)
-            if gkey in ("checkers", "tictactoe", "memory", "quoridor"):
-                if gkey == "quoridor":
-                    # Xabar matni va tugmalar chat_games.render() bilan BIR XIL chiziladi —
-                    # chatga tushgan zahoti haqiqiy doska ko'rinadi (keyin har yurishda yangilanadi).
-                    _qroom = game.ROOMS.get(rid)
-                    text, _qkb = chat_games.render(_qroom)
-                    kb = _qkb.inline_keyboard
-                elif gkey == "checkers":
+            if gkey == "quoridor":
+                # 🧱 Quoridor — TELEGRAM MINI APP rejimida (Shaxmat kabi): natija chatga
+                # tushgach "🎮 O'ynash" tugmasi xonani Direct Mini App sifatida ochadi.
+                # Ikkinchi o'yinchi ham shu xabardagi tugma orqali kiradi va o'yin boshlanadi.
+                if not PUBLIC_BASE_URL:
+                    continue
+                url = game.room_url(gkey, rid)
+                _p1 = (user.username and "@" + user.username) or user.full_name or "o‘yinchi"
+                _qtext = (f"🧱 <b>QUORIDOR</b> 🏆\n\n"
+                          f"🔵 1-o‘yinchi: {html.escape(str(_p1))}\n"
+                          f"🔴 2-o‘yinchi: kutilmoqda…\n\n"
+                          "9×9 doska • har kimda 10 ta devor • birinchi bo‘lib qarshi qatorga yetgan g‘olib.\n"
+                          "👇 Tugmani bosib Mini App’da o‘ynang. Do‘stingiz ham shu xabardagi tugma orqali qo‘shiladi.")
+                results.append(InlineQueryResultArticle(
+                    id=f"game_{gkey}_{uuid.uuid4().hex}", title=title, description=desc,
+                    input_message_content=InputTextMessageContent(_qtext, parse_mode="HTML"),
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🎮 Quoridor o‘ynash", url=url)]]),
+                ))
+                continue
+            if gkey in ("checkers", "tictactoe", "memory"):
+                if gkey == "checkers":
                     kb = [[InlineKeyboardButton("⚪ Oq", callback_data=f"cg:side:{rid}:w"), InlineKeyboardButton("⚫ Qora", callback_data=f"cg:side:{rid}:b")], [InlineKeyboardButton("👥 Qo‘shilish", callback_data=f"cg:join:{rid}")]]
                     text = ("⚪ <b>Rus shashkasi</b>\n\n"
                             "👥 1v1 o‘yin chatning o‘zida.\n"

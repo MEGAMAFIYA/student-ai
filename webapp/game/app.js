@@ -10,7 +10,7 @@
   const initData = tg?.initData || "";
 
   let state = null, selected = null, mySide = null, myStyle = "classic", myMark = null;
-  let lastVersion = -1, lastChat = "", busy = false;
+  let lastVersion = -1, lastChat = "", busy = false, winShown = false;
   let peer = null, peerTarget = 0, makingOffer = false, pendingIce = [], ignoreOffer = false;
   let localStream = new MediaStream();
   let mediaBusy = false;
@@ -41,7 +41,7 @@
     if (!room) return status("Xona topilmadi");
     try {
       state = await api("/api/game/join", null, {room});
-      $("gameTitle").textContent = state.game === "chess" ? "♟ Shaxmat" : state.game === "checkers" ? "⚪ Rus shashkasi" : state.game === "memory" ? "🧠 Xotira o‘yini" : "❌⭕ X-O o‘yini";
+      $("gameTitle").textContent = state.game === "chess" ? "♟ Shaxmat" : state.game === "checkers" ? "⚪ Rus shashkasi" : state.game === "memory" ? "🧠 Xotira o‘yini" : state.game === "quoridor" ? "🧱 Quoridor" : "❌⭕ X-O o‘yini";
       renderLobby(); render();
       await pollChat();
       setInterval(poll, 650);
@@ -68,6 +68,13 @@
   function renderLobby() {
     if (!state) return;
     const ps = state.players || [];
+    $("lobbyQuoridor").classList.toggle("hidden", state.game !== "quoridor");
+    if (state.game === "quoridor") {
+      $("lobbyChess").classList.add("hidden"); $("lobbyMemory").classList.add("hidden"); $("lobbyTTT").classList.add("hidden");
+      $("lobbyText").textContent = "Raqib qo‘shilishini kutyapmiz. Havolani do‘stingizga yuboring.";
+      $("players").innerHTML = ps.map(p => `<span>● ${escapeHtml(p.name || "O‘yinchi")}</span>`).join("");
+      return;
+    }
     if (state.game === "memory") {
       $("lobbyChess").classList.add("hidden");
       $("lobbyTTT").classList.add("hidden");
@@ -132,7 +139,16 @@
     if (state.status === "lobby") { renderLobby(); $("lobby").classList.remove("hidden"); $("game").classList.add("hidden"); return; }
     $("lobby").classList.add("hidden"); $("game").classList.remove("hidden");
     const me = playerById(state.me), op = state.players.find(p => Number(p.id) !== Number(state.me));
-    if (state.game === "memory") {
+    const isQ = state.game === "quoridor";
+    board.classList.toggle("hidden", isQ); $("qBoard").classList.toggle("hidden", !isQ); $("qPanel").classList.toggle("hidden", !isQ);
+    if (!isQ) $("rematchBtn").classList.add("hidden");
+    if (isQ) {
+      fillPlayer($("playerMe"), me, true); fillPlayer($("playerOpp"), op, false);
+      $("memScoreboard").classList.add("hidden");
+      const myTurn = state.status === "playing" && state.q.my_pid === state.turn;
+      status(state.status === "finished" ? "🏁 Tugadi" : myTurn ? "🟢 Sizning yurishingiz" : "🕐 Raqib yurmoqda");
+      renderQuoridor();
+    } else if (state.game === "memory") {
       fillPlayer($("playerMe"), me, true); fillPlayer($("playerOpp"), op, false);
       const myTurn = String(state.turn) === String(state.me);
       status(state.status === "finished" ? "🏁 Tugadi" : myTurn ? "🟢 Sizning navbatingiz" : "🕐 Do‘stingiz navbati");
@@ -153,20 +169,29 @@
       $("memScoreboard").classList.add("hidden");
     }
     if (state.status === "finished") {
-      const iWon = (state.game === "memory" || state.game === "tictactoe")
+      const iWon = (state.game === "memory" || state.game === "tictactoe" || isQ)
         ? String(state.winner) === String(state.me)
         : state.winner === mySide;
       const text = state.winner ? `🏆 ${iWon ? "Siz yutdingiz!" : "Do‘stingiz yutdi!"}` : "🤝 Durang";
-      $("result").textContent = text + "  " + (state.reason || "");
+      let extra = state.reason || "";
+      if (isQ) {
+        const wp = state.q.winner_pid === "1" ? state.q.p1 : state.q.p2;
+        extra = (state.reason === "surrender" ? "🏳️ Taslim bo‘ldi. " : "🎯 Maqsad qatoriga yetdi. ") + (wp ? "G‘olib: " + (wp.username ? "@" + wp.username : wp.name) : "");
+      }
+      $("result").textContent = text + "  " + extra;
       $("result").classList.remove("hidden");
-      if (state.winner) winFx();
-    } else $("result").classList.add("hidden");
+      if (isQ) { $("rematchBtn").classList.remove("hidden"); }
+      if (state.winner && !winShown) { winShown = true; winFx(); }
+    } else { $("result").classList.add("hidden"); winShown = false; if (isQ) { $("rematchBtn").classList.add("hidden"); $("rematchBtn").textContent = "🔄 Qayta o‘ynash"; } }
   }
   function fillPlayer(card, p, mine) {
     const name = p?.name || (mine ? "Siz" : "Do‘stingiz");
     card.querySelector(".player-name").textContent = name;
     const label = card.querySelector(".side-label");
-    if (state.game === "memory") {
+    if (state.game === "quoridor") {
+      const pid = p && state.q.p1 && Number(state.q.p1.id) === Number(p.id) ? "1" : "2";
+      label.textContent = `${pid === "1" ? "🔵" : "🔴"} 🧱 ${state.q.walls_left?.[pid] ?? 0}`;
+    } else if (state.game === "memory") {
       const sc = (state.scores && p) ? (state.scores[String(p.id)] || 0) : 0;
       label.textContent = `🎯 ${sc} juft`;
     } else if (state.game === "tictactoe") {
@@ -297,6 +322,133 @@
     try{const old=state;state=await api("/api/game/move",{room,from:fr,to,promotion});render();fx(state.last_move?.captured?"capture":"move",to);tone(state.last_move?.captured?180:420,.07);}
     catch(e){tg?.showAlert?.(e.message);}finally{busy=false;}
   }
+
+  // ---------- 🧱 Quoridor (Mini App) ----------
+  // Server (game.py + quoridor.py) barcha qoidalarni tekshiradi; bu yerda faqat interfeys.
+  const QG = 0.26, QT = 9 + 8 * QG;            // devor yo'lagi / doska o'lchami (katak = 1 birlik)
+  let qMode = "move", qDraft = null, qBuilt = false, qPawns = {}, qLayers = {};
+  const qFlip = () => state?.q?.my_pid === "2";   // 2-o'yinchi doskani aylantirib ko'radi: o'zi doim pastda
+  const qPct = v => (v / QT * 100) + "%";
+  function qRect(x, y, w, h) {                     // birlik koordinatalar -> % (aylantirish bilan)
+    if (qFlip()) { x = QT - x - w; y = QT - y - h; }
+    return `left:${qPct(x)};top:${qPct(y)};width:${qPct(w)};height:${qPct(h)}`;
+  }
+  const qCellXY = (r, c) => [c * (1 + QG), r * (1 + QG)];
+  function qWallRect(o, r, c) {
+    return o === "h" ? qRect(c * (1 + QG), r * (1 + QG) + 1, 2 + QG, QG) : qRect(c * (1 + QG) + 1, r * (1 + QG), QG, 2 + QG);
+  }
+  function qBuild() {
+    if (qBuilt) return;
+    const b = $("qBoard"); b.innerHTML = "";
+    for (const n of ["cells", "walls", "pawns"]) { const d = document.createElement("div"); d.style.cssText = "position:absolute;inset:0;pointer-events:none"; b.appendChild(d); qLayers[n] = d; }
+    for (const pid of ["1", "2"]) { const e = document.createElement("div"); e.className = "qpawn p" + pid; qLayers.pawns.appendChild(e); qPawns[pid] = e; }
+    const ov = document.createElement("div"); ov.className = "qover hidden"; b.appendChild(ov); qLayers.over = ov;
+    ov.addEventListener("click", ev => {
+      const rc = b.getBoundingClientRect();
+      let x = (ev.clientX - rc.left) / rc.width * QT, y = (ev.clientY - rc.top) / rc.height * QT;
+      if (qFlip()) { x = QT - x; y = QT - y; }
+      const k = v => Math.max(0, Math.min(7, Math.round((v - (1 + QG / 2)) / (1 + QG))));
+      const c = k(x), r = k(y);
+      if (qDraft && qDraft.r === r && qDraft.c === c) qDraft.o = qDraft.o === "h" ? "v" : "h";
+      else qDraft = {o: qDraft?.o || "h", r, c};
+      renderQuoridor();
+    });
+    qBuilt = true;
+  }
+  function qWallProblem(d) {
+    const q = state.q;
+    if (q.legal_walls.includes(`${d.o}:${d.r}:${d.c}`)) return null;
+    for (const w of q.walls) {
+      if (w.r === d.r && w.c === d.c && w.o !== d.o) return "Devorlar kesishmasligi kerak.";
+      if (w.o === d.o && ((d.o === "h" && w.r === d.r && Math.abs(w.c - d.c) <= 1) || (d.o === "v" && w.c === d.c && Math.abs(w.r - d.r) <= 1))) return "Bu joyda devor bor (ustma-ust tushadi).";
+    }
+    return "Bu devor yo‘lni butunlay to‘sib qo‘yadi — mumkin emas.";
+  }
+  function renderQuoridor() {
+    qBuild();
+    const q = state.q, myPid = q.my_pid, playing = state.status === "playing";
+    const myTurn = playing && myPid === state.turn;
+    const myWalls = q.walls_left[myPid] || 0;
+    if (!myTurn || myWalls <= 0) { if (qMode === "wall") qMode = "move"; }
+    if (qMode !== "wall") qDraft = null;
+    // katakllar
+    const goalMe = myPid === "1" ? 0 : 8, goalOpp = myPid === "1" ? 8 : 0;
+    const legal = new Set(qMode === "move" && myTurn ? q.legal_moves.map(m => m[0] + "," + m[1]) : []);
+    qLayers.cells.innerHTML = "";
+    for (let r = 0; r < 9; r++) for (let c = 0; c < 9; c++) {
+      const [x, y] = qCellXY(r, c), el = document.createElement("button");
+      el.className = "qcell" + (r === goalMe ? " goal-me" : r === goalOpp ? " goal-opp" : "") + (legal.has(r + "," + c) ? " legal" : "");
+      el.style.cssText = qRect(x, y, 1, 1);
+      if (legal.has(r + "," + c)) el.onclick = () => qSendMove(r, c); else el.tabIndex = -1;
+      qLayers.cells.appendChild(el);
+    }
+    // devorlar
+    qLayers.walls.innerHTML = "";
+    q.walls.forEach((w, i) => {
+      const el = document.createElement("div"); el.className = "qwall" + (i === q.walls.length - 1 ? " last" : "");
+      el.style.cssText = qWallRect(w.o, w.r, w.c); qLayers.walls.appendChild(el);
+    });
+    let problem = null;
+    if (qDraft) {
+      problem = qWallProblem(qDraft);
+      const el = document.createElement("div"); el.className = "qwall " + (problem ? "draft-bad" : "draft-ok");
+      el.style.cssText = qWallRect(qDraft.o, qDraft.r, qDraft.c); qLayers.walls.appendChild(el);
+    }
+    // piyodalar
+    for (const pid of ["1", "2"]) {
+      const [r, c] = q.pawns[pid], [x, y] = qCellXY(r, c), e = qPawns[pid];
+      const pad = 0.14;
+      e.style.cssText = qRect(x + pad, y + pad, 1 - 2 * pad, 1 - 2 * pad);
+      e.className = "qpawn p" + pid + (pid === myPid ? " mine" : "") + (playing && state.turn === pid ? " turn" : "");
+    }
+    // boshqaruv
+    qLayers.over.classList.toggle("hidden", !(qMode === "wall" && myTurn));
+    $("qModeRow").classList.toggle("hidden", !playing);
+    $("qModeMove").classList.toggle("active", qMode === "move");
+    $("qModeWall").classList.toggle("active", qMode === "wall");
+    $("qModeWall").textContent = `🧱 Devor qo‘yish (${myWalls})`;
+    $("qModeWall").disabled = !myTurn || myWalls <= 0;
+    $("qModeMove").disabled = !myTurn;
+    $("qWallRow").classList.toggle("hidden", qMode !== "wall");
+    $("qWallConfirm").classList.toggle("hidden", qMode !== "wall");
+    $("qOrH").classList.toggle("active", (qDraft?.o || "h") === "h");
+    $("qOrV").classList.toggle("active", qDraft?.o === "v");
+    $("qWallOk").disabled = !qDraft || !!problem;
+    const info = $("qInfo");
+    if (state.status === "finished") info.textContent = q.last || "";
+    else if (qMode === "wall") info.textContent = !qDraft ? "Doskada devor markazi bo‘ladigan joyga bosing (katta kataklar burchagiga)." : problem ? "⛔ " + problem : "✅ Joylashtirish mumkin — tasdiqlang. Xuddi shu joyga yana bossangiz yo‘nalish almashadi.";
+    else info.textContent = (myTurn ? "Sariq belgili katakni bosib yuring. " : "Raqib navbati. ") + (q.last ? "↪️ " + q.last : "");
+  }
+  async function qSendMove(r, c) {
+    if (busy) return; busy = true;
+    try { state = await api("/api/game/quoridor/move", {room, r, c}); render(); tone(420, .07); try { tg?.HapticFeedback?.impactOccurred?.("light"); } catch (_) {} }
+    catch (e) { tg?.showAlert?.(e.message); }
+    finally { busy = false; }
+  }
+  async function qSendWall() {
+    if (busy || !qDraft) return; busy = true;
+    const d = qDraft;
+    try { state = await api("/api/game/quoridor/wall", {room, r: d.r, c: d.c, o: d.o}); qDraft = null; qMode = "move"; render(); tone(260, .09); try { tg?.HapticFeedback?.impactOccurred?.("medium"); } catch (_) {} }
+    catch (e) { tg?.showAlert?.(e.message); }
+    finally { busy = false; }
+  }
+  $("qModeMove").onclick = () => { qMode = "move"; renderQuoridor(); };
+  $("qModeWall").onclick = () => { qMode = "wall"; renderQuoridor(); };
+  $("qOrH").onclick = () => { if (qDraft) { qDraft.o = "h"; renderQuoridor(); } };
+  $("qOrV").onclick = () => { if (qDraft) { qDraft.o = "v"; renderQuoridor(); } };
+  $("qWallOk").onclick = qSendWall;
+  $("qWallCancel").onclick = () => { qMode = "move"; qDraft = null; renderQuoridor(); };
+  $("qRules").onclick = () => tg?.showAlert ? tg.showAlert("Maqsad: raqib boshlagan qatorga birinchi yetib borish.\nNavbatda: 1 katak yuring YOKI devor qo‘ying (10 tadan).\nRaqib yonida bo‘lsa — ustidan sakrang (orqasi to‘silgan bo‘lsa yon tomonga).\nRaqibning maqsad qatoriga boradigan barcha yo‘lni to‘sish mumkin emas.") : alert("Qoidalar: 1 katak yuring yoki devor qo‘ying; birinchi bo‘lib qarshi qatorga yetgan g‘olib.");
+  $("qShareBtn").onclick = () => {
+    const u = state?.share_url || ""; if (!u) return;
+    const link = "https://t.me/share/url?url=" + encodeURIComponent(u) + "&text=" + encodeURIComponent("🧱 Quoridor o‘ynaymizmi? Havolani bosing:");
+    if (tg?.openTelegramLink) tg.openTelegramLink(link); else window.open(link, "_blank");
+  };
+  $("rematchBtn").onclick = async () => {
+    try { state = await api("/api/game/rematch", {room}); qDraft = null; qMode = "move"; render(); if (state.status === "finished") { $("rematchBtn").textContent = "⏳ Raqib roziligi kutilmoqda…"; } }
+    catch (e) { tg?.showAlert?.(e.message); }
+  };
+
   async function poll(){
     try{const d=await api("/api/game/state",null,{room});if(lastVersion<0||d.version>lastVersion){lastVersion=d.version;state=d;render();ensurePeer();}}
     catch(e){console.warn("game state",e);}

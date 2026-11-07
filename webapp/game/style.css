@@ -29,3 +29,29 @@
 
 /* Rus shashkasida yurilmaydigan och rangli kataklar ko‘rinmaydi; joyi bo‘sh qoladi. */
 .board .sq.empty-square { visibility: hidden; pointer-events: none; border: 0; background: transparent; box-shadow: none; }
+
+/* ===== 🧱 Quoridor (Mini App) ===== */
+.qboard{position:relative;width:100%;height:100%;border-radius:16px;background:#10162a;border:3px solid #1b2132;box-shadow:0 24px 80px #000a,0 0 0 1px #ffffff10;touch-action:manipulation;user-select:none;overflow:hidden}
+.qboard .qcell{pointer-events:auto;position:absolute;border-radius:7px;background:linear-gradient(145deg,#2c3556,#1b2138);border:0;padding:0;cursor:default}
+.qboard .qcell.goal-me{background:linear-gradient(145deg,#2d5a45,#1a3a2b)}
+.qboard .qcell.goal-opp{background:linear-gradient(145deg,#5a2d3a,#3a1a24)}
+.qboard .qcell.legal{cursor:pointer;box-shadow:0 0 0 2px #f5cf58 inset;animation:qpulse 1.2s ease-in-out infinite}
+.qboard .qcell.legal:after{content:"";position:absolute;left:50%;top:50%;width:30%;height:30%;margin:-15% 0 0 -15%;border-radius:50%;background:#f5cf58cc}
+@keyframes qpulse{50%{filter:brightness(1.35)}}
+.qboard .qwall{position:absolute;border-radius:5px;background:linear-gradient(135deg,#f3d9a4,#c4903f);box-shadow:0 2px 6px #000a;z-index:3}
+.qboard .qwall.draft-ok{background:#58e29aaa;box-shadow:0 0 12px #58e29a}
+.qboard .qwall.draft-bad{background:#ff5d6caa;box-shadow:0 0 12px #ff5d6c}
+.qboard .qwall.last{outline:2px solid #fff8}
+.qboard .qpawn{position:absolute;z-index:4;border-radius:50%;display:grid;place-items:center;pointer-events:none;transition:left .28s ease,top .28s ease;box-shadow:0 5px 10px #000a,inset -4px -5px 8px #0006}
+.qboard .qpawn.p1{background:radial-gradient(circle at 30% 25%,#cfe0ff,#4d8dff 45%,#1d3f9e)}
+.qboard .qpawn.p2{background:radial-gradient(circle at 30% 25%,#ffd0d4,#ff5d6c 45%,#9e1d2c)}
+.qboard .qpawn.mine{outline:3px solid #fff9}
+.qboard .qpawn.turn{animation:qpulse 1s ease-in-out infinite}
+.qboard .qover{position:absolute;inset:0;z-index:6;cursor:crosshair}
+.qpanel{max-width:760px;margin:9px auto}
+.q-info{display:flex;justify-content:center;gap:16px;font-size:12px;color:#cfd5ee;margin-bottom:8px;text-align:center;min-height:16px}
+.q-row{display:flex;gap:6px;margin-top:6px}
+.q-mode.active,.q-or.active{border-color:#8f9cff;background:#6978ff28}
+.q-ok{margin-top:0;flex:2;padding:11px}.q-cancel{flex:1}
+.q-lobby-text{font-size:12px;color:#b9c2df;line-height:1.5;margin:6px 0}
+#rematchBtn{max-width:760px;display:block;margin:8px auto}
