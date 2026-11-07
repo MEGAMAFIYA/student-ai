@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 _API = "https://api.github.com"
 _TIMEOUT = 30.0
 _MAX_REPOS = 500
-_MAX_DIR_ITEMS = 200
+_MAX_DIR_ITEMS = 1000
 _MAX_TEXT_BYTES = 900_000
 _MAX_VIEW_CHARS = 15_000
 

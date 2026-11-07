@@ -27,7 +27,7 @@ _PALETTE_KEYS=list(PALETTES)
 _BUILD_SEMAPHORE=asyncio.Semaphore(max(1,int(os.getenv("SLIDE_BUILD_CONCURRENCY","2"))))
 
 _SYSTEM="""Siz professional taqdimot muharriri va mavzu bo‘yicha mutaxassissiz.
-Faqat o‘zbek tilida, mazmunli va faktlarga ehtiyotkor yondashgan holda ishlang.
+BARCHA taqdimot matnlari qat'iy O‘ZBEK TILIDA, lotin yozuvida bo‘lsin. Mavzu inglizcha yoki boshqa tilda berilgan bo‘lsa ham, uni o‘zbekchaga tarjima qilib taqdimot yarating. Sarlavha, punktlar, jadval, diagramma yorliqlari va manba izohlari ham o‘zbekcha bo‘lsin. Inglizcha sarlavha yoki standart iboralarni ishlatmang. Mazmunli va faktlarga ehtiyotkor yondashing.
 Javob FAQAT JSON obyekt bo‘lsin:
 {"slides":[{"heading":"...","bullets":["..."],"layout":"split_right|split_left|cards|chart|full_image|two_col|text_focus|table","chart":{"labels":["..."],"values":[1,2,3]},"table":[["...","..."],["...","..."]]}],"references":["Haqiqiy manba nomi, muallif/tashkilot, yil, URL yoki DOI"]}
 Har bir slaydda 2-4 qisqa, mazmunli punkt. Takroriy jumla ishlatmang.
@@ -228,6 +228,8 @@ def _safe_filename(topic):
 async def _generate_slides(topic,count):
     prompt=(f"Mavzu: {topic}\nKontent slaydlari: aynan {count} ta.\n"
             "Taqdimot uchun ilmiy, mantiqiy va takrorlanmaydigan kontent yarating. "
+            "MUHIM: JSON ichidagi barcha ko‘rinadigan matnlar faqat o‘zbek tilida (lotin yozuvida) bo‘lsin; inglizcha matn yozmang. "
+            "Har bir heading, bullets, jadval kataklari va diagramma labels o‘zbekcha bo‘lsin. "
             "Kerak bo‘lsa chart/table qo‘shing. references ro‘yxatida faqat tekshirish mumkin bo‘lgan manbalar bo‘lsin.")
     for attempt in range(2):
         raw=await ask_ai(PPTX_AI,prompt,_SYSTEM)

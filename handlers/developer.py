@@ -1038,6 +1038,56 @@ async def _run_music_check() -> str:
 
 
 # ============================================================
+
+
+_RENDER_TERMINAL_SUCCESS = {"live"}
+_RENDER_TERMINAL_FAILURE = {"build_failed", "update_failed", "canceled", "deactivated"}
+
+async def _watch_render_deploy(application, api_key: str, service_id: str, deploy_id: str, service_name: str = "Render service"):
+    """Deploy yakunlanguncha kuzatadi; bot restart bo'lsa storage'dan davom etadi."""
+    try:
+        for _ in range(180):  # ko'pi bilan 60 daqiqa
+            await asyncio.sleep(20)
+            try:
+                deploy = await render_api.get_deploy(api_key, service_id, deploy_id)
+            except Exception as poll_exc:
+                logger.warning("Render deploy holatini tekshirishda vaqtinchalik xato (%s): %s", deploy_id, poll_exc)
+                continue
+            status = str(deploy.get("status") or "").lower()
+            if status in _RENDER_TERMINAL_SUCCESS:
+                for admin_id in config.ADMIN_IDS:
+                    try:
+                        await application.bot.send_message(admin_id,
+                            f"✅ <b>Deploy amalga oshdi</b>\n\nServis: <b>{_esc(service_name)}</b>\nDeploy ID: <code>{_esc(deploy_id)}</code>", parse_mode="HTML")
+                    except Exception as exc:
+                        logger.warning("Deploy xabari admin %s ga yuborilmadi: %s", admin_id, exc)
+                storage.finish_render_pending_deploy(deploy_id)
+                return
+            if status in _RENDER_TERMINAL_FAILURE:
+                for admin_id in config.ADMIN_IDS:
+                    try:
+                        await application.bot.send_message(admin_id,
+                            f"❌ <b>Deploy muvaffaqiyatsiz yakunlandi</b>\n\nServis: <b>{_esc(service_name)}</b>\nHolat: <code>{_esc(status)}</code>\nDeploy ID: <code>{_esc(deploy_id)}</code>", parse_mode="HTML")
+                    except Exception:
+                        pass
+                storage.finish_render_pending_deploy(deploy_id)
+                return
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception("Render deploy monitoring xatosi: %s", deploy_id)
+
+def resume_render_deploy_notifications(application):
+    """Bot qayta ishga tushganda hali yakunlanmagan deploy kuzatuvini tiklaydi."""
+    for item in storage.get_render_pending_deploys():
+        sid = str(item.get("service_id") or "")
+        account = next((a for a in config.RENDER_ACCOUNTS if a.get("service_id") == sid), None)
+        if not account:
+            account = config.RENDER_ACCOUNTS[0] if config.RENDER_ACCOUNTS else None
+        if account and sid and item.get("deploy_id"):
+            application.create_task(_watch_render_deploy(application, account["key"], sid,
+                str(item["deploy_id"]), str(item.get("service_name") or "Render service")))
+
 # ☁️ RENDER — Render API boshqaruv paneli
 # ============================================================
 
@@ -1411,9 +1461,16 @@ def _github_repo_keyboard(repos: list[dict]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
-def _github_path_keyboard(repo: str, path_value: str, items: list[dict]) -> InlineKeyboardMarkup:
+_GITHUB_ITEMS_PER_PAGE = 35
+
+def _github_path_keyboard(repo: str, path_value: str, items: list[dict], page: int = 0, show_navigation: bool = True) -> InlineKeyboardMarkup:
+    """Render a Telegram-safe page while preserving global item indexes."""
+    total_pages = max(1, (len(items) + _GITHUB_ITEMS_PER_PAGE - 1) // _GITHUB_ITEMS_PER_PAGE)
+    page = max(0, min(int(page), total_pages - 1))
+    start = page * _GITHUB_ITEMS_PER_PAGE
+    visible = items[start:start + _GITHUB_ITEMS_PER_PAGE]
     rows = []
-    for i, item in enumerate(items):
+    for i, item in enumerate(visible, start=start):
         label = f"{github_dev.item_icon(item['type'])} {item['name']}"
         if item["type"] == "file":
             label += f"  ({github_dev.format_size(item['size'])})"
@@ -1428,6 +1485,14 @@ def _github_path_keyboard(repo: str, path_value: str, items: list[dict]) -> Inli
         else:
             rows.append([InlineKeyboardButton(label[:64], callback_data=f"dev:gh:item:{i}")])
 
+    if show_navigation and total_pages > 1:
+        nav = []
+        if page > 0:
+            nav.append(InlineKeyboardButton("⬅️ Oldingi", callback_data=f"dev:gh:page:{page-1}"))
+        nav.append(InlineKeyboardButton(f"{page+1}/{total_pages}", callback_data="dev:gh:page:stay"))
+        if page + 1 < total_pages:
+            nav.append(InlineKeyboardButton("Keyingi ➡️", callback_data=f"dev:gh:page:{page+1}"))
+        rows.append(nav)
     rows.append([InlineKeyboardButton("➕ Yangi fayl qo'shish", callback_data="dev:gh:new")])
     rows.append([InlineKeyboardButton("📤 ZIP loyihani yuklash", callback_data="dev:gh:zip")])
     if path_value:
@@ -1437,7 +1502,7 @@ def _github_path_keyboard(repo: str, path_value: str, items: list[dict]) -> Inli
     return InlineKeyboardMarkup(rows)
 
 
-def _github_path_text(repo: str, path_value: str, items: list[dict]) -> str:
+def _github_path_text(repo: str, path_value: str, items: list[dict], page: int = 0) -> str:
     title = f"📦 <b>{_esc(repo)}</b>"
     title += f"\n📁 <code>/{_esc(path_value)}</code>" if path_value else "\n📁 <code>/</code>"
     if not items:
@@ -1446,6 +1511,11 @@ def _github_path_text(repo: str, path_value: str, items: list[dict]) -> str:
         dirs = sum(1 for x in items if x["type"] == "dir")
         files = sum(1 for x in items if x["type"] == "file")
         title += f"\n\n📁 Papkalar: <b>{dirs}</b>  📄 Fayllar: <b>{files}</b>"
+        pages = max(1, (len(items) + _GITHUB_ITEMS_PER_PAGE - 1) // _GITHUB_ITEMS_PER_PAGE)
+        if pages > 1:
+            first = page * _GITHUB_ITEMS_PER_PAGE + 1
+            last = min(len(items), first + _GITHUB_ITEMS_PER_PAGE - 1)
+            title += f"\n📄 Ko'rsatilmoqda: <b>{first}–{last}</b> / {len(items)} (sahifa {page+1}/{pages})"
     return title
 
 
@@ -1465,11 +1535,37 @@ async def _github_open_path(context: ContextTypes.DEFAULT_TYPE, path_value: str 
     items = await asyncio.to_thread(github_dev.list_directory, repo, path_value, branch)
     context.user_data["github_path"] = path_value
     context.user_data["github_items"] = items
+    context.user_data["github_page"] = 0
+
+    # Old directory listing continuation messages are removed before showing a new folder.
+    listing_chat_id = (context.user_data.get("dev_msg") or (None, None))[0]
+    old_messages = context.user_data.pop("github_listing_messages", [])
+    for message_id in old_messages:
+        try:
+            await context.bot.delete_message(chat_id=listing_chat_id, message_id=message_id)
+        except Exception:
+            pass
+
+    page_count = max(1, (len(items) + _GITHUB_ITEMS_PER_PAGE - 1) // _GITHUB_ITEMS_PER_PAGE)
     await _edit_menu(
         context,
-        _github_path_text(repo, path_value, items),
-        _github_path_keyboard(repo, path_value, items),
+        _github_path_text(repo, path_value, items, 0),
+        _github_path_keyboard(repo, path_value, items, 0, show_navigation=False),
     )
+    # Telegram inline keyboard limit: spread the remaining entries into follow-up messages.
+    # Every button retains its original index in github_items, so existing callbacks remain valid.
+    extra_ids = []
+    for page in range(1, page_count):
+        page_text = _github_path_text(repo, path_value, items, page)
+        page_keyboard = _github_path_keyboard(repo, path_value, items, page, show_navigation=False)
+        sent = await context.bot.send_message(
+            chat_id=listing_chat_id,
+            text=page_text,
+            parse_mode="HTML",
+            reply_markup=page_keyboard,
+        )
+        extra_ids.append(sent.message_id)
+    context.user_data["github_listing_messages"] = extra_ids
 
 
 async def _github_send_file_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2098,6 +2194,28 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await _github_error(context, exc, "dev:gh:repos")
             return DEV_MENU
 
+        if sub == "page":
+            page_value = parts[3] if len(parts) > 3 else "0"
+            items = context.user_data.get("github_items") or []
+            if page_value != "stay":
+                try:
+                    page = int(page_value)
+                except (TypeError, ValueError):
+                    page = 0
+                pages = max(1, (len(items) + _GITHUB_ITEMS_PER_PAGE - 1) // _GITHUB_ITEMS_PER_PAGE)
+                page = max(0, min(page, pages - 1))
+                context.user_data["github_page"] = page
+            else:
+                page = int(context.user_data.get("github_page", 0) or 0)
+            repo = context.user_data.get("github_repo", "")
+            path_value = context.user_data.get("github_path", "")
+            await _safe_edit_query(
+                query, _github_path_text(repo, path_value, items, page),
+                reply_markup=_github_path_keyboard(repo, path_value, items, page),
+                parse_mode="HTML",
+            )
+            return DEV_MENU
+
         if sub == "item":
             idx = int(parts[3])
             items = context.user_data.get("github_items") or []
@@ -2272,8 +2390,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     query,
                     f"✅ <b>Papka o'chirildi:</b> <code>{_esc(dir_path)}</code>\n"
                     f"🗑 {result['deleted_files']} ta fayl o'chirildi. Boshqa hech narsaga tegilmadi.\n\n"
-                    + _github_path_text(repo, parent, items),
-                    reply_markup=_github_path_keyboard(repo, parent, items),
+                    + _github_path_text(repo, parent, items, 0),
+                    reply_markup=_github_path_keyboard(repo, parent, items, 0),
                     parse_mode="HTML",
                 )
             except Exception as exc:
@@ -2385,10 +2503,27 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if action == "rdeploy":
         service_id = parts[2]
+        import cancel_registry
+        running = cancel_registry.active_jobs(exclude=asyncio.current_task())
+        if running:
+            unique_users = sorted({uid for _, uid in running})
+            await _safe_edit_query(query,
+                "⛔ <b>Deploy to'xtatildi.</b>\n\nHozir bot foydalanuvchi topshirig'ini bajaryapti. "
+                f"Faol topshiriqlar: <b>{len(running)}</b> ta.\n"
+                "Topshiriqlar tugagach deployni qayta bosing.",
+                reply_markup=_back_keyboard(f"dev:rsvc:{service_id}"), parse_mode="HTML")
+            logger.info("Render deploy bloklandi: %d faol user update", len(running))
+            return DEV_MENU
         await _safe_edit_query(query, "🚀 Deploy ishga tushirilmoqda...", parse_mode="HTML")
         try:
             api_key = _render_api_key_for_service(context, service_id)
             deploy = await render_api.trigger_deploy(api_key, service_id)
+            deploy_id = str(deploy.get("id") or "")
+            if deploy_id:
+                service = context.user_data.get("render_service") or {}
+                service_name = str(service.get("name") or service.get("serviceDetails", {}).get("name") or service_id)
+                storage.add_render_pending_deploy(service_id, deploy_id, service_name)
+                context.application.create_task(_watch_render_deploy(context.application, api_key, service_id, deploy_id, service_name))
             status = deploy.get("status") or "queued"
             await _safe_edit_query(
                 query,
@@ -2406,10 +2541,24 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if action == "rdeployclear":
         service_id = parts[2]
+        import cancel_registry
+        running = cancel_registry.active_jobs(exclude=asyncio.current_task())
+        if running:
+            await _safe_edit_query(query,
+                "⛔ <b>Deploy to'xtatildi.</b>\n\nBot hozir foydalanuvchi topshirig'ini bajaryapti. "
+                f"Faol topshiriqlar: <b>{len(running)}</b> ta. Tugagach qayta urinib ko'ring.",
+                reply_markup=_back_keyboard(f"dev:rsvc:{service_id}"), parse_mode="HTML")
+            return DEV_MENU
         await _safe_edit_query(query, "🧹🚀 Cache tozalanib deploy qilinmoqda...", parse_mode="HTML")
         try:
             api_key = _render_api_key_for_service(context, service_id)
             deploy = await render_api.trigger_deploy(api_key, service_id, clear_cache=True)
+            deploy_id = str(deploy.get("id") or "")
+            if deploy_id:
+                service = context.user_data.get("render_service") or {}
+                service_name = str(service.get("name") or service_id)
+                storage.add_render_pending_deploy(service_id, deploy_id, service_name)
+                context.application.create_task(_watch_render_deploy(context.application, api_key, service_id, deploy_id, service_name))
             await _safe_edit_query(
                 query,
                 "✅ <b>Cache tozalangan deploy ishga tushdi.</b>\n\n"

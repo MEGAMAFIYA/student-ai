@@ -88,3 +88,13 @@ def with_cancel(markup=None):
             return markup
     rows.append([InlineKeyboardButton(CANCEL_LABEL, callback_data=CANCEL_CALLBACK)])
     return InlineKeyboardMarkup(rows)
+
+
+def active_jobs(exclude=None) -> list[tuple[int, int]]:
+    """Barcha foydalanuvchilar bo'yicha hozir ishlayotgan update vazifalari."""
+    result = []
+    for (chat_id, user_id), tasks in list(_JOBS.items()):
+        for task in list(tasks):
+            if task is not exclude and not task.done():
+                result.append((chat_id, user_id))
+    return result

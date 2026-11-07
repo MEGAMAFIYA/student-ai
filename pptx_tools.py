@@ -191,7 +191,7 @@ def build_presentation(topic, slides, author_note="", settings=None, images=None
         _shape(s,MSO_SHAPE.OVAL,9.4,.7,2.5,2.5,accent)
         _text(s,"STUDENT AI  /  TAQDIMOT",4.65,.75,7.5,.35,11,fg,font,True)
         _text(s,topic,4.65,2.0,7.9,2.0,30,fg,font,True)
-        _text(s,author_note or "Professional presentation",4.7,4.25,7.5,.6,16,fg,font)
+        _text(s,author_note or "Professional taqdimot",4.7,4.25,7.5,.6,16,fg,font)
     elif style in ("news","academic"):
         _shape(s,MSO_SHAPE.RECTANGLE,.55,.65,12.2,.05,accent)
         _text(s,"MAXSUS TAQDIMOT  •  STUDENT AI",.75,.9,11,.35,11,accent,font,True)

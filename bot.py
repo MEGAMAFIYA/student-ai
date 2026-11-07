@@ -169,6 +169,13 @@ async def _post_init(application):
     except Exception as e:
         logger.error(f"⏰ Eslatmalarni qayta rejalashtirishda xato: {type(e).__name__}: {e}", exc_info=True)
 
+    # ☁️ Deploy xabarnomasi: bot o'z deployi sabab qayta ishga tushgan bo'lsa,
+    # storage'da qolgan deploy kuzatuvlarini qayta tiklaymiz.
+    try:
+        developer.resume_render_deploy_notifications(application)
+    except Exception as e:
+        logger.error("☁️ Deploy kuzatuvini tiklashda xato: %s", e, exc_info=True)
+
     # 😴 Render "Uxlamaslik": /developer > RENDER orqali yoqilgan servislarga
     # har 5 daqiqada so'rov yuborib turadigan fon tsikli (ro'yxat storage'da
     # saqlanadi, shuning uchun deploy/restartdan keyin ham davom etadi).

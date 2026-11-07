@@ -54,7 +54,8 @@ _DEFAULT_DATA = {
     "movies": {},      # {"<movie_id>": {"id","title","file_id","mime_type","file_name","size","uploaded_by","created_ts"}} — kino katalogi
     "keepalive": {},   # {"<render_service_id>": {"name","url","enabled_ts"}} — 😴 Render "Uxlamaslik" ro'yxati
     "ads": {},         # {"<ad_id>": {"id","chat_id","chat_title","text","interval_min","created_by","created_ts"}} — 📢 guruh reklamalari
-    "course_image_prefs": {},  # {"<user_id>": {"enabled"?, "provider"?, "model"?, "count"?}} — 🖼 kurs ishi rasm sozlamalari (faqat foydalanuvchi tanlagan maydonlar)
+    "course_image_prefs": {},
+    "render_pending_deploys": [],  # deploy ID va servis — tugagach admin xabari uchun  # {"<user_id>": {"enabled"?, "provider"?, "model"?, "count"?}} — 🖼 kurs ishi rasm sozlamalari (faqat foydalanuvchi tanlagan maydonlar)
 }
 
 
@@ -593,3 +594,28 @@ def set_course_image_prefs(user_id: int, **fields) -> dict:
         _save()
         return dict(prefs)
 
+
+
+def add_render_pending_deploy(service_id: str, deploy_id: str, service_name: str = "") -> None:
+    if not service_id or not deploy_id:
+        return
+    with _lock:
+        items = _data.setdefault("render_pending_deploys", [])
+        if not any(str(x.get("deploy_id")) == str(deploy_id) for x in items):
+            items.append({"service_id": str(service_id), "deploy_id": str(deploy_id),
+                          "service_name": str(service_name or "Render service")[:100], "created_ts": time.time()})
+            _data["render_pending_deploys"] = items[-50:]
+            # Deploy botning o'zini qayta ishga tushirishi mumkin: kuzatuv yozuvi
+            # restartdan oldin albatta tashqi saqlashga yetib borishi kerak.
+            config.persist_write(_DATA_FILENAME, _UPSTASH_KEY, _snapshot(),
+                                 commit_message="☁️ Render deploy kuzatuvi saqlandi")
+
+def get_render_pending_deploys() -> list[dict]:
+    with _lock:
+        return [dict(x) for x in _data.get("render_pending_deploys", []) if isinstance(x, dict)]
+
+def finish_render_pending_deploy(deploy_id: str) -> None:
+    with _lock:
+        _data["render_pending_deploys"] = [x for x in _data.get("render_pending_deploys", [])
+            if str(x.get("deploy_id")) != str(deploy_id)]
+        _save()
