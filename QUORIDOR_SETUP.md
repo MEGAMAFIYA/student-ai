@@ -49,10 +49,23 @@ Shaxmat ishlayotgan bo‘lsa, hammasi tayyor. Aks holda:
 4. Do‘sti shu xabardagi o‘sha tugmani bosadi → o‘yin avtomatik boshlanadi. 🔵 1-o‘yinchi (xona egasi) birinchi yuradi.
 5. Uchinchi kishi kirsa — "xona to‘la" xabari chiqadi.
 
+## Mini App ochilmasa (muammolarni bartaraf etish)
+
+Inline xabarda ikkita tugma bor:
+1. **🎮 Quoridor o‘ynash** — Direct Mini App havolasi (`t.me/<bot>?startapp=game_<xona>`). Faqat BotFather'da **Main Mini App** sozlangan bo‘lsa Mini App'ni ochadi; sozlanmagan bo‘lsa shunchaki bot chatini ochadi.
+2. **🤖 Bot orqali ochish (zaxira)** — botni `/start qg_<xona>` bilan ochadi, bot esa **🎮 Quoridor'ni ochish** (web_app) tugmasini yuboradi. Bu yo‘l BotFather'dagi Main Mini App sozlamasiga **bog‘liq emas**, faqat `PUBLIC_BASE_URL` (yoki Render'ning `RENDER_EXTERNAL_URL` i) kerak.
+
+Tekshirish ro‘yxati:
+- `PUBLIC_BASE_URL=https://<domen>` Render'da kiritilgan (yo‘q bo‘lsa Render'ning `RENDER_EXTERNAL_URL` i avtomatik ishlatiladi).
+- Havolalar endi Telegram bergan **haqiqiy bot username**'i bilan yasaladi (`BOT_USERNAME` env xato/eskirgan bo‘lsa ham).
+- Alohida nomli Direct Mini App ishlatmoqchi bo‘lsangiz: BotFather → `/newapp` → short name, so‘ng Render'da `GAME_APP_SHORT_NAME=<short_name>`.
+- Main Mini App uchun: BotFather → Bot Settings → Configure Mini App → URL `https://<domen>/miniapp/`.
+- Brauzerda `https://<domen>/miniapp/game/` ochilib sahifa ko‘rinsa, server tomoni tayyor.
+
 ## Test natijalari
 
 ```
-python -m unittest tests.test_quoridor_miniapp   → 24 test, OK
+python -m unittest tests.test_quoridor_miniapp   → 30 test, OK
 python -m unittest tests.test_quoridor           → 54 test, OK (dvigatel — o‘zgarmagan)
 python -m unittest discover -s tests -t .        → 556 test; xatolar ASL ZIP'dagi bilan bir xil:
    1 FAIL + 3 ERROR (sandboxda `telegram`/`httpx` yo‘qligi va vaqtga bog‘liq

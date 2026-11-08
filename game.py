@@ -135,9 +135,44 @@ def create_room(game, creator_id):
         _save()
     return rid
 
-def room_url(game,rid):
-    username=config.BOT_USERNAME_FALLBACK.lstrip("@")
-    return f"https://t.me/{username}?startapp=game_{rid}&mode=fullscreen"
+# Telegram bergan HAQIQIY bot username (bot.py post_init da o'rnatiladi). Env'dagi BOT_USERNAME
+# eskirgan/xato bo'lsa havola boshqa botga yoki bo'sh sahifaga olib borardi.
+_RUNTIME_BOT_USERNAME=""
+
+def set_bot_username(username):
+    global _RUNTIME_BOT_USERNAME
+    v=str(username or "").strip().lstrip("@")
+    if v: _RUNTIME_BOT_USERNAME=v
+
+def _bot_username(username=None):
+    return (str(username or "").strip().lstrip("@") or _RUNTIME_BOT_USERNAME or config.BOT_USERNAME_FALLBACK).lstrip("@")
+
+def public_base_url():
+    """PUBLIC_BASE_URL yoki Render o'zi beradigan RENDER_EXTERNAL_URL (https://...), oxirida '/' yo'q."""
+    import os as _os
+    raw=(getattr(config,"PUBLIC_BASE_URL","") or _os.getenv("RENDER_EXTERNAL_URL","") or "").strip().rstrip("/")
+    if raw and not raw.lower().startswith(("http://","https://")): raw="https://"+raw
+    return raw
+
+def room_url(game,rid,username=None):
+    """Direct Mini App havolasi. GAME_APP_SHORT_NAME berilsa — nomlangan Direct Mini App
+    (t.me/<bot>/<short>?startapp=...), aks holda Main Mini App (t.me/<bot>?startapp=...)."""
+    import os as _os
+    user=_bot_username(username)
+    short=(_os.getenv("GAME_APP_SHORT_NAME","") or "").strip().strip("/")
+    if short:
+        return f"https://t.me/{user}/{short}?startapp=game_{rid}&mode=fullscreen"
+    return f"https://t.me/{user}?startapp=game_{rid}&mode=fullscreen"
+
+def start_url(rid,username=None):
+    """Zaxira havola: botni /start qg_<xona> bilan ochadi; bot esa Mini App tugmasini (web_app) yuboradi.
+    Bu yo'l BotFather'da Main Mini App sozlanmagan bo'lsa ham ISHLAYDI."""
+    return f"https://t.me/{_bot_username(username)}?start=qg_{rid}"
+
+def webapp_url(rid):
+    """Mini App sahifasining to'g'ridan-to'g'ri manzili (web_app tugmasi uchun) yoki '' (base URL noma'lum)."""
+    base=public_base_url()
+    return f"{base}/miniapp/game/?room={rid}" if base else ""
 
 def _verify(init_data):
     return webapp_security.verify_telegram_init_data(init_data, config.TELEGRAM_TOKEN)

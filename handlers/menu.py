@@ -56,6 +56,34 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
+async def _send_quoridor_open_button(update: Update, rid: str) -> bool:
+    """/start qg_<xona>: Quoridor Mini App'ini ochuvchi web_app tugmasini yuboradi. Muvaffaqiyatli bo'lsa True."""
+    import re as _re
+    try:
+        import game
+        from telegram import WebAppInfo
+        rid = str(rid or "").strip()
+        if not _re.fullmatch(r"[A-Za-z0-9_-]{6,64}", rid):
+            return False
+        url = game.webapp_url(rid)
+        if not url:
+            await update.message.reply_text("⚠️ Mini App manzili sozlanmagan (PUBLIC_BASE_URL). Admin sozlamani tekshirsin.")
+            return True
+        room = game.ROOMS.get(rid)
+        if not room or room.get("game") != "quoridor":
+            await update.message.reply_text("⚠️ Bu Quoridor xonasi topilmadi yoki muddati tugagan. Yangi o‘yin boshlang: @bot quoridor")
+            return True
+        await update.message.reply_text(
+            "🧱 *Quoridor* tayyor!\nMini App'ni ochish uchun tugmani bosing 👇",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🎮 Quoridor'ni ochish", web_app=WebAppInfo(url=url))]]),
+        )
+        return True
+    except Exception:
+        logger.warning("Quoridor web_app tugmasini yuborishda xato", exc_info=True)
+        return False
+
+
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         logger.warning("/start chaqirildi, lekin update.message yo'q edi — javob yuborilmadi.")
@@ -109,6 +137,13 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 getattr(user, "last_name", "") or "")
         except Exception:
             logger.debug("/start foydalanuvchi profilini saqlashda xato", exc_info=True)
+
+    # 🧱 Quoridor zaxira yo'li: inline xabardagi "Bot orqali ochish" tugmasi /start qg_<xona> yuboradi.
+    # Bu yerda Mini App'ni web_app tugmasi bilan ochamiz — BotFather'da Main Mini App sozlanmagan bo'lsa ham ishlaydi.
+    if payload.startswith("qg_") and user:
+        opened = await _send_quoridor_open_button(update, payload[3:])
+        if opened and not (start_result and start_result.get("welcome_bonus")):
+            return
 
     context.user_data.clear()
     await update.message.reply_text(

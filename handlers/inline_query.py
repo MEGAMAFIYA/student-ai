@@ -387,19 +387,24 @@ async def on_inline_query(
                 # 🧱 Quoridor — TELEGRAM MINI APP rejimida (Shaxmat kabi): natija chatga
                 # tushgach "🎮 O'ynash" tugmasi xonani Direct Mini App sifatida ochadi.
                 # Ikkinchi o'yinchi ham shu xabardagi tugma orqali kiradi va o'yin boshlanadi.
-                if not PUBLIC_BASE_URL:
-                    continue
-                url = game.room_url(gkey, rid)
+                # Havola uchun HAQIQIY bot username (context.bot) ishlatiladi; PUBLIC_BASE_URL
+                # bo'lmasa ham natija chiqadi (Direct Mini App havolasi t.me orqali ishlaydi).
+                _bun = getattr(getattr(context, "bot", None), "username", None)
+                game.set_bot_username(_bun)
+                url = game.room_url(gkey, rid, _bun)
                 _p1 = (user.username and "@" + user.username) or user.full_name or "o‘yinchi"
                 _qtext = (f"🧱 <b>QUORIDOR</b> 🏆\n\n"
                           f"🔵 1-o‘yinchi: {html.escape(str(_p1))}\n"
                           f"🔴 2-o‘yinchi: kutilmoqda…\n\n"
                           "9×9 doska • har kimda 10 ta devor • birinchi bo‘lib qarshi qatorga yetgan g‘olib.\n"
-                          "👇 Tugmani bosib Mini App’da o‘ynang. Do‘stingiz ham shu xabardagi tugma orqali qo‘shiladi.")
+                          "👇 Tugmani bosib Mini App’da o‘ynang. Do‘stingiz ham shu xabardagi tugma orqali qo‘shiladi.\n"
+                          "Agar Mini App ochilmasa — pastdagi “🤖 Bot orqali ochish” tugmasini bosing.")
+                _qkb = [[InlineKeyboardButton("🎮 Quoridor o‘ynash", url=url)],
+                        [InlineKeyboardButton("🤖 Bot orqali ochish (zaxira)", url=game.start_url(rid, _bun))]]
                 results.append(InlineQueryResultArticle(
                     id=f"game_{gkey}_{uuid.uuid4().hex}", title=title, description=desc,
                     input_message_content=InputTextMessageContent(_qtext, parse_mode="HTML"),
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🎮 Quoridor o‘ynash", url=url)]]),
+                    reply_markup=InlineKeyboardMarkup(_qkb),
                 ))
                 continue
             if gkey in ("checkers", "tictactoe", "memory"):

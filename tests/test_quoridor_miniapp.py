@@ -214,7 +214,7 @@ class RoutesAndServing(unittest.TestCase):
     def test_inline_result_uses_miniapp_url_button(self):
         import os
         src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "handlers", "inline_query.py"), encoding="utf-8").read()
-        self.assertIn("game.room_url(gkey, rid)", src); self.assertIn("🧱 <b>QUORIDOR</b>", src)
+        self.assertIn("game.room_url(gkey, rid, _bun)", src); self.assertIn("🧱 <b>QUORIDOR</b>", src)
 
     def test_callback_data_unaffected_deeplink_format(self):
         url = game.room_url("quoridor", "abc")
@@ -223,3 +223,60 @@ class RoutesAndServing(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LaunchLinks(unittest.TestCase):
+    """Mini App ochilmay qolmasligi uchun havolalar: haqiqiy bot username, short name, zaxira /start yo'li."""
+    def setUp(self):
+        self._old = game._RUNTIME_BOT_USERNAME
+        self._env = {k: __import__("os").environ.pop(k, None) for k in ("GAME_APP_SHORT_NAME", "RENDER_EXTERNAL_URL")}
+        self._pub = game.config.PUBLIC_BASE_URL
+
+    def tearDown(self):
+        import os
+        game._RUNTIME_BOT_USERNAME = self._old; game.config.PUBLIC_BASE_URL = self._pub
+        for k, v in self._env.items():
+            os.environ.pop(k, None)
+            if v is not None: os.environ[k] = v
+
+    def test_runtime_username_beats_env_default(self):
+        game.set_bot_username("@RealBot")
+        self.assertEqual(game.room_url("quoridor", "abc"), "https://t.me/RealBot?startapp=game_abc&mode=fullscreen")
+        self.assertEqual(game.start_url("abc"), "https://t.me/RealBot?start=qg_abc")
+
+    def test_explicit_username_argument(self):
+        self.assertTrue(game.room_url("quoridor", "abc", "@X_bot").startswith("https://t.me/X_bot?startapp=game_abc"))
+
+    def test_short_name_direct_link(self):
+        import os
+        os.environ["GAME_APP_SHORT_NAME"] = "/games/"
+        game.set_bot_username("RealBot")
+        self.assertEqual(game.room_url("quoridor", "abc"), "https://t.me/RealBot/games?startapp=game_abc&mode=fullscreen")
+
+    def test_webapp_url_from_public_or_render_env(self):
+        import os
+        game.config.PUBLIC_BASE_URL = ""
+        self.assertEqual(game.webapp_url("abc"), "")
+        os.environ["RENDER_EXTERNAL_URL"] = "https://x.onrender.com/"
+        self.assertEqual(game.webapp_url("abc"), "https://x.onrender.com/miniapp/game/?room=abc")
+        game.config.PUBLIC_BASE_URL = "https://my.domain"
+        self.assertEqual(game.webapp_url("abc"), "https://my.domain/miniapp/game/?room=abc")
+
+    def test_start_payload_fits_telegram_limit(self):
+        rid = game.create_room("quoridor", 5)
+        try:
+            self.assertLessEqual(len("qg_" + rid), 64)
+            self.assertRegex(rid, r"^[A-Za-z0-9_-]+$")
+        finally:
+            game.ROOMS.pop(rid, None)
+
+    def test_menu_has_start_branch_and_inline_has_fallback_button(self):
+        import os
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        menu = open(os.path.join(root, "handlers", "menu.py"), encoding="utf-8").read()
+        inl = open(os.path.join(root, "handlers", "inline_query.py"), encoding="utf-8").read()
+        self.assertIn('payload.startswith("qg_")', menu); self.assertIn("web_app=WebAppInfo", menu)
+        self.assertIn("game.start_url(rid, _bun)", inl)
+        # inline natija PUBLIC_BASE_URL bo'lmasa ham chiqishi kerak
+        seg = inl[inl.index('if gkey == "quoridor":\n                # 🧱 Quoridor'):inl.index('if gkey in ("checkers"')]
+        self.assertNotIn("PUBLIC_BASE_URL", seg.replace("PUBLIC_BASE_URL\n                # bo'lmasa", ""))

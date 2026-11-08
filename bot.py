@@ -145,6 +145,11 @@ async def _post_init(application):
         if me and me.username:
             mention_dispatch.set_bot_username(me.username)
             drawing_game.set_bot_username(me.username)
+            try:
+                import game as _game_mod
+                _game_mod.set_bot_username(me.username)
+            except Exception:
+                pass
     except Exception as e:
         logger.warning(f"🧭 Bot username'ni get_me() orqali olishda xato (fallback ishlatiladi): {e}")
 
