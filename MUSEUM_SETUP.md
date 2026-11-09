@@ -1,36 +1,51 @@
-# Student AI — Xotiralar muzeyi (1–5 bosqich)
+# Student AI — Xotiralar muzeyi (1–8 bosqich)
 
-## Ishga tushirish
+## Render deploy
 
-1. Loyihani GitHub `main` branch'iga joylang va Render'da deploy qiling.
-2. Render Environment Variables'da `PUBLIC_BASE_URL` HTTPS manzil bo'lishi kerak (masalan, `https://student-ai.example.com`).
-3. Botda `/muzey` buyrug'ini yuboring. Mini App'da muzey yarating, surat yuklang va taklif havolasini do'stingizga yuboring.
-4. Telegram bot sozlamalarida Main Mini App / Web App manzili root `PUBLIC_BASE_URL` bo'lishi tavsiya etiladi, chunki taklif havolasi `startapp` orqali `/` router'ga kiradi.
+1. To‘liq loyihani GitHub `main` branch'iga joylang va Render Web Service'ni deploy qiling.
+2. `PUBLIC_BASE_URL` qiymatini HTTPS service URL qilib belgilang.
+3. Render Persistent Disk ulang va mount path sifatida `/var/data` ishlating.
+4. Environment Variables:
+   - `MUSEUM_DB_PATH=/var/data/museum/museum.sqlite3`
+   - `MUSEUM_MEDIA_DIR=/var/data/museum/photos`
+   - `PUBLIC_BASE_URL=https://<service>.onrender.com`
+5. Suratlarni deploylar orasida saqlash uchun R2 tavsiya etiladi. `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` qiymatlarini faqat Render Environment'ga kiriting.
+6. Botda `/muzey` buyrug‘ini oching.
 
-## Suratlarni doimiy saqlash
+## 6-bosqich — yo‘l boshlash
 
-R2 sozlanmagan bo'lsa, suratlar `museum_data/photos/`, metadata esa `museum_data/museum.sqlite3` ichida saqlanadi. Render ephemeral disk ishlatilsa, qayta deploy/restart paytida bu fayllar yo'qolishi mumkin. Doimiy saqlash uchun Render Persistent Disk ulang va quyidagilarni qo'ying:
+Muzey egasi `Yo‘naltirish`ni yoqadi. Mehmon `Egaga ergashish`ni o‘zi bosadi; egasining joriy pozitsiyasi polling orqali kuzatiladi. `Keyingi surat` tanlangan ramkani ajratib ko‘rsatadi. Egasi 12 soniyadan ortiq ko‘rinmasa, yo‘l boshlash avtomatik o‘chadi. Mehmon istalgan vaqtda ergashishni to‘xtata oladi.
 
-- `MUSEUM_DB_PATH=/var/data/museum/museum.sqlite3`
-- `MUSEUM_MEDIA_DIR=/var/data/museum/photos`
+## 7-bosqich — invite va ruxsatlar
 
-**Muhim:** R2 faqat surat fayllarini saqlaydi. Muzey nomlari, egalik, taklif tokenlari va suratlar ro‘yxati `museum.sqlite3` bazasida turadi. Shu sabab R2 ishlatilganda ham SQLite bazasi uchun yuqoridagi Render Persistent Disk sozlamasi kerak. R2 o‘zi metadata bazasining o‘rnini bosmaydi.
+- Taklif tokeni 256-bit tasodifiy hex token; yangi token 24 soat amal qiladi.
+- Egasi `Havolani bekor qilish` orqali barcha faol takliflarni bekor qiladi.
+- QR-kod Mini App ichida QRCode.js CDN orqali chiziladi.
+- Egasi faol mehmonlar ro‘yxatini ko‘radi va ularni chiqarishi mumkin.
+- Xona 2 faol ishtirokchi bilan cheklangan.
+- Foto endpoint har so‘rovda Telegram `initData` va owner/invite ruxsatini tekshiradi; javob `private, no-store`.
+- `user_id` URL orqali autentifikatsiya sifatida ishlatilmaydi.
+- Rasm URL'ini boshqalarga berishning o‘zi ruxsat bermaydi; har so‘rov autentifikatsiya talab qiladi.
 
-Yoki suratlar uchun Cloudflare R2 sozlang:
+## Storage
 
-- `R2_ACCOUNT_ID`
-- `R2_ACCESS_KEY_ID`
-- `R2_SECRET_ACCESS_KEY`
-- `R2_BUCKET`
+R2 sozlanmasa, rasm `MUSEUM_MEDIA_DIR` ichida saqlanadi. Render ephemeral disk doimiy emas: persistent disk yoki R2 talab qilinadi. SQLite metadata bazasi ham persistent diskda bo‘lishi kerak. R2 faqat rasm fayllarini saqlaydi, metadata bazasini emas.
 
-`boto3` ixtiyoriy kutubxona sifatida `requirements.txt`ga kiritilgan. To'rtta R2 qiymati mavjud bo'lsa, yangi suratlar R2'ga yuboriladi; bo'lmasa lokal saqlash ishlaydi. Mavjud lokal suratlar R2'ga avtomatik ko'chirilmaydi.
+## Muhim cheklovlar
 
-## Cheklovlar va xavfsizlik
+- Multiplayer transporti hozircha WebSocket emas, HTTP polling. Harakatlar 0.9–1.1 soniya oralig‘ida yangilanadi; haqiqiy WebSocket sinovi va ikki jismoniy qurilmadagi qabul sinovi deploydan keyin bajarilishi shart.
+- QR generatori tashqi CDN'ga bog‘liq.
+- Rasmni ekran tasviridan yoki boshqa usulda nusxalashni mutlaq to‘xtatib bo‘lmaydi.
+- Invite bekor qilingandan so‘ng mavjud mehmon sessiyasi ham presence'dan chiqariladi.
+- Rasm va muzey ma'lumotlari ochiq statik URL orqali berilmaydi.
 
-- Telegram Mini App `initData` serverda HMAC bilan tekshiriladi.
-- Mehmon faqat egasining faol taklif tokeni bilan xonaga kira oladi.
-- Faqat egasi surat yuklaydi va yo'naltirishni yoqadi/o'chiradi.
-- Bitta muzeyga 100 tagacha PNG/JPEG surat, har biri 5 MB gacha.
-- Ikki va undan ortiq foydalanuvchi presence polling orqali ko'rinadi; har bir avatar ustida Telegram profili ismi ko'rsatiladi. Hozirgi versiya 3D holatni taxminan 1 soniyada yangilaydi (WebSocket emas).
-- Suratlar API orqali faqat tasdiqlangan egasi yoki taklif tokeniga ega mehmonlarga beriladi.
-- Uch o'lchamli sahna Three.js CDN'dan yuklanadi; internet ulanishi zarur.
+## Tekshiruv
+
+Lokal:
+```bash
+python -m pytest -q
+python -m py_compile museum.py bot.py
+node --check webapp/museum/app.js
+```
+
+Deploydan so‘ng ikkita alohida Telegram akkaunti/telefon bilan: muzey yaratish, invite/QR, mehmon kirishi, avatar holati, ergashish, mustaqil yurish, guest kick, invite revoke va reconnect sinovlarini bajaring.

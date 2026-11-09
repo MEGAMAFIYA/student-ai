@@ -30,15 +30,43 @@ def test_create_museum_and_issue_invite(tmp_path, monkeypatch):
     created=json.loads(h.wfile.getvalue())['museum']
     h=FakeHandler('/api/museum/invite',{'init_data':signed_init(),'museum':created})
     museum.handle_post(h,'test-token'); result=json.loads(h.wfile.getvalue())
-    assert h.status==200 and len(result['invite'])==36
+    assert h.status==200 and len(result['invite'])>=64
 
 def test_photo_requires_owner_and_valid_image(tmp_path, monkeypatch):
     monkeypatch.setattr(museum,'DB_PATH',str(tmp_path/'museum.sqlite3'))
     monkeypatch.setattr(museum,'MEDIA_DIR',tmp_path/'photos')
     c=museum._db(); c.execute('INSERT INTO museums(id,owner_id,title,created) VALUES(?,?,?,?)',('abc',123,'test',time.time())); c.commit(); c.close()
-    png=b'\x89PNG\r\n\x1a\n'+b'0'*16
+    from PIL import Image
+    import io
+    buf=io.BytesIO(); Image.new('RGB',(2,2),'red').save(buf,format='PNG'); png=buf.getvalue()
     payload={'init_data':signed_init(),'museum':'abc','title':'test.png','image':'data:image/png;base64,'+base64.b64encode(png).decode()}
     h=FakeHandler('/api/museum/photo',payload); museum.handle_post(h,'test-token')
     assert h.status==200 and json.loads(h.wfile.getvalue())['ok']
     h=FakeHandler('/api/museum/photo',dict(payload,init_data=signed_init(456))); museum.handle_post(h,'test-token')
     assert h.status==403
+
+
+def test_expired_invite_is_rejected(tmp_path, monkeypatch):
+    monkeypatch.setattr(museum,'DB_PATH',str(tmp_path/'museum.sqlite3'))
+    c=museum._db()
+    c.execute('INSERT INTO museums(id,owner_id,title,created) VALUES(?,?,?,?)',('m1',123,'test',time.time()))
+    c.execute('INSERT INTO invites(token,museum_id,created,expires) VALUES(?,?,?,?)',('expired-token','m1',time.time()-100,time.time()-1))
+    c.commit()
+    m,allowed=museum._museum_access(c,'m1',456,'expired-token')
+    c.close()
+    assert m is not None and not allowed
+
+
+def test_revoking_invites_disables_guest_access(tmp_path, monkeypatch):
+    monkeypatch.setattr(museum,'DB_PATH',str(tmp_path/'museum.sqlite3'))
+    c=museum._db()
+    c.execute('INSERT INTO museums(id,owner_id,title,created) VALUES(?,?,?,?)',('m1',123,'test',time.time()))
+    c.execute('INSERT INTO invites(token,museum_id,created,expires) VALUES(?,?,?,?)',('active-token','m1',time.time(),time.time()+3600))
+    c.commit(); c.close()
+    h=FakeHandler('/api/museum/revoke_invite',{'init_data':signed_init(123),'museum':'m1'})
+    museum.handle_post(h,'test-token')
+    assert h.status==200
+    c=museum._db()
+    m,allowed=museum._museum_access(c,'m1',456,'active-token')
+    c.close()
+    assert not allowed

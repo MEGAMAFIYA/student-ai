@@ -100,3 +100,8 @@ qo'shilgan hamma narsa faqat `/api/mobile/` yo'li ostida, alohida.
 - Android sessiya tokeni Android Keystore orqali himoyalangan
   `EncryptedSharedPreferences` da saqlanadi. Eski plaintext preference
   qiymatlari birinchi ochilishda ko'chirilib, eski saqlash joyi tozalanadi.
+
+
+## Xotiralar muzeyi
+
+Muzey deploy va persistent storage sozlamalari uchun [MUSEUM_SETUP.md](MUSEUM_SETUP.md) hamda xavfsiz o‘zgaruvchilar namunasi uchun `.env.example` faylini ko‘ring.
