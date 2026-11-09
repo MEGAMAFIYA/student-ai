@@ -44,6 +44,14 @@
                        (oid ? "&owner=" + encodeURIComponent(oid) : ""));
       return;
     }
+    if (start && start.startsWith("museum_")) {
+      const rest = start.slice(7);
+      const split = rest.indexOf("_");
+      const mid = split < 0 ? rest : rest.slice(0, split);
+      const invite = split < 0 ? "" : rest.slice(split + 1);
+      location.replace("/miniapp/museum/?museum=" + encodeURIComponent(mid) + "&invite=" + encodeURIComponent(invite));
+      return;
+    }
     if (start && start.startsWith("game_")) {
       location.replace("/miniapp/game/?room=" + encodeURIComponent(start.slice(5)));
       return;

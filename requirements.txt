@@ -35,3 +35,6 @@ redis>=5.0
 # Kurs ishi diagrammalari (blok-sxema, arxitektura, statistik diagramma) — course_images.py.
 # Faqat Agg (oynasiz) backend ishlatiladi, Render'da qo'shimcha tizim paketi shart emas.
 matplotlib>=3.8
+
+# Ixtiyoriy: 3D muzey suratlarini Cloudflare R2 da saqlash
+boto3>=1.35

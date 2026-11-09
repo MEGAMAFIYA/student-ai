@@ -51,6 +51,7 @@ import mobile_auth
 import mobile_api
 import inline_media
 import movie_watch
+import museum
 import render_keepalive
 import game
 import chat_games
@@ -113,6 +114,7 @@ BOT_COMMANDS = [
     BotCommand("start", "Botni ishga tushirish / asosiy menyu"),
     BotCommand("tabrik", "🎁 Chiroyli tabrik xabari yuborish"),
     BotCommand("rasim", "🎨 Mini App orqali rasm chizish"),
+    BotCommand("muzey", "🏛 3D xotiralar muzeyi"),
     BotCommand("vid", "🎬 Video yuklab olish (havola bilan)"),
     # Eslatma: Telegram "/" buyruqlar ro'yxatida apostrofli nomlarga ruxsat
     # bermaydi, shuning uchun shu yerda ASCII "qoshiq" ko'rsatiladi — lekin
@@ -899,6 +901,8 @@ def _serve_kino_router(handler: "HealthHandler") -> bool:
 
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
+        if museum.handle_get(self, TELEGRAM_TOKEN):
+            return
         if mobile_api.handle_get(self):
             return
         if self.path == _PLACEHOLDER_PDF_PATH and _PLACEHOLDER_PDF_BYTES:
@@ -1076,6 +1080,8 @@ class HealthHandler(BaseHTTPRequestHandler):
         return
 
     def do_POST(self):
+        if museum.handle_post(self, TELEGRAM_TOKEN):
+            return
         if mobile_api.handle_post(self):
             return
 
@@ -1101,6 +1107,21 @@ class HealthHandler(BaseHTTPRequestHandler):
 
         self.send_response(404)
         self.end_headers()
+
+
+async def _museum_command(update, context):
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+    user = update.effective_user
+    if not user:
+        return
+    url = museum.museum_command_url(PUBLIC_BASE_URL)
+    if not url:
+        await update.effective_message.reply_text("⚠️ Muzey Mini App manzili sozlanmagan. PUBLIC_BASE_URL ni Render sozlamalariga kiriting.")
+        return
+    await update.effective_message.reply_text(
+        "🏛 Xotiralar muzeyi\n\nShaxsiy 3D muzey yarating, suratlaringizni devorlarga joylang va do‘stingizni taklif qilib, bir xonada birga sayr qiling.",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏛 Muzeyni ochish", web_app=WebAppInfo(url=url))]])
+    )
 
 
 async def _chat_game_callback(update, context):
@@ -1627,6 +1648,7 @@ def main():
     app.add_handler(MessageHandler(filters.UpdateType.BUSINESS_MESSAGE, _on_business_message))
     # 🎨 /rasim — Telegram Mini App orqali rasm chizish.
     app.add_handler(CommandHandler("rasim", rasim.rasim_cmd))
+    app.add_handler(CommandHandler("muzey", _museum_command))
     # 🎬 /vid — video yuklab olish (ASCII buyruq, Privacy Mode'dan qat'i
     # nazar barcha chat turlarida ishlaydi).
     app.add_handler(CommandHandler("vid", vid.vid_cmd))
