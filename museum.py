@@ -150,7 +150,7 @@ def handle_post(handler, token):
                 event=str(payload.get('event') or 'unknown')[:64]
                 raw=payload.get('details') if isinstance(payload.get('details'),dict) else {}
                 # Only allow compact, non-secret diagnostic fields; never log init data or media URLs.
-                allowed_keys={'x','y','pointerType','target','tap','hitCount','ndcX','ndcY','photoMeshes','photoData','photoId','title','urlPresent','renderer','camera','width','height','hidden','naturalWidth','naturalHeight','objectType','availablePhotoIds','opened','reason','error','stack','pointerId'}
+                allowed_keys={'x','y','pointerType','target','tap','hitCount','ndcX','ndcY','photoMeshes','photoData','photoId','title','urlPresent','renderer','camera','width','height','hidden','naturalWidth','naturalHeight','objectType','availablePhotoIds','opened','reason','error','stack','pointerId','deltaMs','targetX','targetZ','currentX','currentZ','userCount','frameMs','reasonCode'}
                 details={k:raw[k] for k in allowed_keys if k in raw}
                 try: details=json.loads(json.dumps(details,ensure_ascii=False,default=str))
                 except Exception: details={}
