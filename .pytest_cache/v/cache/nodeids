@@ -1,9 +1,9 @@
 [
-  "tests/test_render_api.py::RenderApiAsyncTests::test_list_logs_paginates_with_timestamp_cursor",
-  "tests/test_render_api.py::RenderApiPureTests::test_level_matching",
-  "tests/test_render_api.py::RenderApiPureTests::test_pagination_cursor_supports_common_variants",
-  "tests/test_render_api.py::RenderApiPureTests::test_parse_dt_handles_z_and_naive_values",
-  "tests/test_render_api.py::RenderApiPureTests::test_pdf_contains_log_data",
-  "tests/test_render_api.py::RenderApiPureTests::test_unwrap_plain_list",
-  "tests/test_render_api.py::RenderApiPureTests::test_unwrap_services_envelope"
+  "tests/test_museum.py::test_audio_upload_limit_and_owner_only",
+  "tests/test_museum.py::test_create_museum_and_issue_invite",
+  "tests/test_museum.py::test_expired_invite_is_rejected",
+  "tests/test_museum.py::test_music_control_requires_museum_access",
+  "tests/test_museum.py::test_photo_diagnostic_logs_only_for_museum_members",
+  "tests/test_museum.py::test_photo_requires_owner_and_valid_image",
+  "tests/test_museum.py::test_revoking_invites_disables_guest_access"
 ]

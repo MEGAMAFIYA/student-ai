@@ -141,7 +141,22 @@ def handle_post(handler, token):
     uid=int(user['id']); action=urlparse(handler.path).path.rsplit('/',1)[-1]
     c=_db(); now=time.time()
     try:
-        if action=='create':
+        if action=='diagnostic':
+            mid=str(payload.get('museum') or '')[:32]
+            m,allowed=_museum_access(c,mid,uid,str(payload.get('invite') or ''))
+            if not allowed:
+                _json(handler,403,{'ok':False,'error':'Muzey diagnostikasi uchun ruxsat yo‘q'})
+            else:
+                event=str(payload.get('event') or 'unknown')[:64]
+                raw=payload.get('details') if isinstance(payload.get('details'),dict) else {}
+                # Only allow compact, non-secret diagnostic fields; never log init data or media URLs.
+                allowed_keys={'x','y','pointerType','target','tap','hitCount','ndcX','ndcY','photoMeshes','photoData','photoId','title','urlPresent','renderer','camera','width','height','hidden','naturalWidth','naturalHeight','objectType','availablePhotoIds','opened','reason','error','stack','pointerId'}
+                details={k:raw[k] for k in allowed_keys if k in raw}
+                try: details=json.loads(json.dumps(details,ensure_ascii=False,default=str))
+                except Exception: details={}
+                log.warning('MUSEUM_PHOTO_DIAG museum=%s user=%s event=%s details=%s',mid,uid,event,json.dumps(details,ensure_ascii=False)[:1200])
+                _json(handler,200,{'ok':True})
+        elif action=='create':
             title=str(payload.get('title') or 'Mening xotiralarim muzeyi').strip()[:80]
             mid=uuid.uuid4().hex[:16]; c.execute('INSERT INTO museums(id,owner_id,title,created) VALUES(?,?,?,?)',(mid,uid,title,now)); c.commit(); _json(handler,200,{'ok':True,'museum':mid})
         elif action=='invite':

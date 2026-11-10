@@ -97,3 +97,20 @@ def test_music_control_requires_museum_access(tmp_path, monkeypatch):
     h=FakeHandler('/api/museum/music_control',payload); museum.handle_post(h,'test-token')
     assert h.status==200
     c=museum._db(); assert c.execute('SELECT music_playing FROM museums WHERE id=?',('music-room',)).fetchone()[0]==1; c.close()
+
+
+def test_photo_diagnostic_logs_only_for_museum_members(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr(museum, 'DB_PATH', str(tmp_path/'museum.sqlite3'))
+    c=museum._db()
+    c.execute('INSERT INTO museums(id,owner_id,title,created) VALUES(?,?,?,?)', ('diag-room',123,'Test',time.time()))
+    c.execute('INSERT INTO invites(token,museum_id,created,expires) VALUES(?,?,?,?)', ('diag-invite','diag-room',time.time(),time.time()+3600))
+    c.commit(); c.close()
+    payload={'init_data':signed_init(456),'museum':'diag-room','invite':'diag-invite','event':'raycast_result','details':{'hitCount':0,'url':'https://secret.invalid/?token=do-not-log'}}
+    h=FakeHandler('/api/museum/diagnostic',payload)
+    with caplog.at_level('WARNING'):
+        museum.handle_post(h,'test-token')
+    assert h.status==200 and 'MUSEUM_PHOTO_DIAG' in caplog.text and 'raycast_result' in caplog.text
+    assert 'do-not-log' not in caplog.text
+    denied=FakeHandler('/api/museum/diagnostic',dict(payload,invite='wrong'))
+    museum.handle_post(denied,'test-token')
+    assert denied.status==403
