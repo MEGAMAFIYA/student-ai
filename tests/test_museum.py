@@ -70,3 +70,30 @@ def test_revoking_invites_disables_guest_access(tmp_path, monkeypatch):
     m,allowed=museum._museum_access(c,'m1',456,'active-token')
     c.close()
     assert not allowed
+
+
+def test_audio_upload_limit_and_owner_only(tmp_path, monkeypatch):
+    monkeypatch.setattr(museum, 'DB_PATH', str(tmp_path/'museum.sqlite3'))
+    monkeypatch.setattr(museum, 'MEDIA_DIR', tmp_path/'media')
+    c=museum._db()
+    c.execute('INSERT INTO museums(id,owner_id,title,created) VALUES(?,?,?,?)', ('music-room',123,'Musiqa',time.time()))
+    c.commit(); c.close()
+    # Minimal MPEG frame header is sufficient for the server-side MP3 signature check.
+    mp3=b'\xff\xfb\x90\x64'+b'\x00'*128
+    payload={'init_data':signed_init(),'museum':'music-room','title':'test.mp3','audio':'data:audio/mpeg;base64,'+base64.b64encode(mp3).decode()}
+    h=FakeHandler('/api/museum/audio',payload); museum.handle_post(h,'test-token')
+    assert h.status==200
+    c=museum._db(); assert c.execute('SELECT COUNT(*) FROM museum_audio').fetchone()[0]==1; c.close()
+    h=FakeHandler('/api/museum/audio',dict(payload,init_data=signed_init(456))); museum.handle_post(h,'test-token')
+    assert h.status==403
+
+
+def test_music_control_requires_museum_access(tmp_path, monkeypatch):
+    monkeypatch.setattr(museum, 'DB_PATH', str(tmp_path/'museum.sqlite3'))
+    c=museum._db(); c.execute('INSERT INTO museums(id,owner_id,title,created) VALUES(?,?,?,?)', ('music-room',123,'Musiqa',time.time()))
+    c.execute("INSERT INTO invites(token,museum_id,created,expires) VALUES(?,?,?,?)", ('guest-token','music-room',time.time(),time.time()+3600))
+    c.execute("INSERT INTO museum_audio(id,museum_id,owner_id,title,storage_key,mime,created,sort_order) VALUES(?,?,?,?,?,?,?,?)", ('track','music-room',123,'Track','/tmp/no-file.mp3','audio/mpeg',time.time(),0)); c.commit(); c.close()
+    payload={'init_data':signed_init(456),'museum':'music-room','invite':'guest-token','index':0,'playing':True}
+    h=FakeHandler('/api/museum/music_control',payload); museum.handle_post(h,'test-token')
+    assert h.status==200
+    c=museum._db(); assert c.execute('SELECT music_playing FROM museums WHERE id=?',('music-room',)).fetchone()[0]==1; c.close()

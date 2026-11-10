@@ -11,7 +11,9 @@ WEB_DIR = ROOT / 'webapp' / 'museum'
 DB_PATH = os.getenv('MUSEUM_DB_PATH', str(ROOT / 'museum_data' / 'museum.sqlite3'))
 MEDIA_DIR = Path(os.getenv('MUSEUM_MEDIA_DIR', str(ROOT / 'museum_data' / 'photos')))
 MAX_PHOTO = 5 * 1024 * 1024
+MAX_AUDIO = 10 * 1024 * 1024
 MAX_PHOTOS = 30
+MAX_AUDIO_TRACKS = 3
 R2_ENABLED = False
 try:
     import boto3
@@ -33,11 +35,14 @@ def _db():
     CREATE TABLE IF NOT EXISTS invites(token TEXT PRIMARY KEY, museum_id TEXT NOT NULL, created REAL NOT NULL, active INTEGER NOT NULL DEFAULT 1, expires REAL);
     CREATE TABLE IF NOT EXISTS kicked(museum_id TEXT NOT NULL, user_id INTEGER NOT NULL, created REAL NOT NULL, PRIMARY KEY(museum_id,user_id));
     CREATE TABLE IF NOT EXISTS photos(id TEXT PRIMARY KEY, museum_id TEXT NOT NULL, owner_id INTEGER NOT NULL, title TEXT NOT NULL, storage_key TEXT NOT NULL, mime TEXT NOT NULL, created REAL NOT NULL, sort_order INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS museum_audio(id TEXT PRIMARY KEY, museum_id TEXT NOT NULL, owner_id INTEGER NOT NULL, title TEXT NOT NULL, storage_key TEXT NOT NULL, mime TEXT NOT NULL DEFAULT 'audio/mpeg', created REAL NOT NULL, sort_order INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS presence(museum_id TEXT NOT NULL, user_id INTEGER NOT NULL, name TEXT NOT NULL, x REAL NOT NULL DEFAULT 0, z REAL NOT NULL DEFAULT 2, yaw REAL NOT NULL DEFAULT 0, seen REAL NOT NULL, PRIMARY KEY(museum_id,user_id));
     ''')
     # Safe additive migration for databases created by earlier museum builds.
     mcols={r['name'] for r in c.execute('PRAGMA table_info(museums)')}
     if 'focused_photo' not in mcols: c.execute("ALTER TABLE museums ADD COLUMN focused_photo TEXT NOT NULL DEFAULT ''")
+    if 'music_index' not in mcols: c.execute("ALTER TABLE museums ADD COLUMN music_index INTEGER NOT NULL DEFAULT 0")
+    if 'music_playing' not in mcols: c.execute("ALTER TABLE museums ADD COLUMN music_playing INTEGER NOT NULL DEFAULT 0")
     cols={r['name'] for r in c.execute('PRAGMA table_info(invites)')}
     if 'expires' not in cols: c.execute('ALTER TABLE invites ADD COLUMN expires REAL')
     c.execute('CREATE INDEX IF NOT EXISTS idx_invites_museum ON invites(museum_id,active)')
@@ -75,10 +80,12 @@ def handle_get(handler, token):
         try: body=(WEB_DIR/rel).read_bytes()
         except OSError: _json(handler,404,{'ok':False,'error':'Muzey sahifasi topilmadi'}); return True
         handler.send_response(200); handler.send_header('Content-Type',{'html':'text/html; charset=utf-8','css':'text/css; charset=utf-8','js':'application/javascript; charset=utf-8'}[rel.rsplit('.',1)[-1]]); handler.send_header('Cache-Control','no-cache'); handler.send_header('Content-Length',str(len(body))); handler.end_headers(); handler.wfile.write(body); return True
-    if path.startswith('/api/museum/photo/'):
+    if path.startswith('/api/museum/photo/') or path.startswith('/api/museum/audio/'):
+        media_type='audio' if '/audio/' in path else 'photo'
         pid=path.rsplit('/',1)[-1]
         q=urllib.parse.parse_qs(urlparse(handler.path).query); user=_auth({'init_data':q.get('init_data',[''])[0]},token)
-        c=_db(); row=c.execute('SELECT p.storage_key,p.mime,p.museum_id FROM photos p WHERE p.id=?',(pid,)).fetchone()
+        c=_db(); table='museum_audio' if media_type=='audio' else 'photos'
+        row=c.execute(f'SELECT p.storage_key,p.mime,p.museum_id FROM {table} p WHERE p.id=?',(pid,)).fetchone()
         m,allowed=_museum_access(c,row['museum_id'],user['id'],(q.get('invite') or [''])[0]) if row and user else (None,False)
         c.close()
         if not allowed: handler.send_error(403); return True
@@ -108,6 +115,7 @@ def handle_get(handler, token):
             c.close(); _json(handler,409,{'ok':False,'error':'Bu muzeyda hozircha 2 kishilik limit to‘lgan'}); return True
         c.execute('INSERT INTO presence(museum_id,user_id,name,x,z,yaw,seen) VALUES(?,?,?,?,?,?,?) ON CONFLICT(museum_id,user_id) DO UPDATE SET name=excluded.name,seen=excluded.seen',(mid,user['id'],(user.get('first_name') or 'Mehmon')[:48],0,2,0,now))
         photos=[dict(r) for r in c.execute('SELECT id,title,sort_order FROM photos WHERE museum_id=? ORDER BY sort_order',(mid,)).fetchall()]
+        tracks=[dict(r) for r in c.execute('SELECT id,title,sort_order FROM museum_audio WHERE museum_id=? ORDER BY sort_order',(mid,)).fetchall()]
         people=[dict(r) for r in c.execute('SELECT user_id,name,x,z,yaw FROM presence WHERE museum_id=? AND seen>?',(mid,now-12)).fetchall()]
         if int(m['owner_id']) not in {int(x['user_id']) for x in people} and m['guide']:
             c.execute('UPDATE museums SET guide=0 WHERE id=?',(mid,))
@@ -115,7 +123,8 @@ def handle_get(handler, token):
         guests=[dict(r) for r in c.execute('SELECT user_id,name,seen FROM presence WHERE museum_id=? AND user_id!=? AND seen>?',(mid,int(m['owner_id']),now-20)).fetchall()]
         c.commit(); c.close()
         for p in photos: p['url']=_photo_url(p.pop('id'), q.get('init_data',[''])[0], invite)
-        _json(handler,200,{'ok':True,'museum':{'id':mid,'title':m['title'],'owner_id':m['owner_id'],'guide':bool(m['guide']),'focused_photo':m['focused_photo']},'photos':photos,'people':people,'guests':guests,'is_owner':int(m['owner_id'])==int(user['id']),'r2_enabled':R2_ENABLED})
+        for t in tracks: t['url']='/api/museum/audio/'+urllib.parse.quote(t.pop('id'),safe='')+'?init_data='+urllib.parse.quote(q.get('init_data',[''])[0])+'&invite='+urllib.parse.quote(invite)
+        _json(handler,200,{'ok':True,'museum':{'id':mid,'title':m['title'],'owner_id':m['owner_id'],'guide':bool(m['guide']),'focused_photo':m['focused_photo'],'music_index':m['music_index'],'music_playing':bool(m['music_playing'])},'photos':photos,'tracks':tracks,'people':people,'guests':guests,'is_owner':int(m['owner_id'])==int(user['id']),'r2_enabled':R2_ENABLED})
         return True
     return False
 
@@ -124,7 +133,7 @@ def handle_post(handler, token):
     if not handler.path.startswith('/api/museum/'): return False
     try: length=int(handler.headers.get('Content-Length','0'))
     except ValueError: length=0
-    if length<=0 or length>MAX_PHOTO*2+100_000: _json(handler,413,{'ok':False,'error':'So‘rov hajmi juda katta'}); return True
+    if length<=0 or length>MAX_AUDIO*2+200_000: _json(handler,413,{'ok':False,'error':'So‘rov hajmi juda katta'}); return True
     try: payload=json.loads(handler.rfile.read(length).decode('utf-8'))
     except Exception: _json(handler,400,{'ok':False,'error':'JSON xato'}); return True
     user=_auth(payload,token)
@@ -191,6 +200,43 @@ def handle_post(handler, token):
                         MEDIA_DIR.mkdir(parents=True,exist_ok=True); dest=MEDIA_DIR/f'{pid}{ext}'; dest.write_bytes(raw); store=str(dest)
                     title=str(payload.get('title') or 'Xotira').strip()[:100]
                     c.execute('INSERT INTO photos(id,museum_id,owner_id,title,storage_key,mime,created,sort_order) VALUES(?,?,?,?,?,?,?,?)',(pid,mid,uid,title,store,mime,now,count)); c.commit(); _json(handler,200,{'ok':True,'photo':pid,'r2_enabled':R2_ENABLED})
+        elif action=='audio':
+            mid=str(payload.get('museum') or ''); m=c.execute('SELECT owner_id FROM museums WHERE id=?',(mid,)).fetchone()
+            if not m or int(m['owner_id'])!=uid: _json(handler,403,{'ok':False,'error':'Faqat muzey egasi musiqa yuklaydi'})
+            else:
+                count=c.execute('SELECT COUNT(*) n FROM museum_audio WHERE museum_id=?',(mid,)).fetchone()['n']
+                data=str(payload.get('audio') or ''); head,sep,b64=data.partition(','); raw=base64.b64decode(b64,validate=True) if sep else b''
+                valid_mp3=bool(raw) and (raw.startswith(b'ID3') or (len(raw)>1 and raw[0]==0xff and raw[1]&0xe0==0xe0))
+                if count>=MAX_AUDIO_TRACKS or len(raw)>MAX_AUDIO or not valid_mp3:
+                    _json(handler,400,{'ok':False,'error':'Faqat haqiqiy MP3, 10 MB gacha; bitta muzeyga 3 ta trek'} )
+                else:
+                    aid=uuid.uuid4().hex; key=f'museum/{mid}/{aid}.mp3'
+                    if R2_ENABLED: _s3.put_object(Bucket=_bucket,Key=key,Body=raw,ContentType='audio/mpeg'); store='r2:'+key
+                    else: MEDIA_DIR.mkdir(parents=True,exist_ok=True); dest=MEDIA_DIR/f'{aid}.mp3'; dest.write_bytes(raw); store=str(dest)
+                    title=str(payload.get('title') or 'Musiqa').strip()[:100]
+                    c.execute('INSERT INTO museum_audio(id,museum_id,owner_id,title,storage_key,mime,created,sort_order) VALUES(?,?,?,?,?,?,?,?)',(aid,mid,uid,title,store,'audio/mpeg',now,count)); c.commit(); _json(handler,200,{'ok':True,'track':aid})
+        elif action=='audio_delete':
+            mid=str(payload.get('museum') or ''); aid=str(payload.get('track') or '')
+            m=c.execute('SELECT owner_id FROM museums WHERE id=?',(mid,)).fetchone()
+            if not m or int(m['owner_id'])!=uid: _json(handler,403,{'ok':False,'error':'Faqat egasi musiqani o‘chira oladi'})
+            else:
+                row=c.execute('SELECT storage_key FROM museum_audio WHERE id=? AND museum_id=?',(aid,mid)).fetchone()
+                if row:
+                    if row['storage_key'].startswith('r2:'):
+                        try: _s3.delete_object(Bucket=_bucket,Key=row['storage_key'][3:])
+                        except Exception: log.exception('Museum audio R2 delete failed')
+                    else:
+                        try: Path(row['storage_key']).unlink(missing_ok=True)
+                        except OSError: pass
+                    c.execute('DELETE FROM museum_audio WHERE id=?',(aid,)); c.execute('UPDATE museums SET music_index=0,music_playing=0 WHERE id=?',(mid,)); c.commit()
+                _json(handler,200,{'ok':True})
+        elif action=='music_control':
+            mid=str(payload.get('museum') or ''); invite=str(payload.get('invite') or ''); m,allowed=_museum_access(c,mid,uid,invite)
+            if not allowed: _json(handler,403,{'ok':False,'error':'Muzeyga kirish ruxsati yo‘q'})
+            else:
+                tracks=c.execute('SELECT COUNT(*) n FROM museum_audio WHERE museum_id=?',(mid,)).fetchone()['n']
+                idx=int(payload.get('index',0)); idx=max(0,min(max(0,tracks-1),idx))
+                c.execute('UPDATE museums SET music_index=?,music_playing=? WHERE id=?',(idx,1 if payload.get('playing') and tracks else 0,mid)); c.commit(); _json(handler,200,{'ok':True})
         elif action=='presence':
             mid=str(payload.get('museum') or ''); invite=str(payload.get('invite') or ''); m,allowed=_museum_access(c,mid,uid,invite)
             if not allowed: _json(handler,403,{'ok':False,'error':'Muzeyga ruxsat yo‘q'})

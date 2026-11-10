@@ -49,3 +49,10 @@ node --check webapp/museum/app.js
 ```
 
 Deploydan so‘ng ikkita alohida Telegram akkaunti/telefon bilan: muzey yaratish, invite/QR, mehmon kirishi, avatar holati, ergashish, mustaqil yurish, guest kick, invite revoke va reconnect sinovlarini bajaring.
+
+## 2026-11: muzey UI, musiqa va doimiy saqlash
+- Muzey metama'lumotlari SQLite `MUSEUM_DB_PATH` bazasida, media esa `MUSEUM_MEDIA_DIR` papkasida saqlanadi.
+- Render qayta deploydan keyin ham SQLite va mahalliy media saqlanishi uchun Render Persistent Disk ulang va `MUSEUM_DB_PATH=/var/data/museum/museum.sqlite3`, `MUSEUM_MEDIA_DIR=/var/data/museum/media` qiymatlarini belgilang.
+- Alternativ: R2 sozlamalari (`R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`) media fayllarini obyekt omborida saqlaydi; SQLite bazasi uchun baribir persistent disk kerak.
+- Muzey egasi 10 MB gacha bo'lgan 3 ta MP3 yuklashi mumkin. Mehmonlar kolonka boshqaruvidan ijro/pauza va keyingi/oldingi trekni boshqaradi.
+- Inline ulashish: `@Student_ai_uz_bot muzey`.

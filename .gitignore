@@ -35,3 +35,6 @@ backups/
 wallet_data.json
 hisobchi_data.json
 data/telegram_message_effects.json
+
+# Xotiralar muzeyi foydalanuvchi ma'lumotlari (runtime)
+museum_data/

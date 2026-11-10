@@ -314,6 +314,43 @@ async def on_inline_query(
         await _answer_rasim(update)
         return
 
+    # 🏛 Shaxsiy Xotiralar muzeyini inline ulashish: @Student_ai_uz_bot muzey
+    if re.fullmatch(r"muzey", query, re.IGNORECASE):
+        try:
+            import museum as museum_service
+            conn = museum_service._db()
+            row = conn.execute('SELECT id,title FROM museums WHERE owner_id=? ORDER BY created DESC LIMIT 1', (int(user.id),)).fetchone()
+            invite_token = None
+            if row:
+                import secrets, time as _time
+                invite_token = secrets.token_hex(32)
+                conn.execute('INSERT INTO invites(token,museum_id,created,expires) VALUES(?,?,?,?)', (invite_token, row['id'], _time.time(), _time.time()+24*3600))
+                conn.commit()
+            conn.close()
+            if row:
+                deep_link = f"https://t.me/Student_ai_uz_bot?startapp=museum_{row['id']}_{invite_token}"
+                result = InlineQueryResultArticle(
+                    id=f"museum_{row['id']}",
+                    title=f"🏛 {row['title']}",
+                    description="Shaxsiy Xotiralar muzeyini ulashish",
+                    input_message_content=InputTextMessageContent(
+                        f"🏛 {row['title']}\n\nMening Xotiralar muzeyimga sayohat qiling: {deep_link}"
+                    ),
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏛 Muzeyga kirish", url=deep_link)]])
+                )
+                await update.inline_query.answer([result], cache_time=0, is_personal=True)
+            else:
+                result = InlineQueryResultArticle(
+                    id=f"museum-none-{user.id}", title="🏛 Avval shaxsiy muzey yarating",
+                    description="/muzey buyrug‘i orqali muzey oching",
+                    input_message_content=InputTextMessageContent("🏛 Shaxsiy muzeyimni hali yaratmadim. Men ham /muzey orqali yarataman.")
+                )
+                await update.inline_query.answer([result], cache_time=0, is_personal=True)
+        except Exception as exc:
+            logger.exception("Museum inline query failed: %s", type(exc).__name__)
+            await update.inline_query.answer([], cache_time=0, is_personal=True)
+        return
+
     if not query:
         return  # foydalanuvchi hali hech narsa yozmagan
 
