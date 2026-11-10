@@ -122,7 +122,7 @@ def handle_get(handler, token):
             m=c.execute('SELECT * FROM museums WHERE id=?',(mid,)).fetchone()
         guests=[dict(r) for r in c.execute('SELECT user_id,name,seen FROM presence WHERE museum_id=? AND user_id!=? AND seen>?',(mid,int(m['owner_id']),now-20)).fetchall()]
         c.commit(); c.close()
-        for p in photos: p['url']=_photo_url(p.pop('id'), q.get('init_data',[''])[0], invite)
+        for p in photos: p['url']=_photo_url(p['id'], q.get('init_data',[''])[0], invite)
         for t in tracks: t['url']='/api/museum/audio/'+urllib.parse.quote(t.pop('id'),safe='')+'?init_data='+urllib.parse.quote(q.get('init_data',[''])[0])+'&invite='+urllib.parse.quote(invite)
         _json(handler,200,{'ok':True,'museum':{'id':mid,'title':m['title'],'owner_id':m['owner_id'],'guide':bool(m['guide']),'focused_photo':m['focused_photo'],'music_index':m['music_index'],'music_playing':bool(m['music_playing'])},'photos':photos,'tracks':tracks,'people':people,'guests':guests,'is_owner':int(m['owner_id'])==int(user['id']),'r2_enabled':R2_ENABLED})
         return True
