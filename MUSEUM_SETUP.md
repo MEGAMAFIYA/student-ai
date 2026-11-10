@@ -56,3 +56,10 @@ Deploydan so‘ng ikkita alohida Telegram akkaunti/telefon bilan: muzey yaratish
 - Alternativ: R2 sozlamalari (`R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`) media fayllarini obyekt omborida saqlaydi; SQLite bazasi uchun baribir persistent disk kerak.
 - Muzey egasi 10 MB gacha bo'lgan 3 ta MP3 yuklashi mumkin. Mehmonlar kolonka boshqaruvidan ijro/pauza va keyingi/oldingi trekni boshqaradi.
 - Inline ulashish: `@Student_ai_uz_bot muzey`.
+
+## 2026-11: kamera, joystick va mehmon roziligi
+- Joystick harakati vaqtga bog‘langan tezlik bilan hisoblanadi: oldinga/orqaga va yonlama yurish ishlaydi; yonlama yurish kamerani burmaydi.
+- Sahnaning bo‘sh joyini barmoq bilan sudrash kameraning yaw/pitch yo‘nalishini o‘zgartiradi; bu harakat qahramonning joyini o‘zgartirmaydi.
+- Suratni bosish raycast orqali aniqlanadi; kamera sudralganida suratni tasodifan ochmaydi.
+- Mehmon `Egaga ergashish`ni bosganda rozilik tasdig‘i ko‘rsatiladi. Rad etsa, ergashish yoqilmaydi.
+- Avatar geometriyasi Three.js asosiy buildida mavjud geometriyalardan tuzildi; `CapsuleGeometry` addoniga bog‘liqlik olib tashlandi.
