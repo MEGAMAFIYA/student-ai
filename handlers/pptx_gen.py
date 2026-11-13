@@ -3,7 +3,7 @@
 import asyncio, json, logging, os, re, hashlib
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
-from telegram import Update, InputFile, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InputFile, InputMediaPhoto, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode, ChatAction
 from cancel_registry import cancel_markup
@@ -51,6 +51,34 @@ def _count_keyboard():
 
 def _design_keyboard():
     return _keyboard([(k,f"{i+1}. {THEMES[k][0]}") for i,k in enumerate(_DESIGN_KEYS)],"pptx:design",2)
+
+def _design_preview_keyboard(index):
+    total=len(_DESIGN_KEYS)
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⬅️ Orqaga",callback_data="pptx:design_prev"),
+         InlineKeyboardButton(f"{index+1}/{total}",callback_data="pptx:design_count"),
+         InlineKeyboardButton("Keyingisi ➡️",callback_data="pptx:design_next")],
+        [InlineKeyboardButton("✅ Tasdiqlash",callback_data="pptx:design_confirm")],
+    ])
+
+async def _show_design_preview(query,context,index,edit=False):
+    index %= len(_DESIGN_KEYS)
+    key=_DESIGN_KEYS[index]
+    context.user_data["pptx_design_index"]=index
+    context.user_data["pptx_settings"]["design"]=key
+    preview=await asyncio.to_thread(_preview_png,key)
+    caption=(f"🎨 <b>{THEMES[key][0]}</b>\n"
+             f"Dizayn namunasi {index+1}/{len(_DESIGN_KEYS)}\n\n"
+             "Yoqsa «Tasdiqlash»ni bosing yoki boshqa namunalarni ko‘ring.")
+    if edit:
+        await query.message.edit_media(
+            media=InputMediaPhoto(media=InputFile(preview,filename="design-preview.png"),
+                                  caption=caption,parse_mode=ParseMode.HTML),
+            reply_markup=_design_preview_keyboard(index))
+    else:
+        await context.bot.send_photo(query.message.chat_id,
+            photo=InputFile(preview,filename="design-preview.png"),caption=caption,
+            parse_mode=ParseMode.HTML,reply_markup=_design_preview_keyboard(index))
 
 def _frame_keyboard():
     return _keyboard(list(FRAMES.items()),"pptx:frame",2)
@@ -112,15 +140,31 @@ async def receive_count(update:Update,context:ContextTypes.DEFAULT_TYPE):
 
 async def choose_design(update:Update,context:ContextTypes.DEFAULT_TYPE):
     q=update.callback_query; await q.answer()
-    key=q.data.split(":",2)[-1]
-    if key not in THEMES: return PX_DESIGN
-    context.user_data["pptx_settings"]["design"]=key
-    try:
-        preview=await asyncio.to_thread(_preview_png,key)
-        await context.bot.send_photo(update.effective_chat.id,photo=InputFile(preview,filename="design-preview.png"),caption=f"🎨 Tanlangan dizayn: {THEMES[key][0]}")
-    except Exception as e: logger.warning("Slide preview failed: %s",e)
-    await q.edit_message_text("🖼 Ramka va bezak turini tanlang:",reply_markup=_frame_keyboard())
-    return PX_FRAME
+    action=q.data
+    if action.startswith("pptx:design:"):
+        key=action.split(":",2)[-1]
+        if key not in THEMES: return PX_DESIGN
+        await _show_design_preview(q,context,_DESIGN_KEYS.index(key))
+        return PX_DESIGN
+    if action=="pptx:design_prev":
+        index=int(context.user_data.get("pptx_design_index",0))-1
+        await _show_design_preview(q,context,index,edit=True)
+        return PX_DESIGN
+    if action=="pptx:design_next":
+        index=int(context.user_data.get("pptx_design_index",0))+1
+        await _show_design_preview(q,context,index,edit=True)
+        return PX_DESIGN
+    if action=="pptx:design_count":
+        return PX_DESIGN
+    if action=="pptx:design_confirm":
+        label=THEMES[context.user_data['pptx_settings']['design']][0]
+        chat_id=q.message.chat_id
+        await q.message.delete()
+        await context.bot.send_message(chat_id,
+            f"✅ <b>{label}</b> dizayni tasdiqlandi.\n\n🖼 Endi ramka va bezak turini tanlang:",
+            parse_mode=ParseMode.HTML,reply_markup=_frame_keyboard())
+        return PX_FRAME
+    return PX_DESIGN
 
 async def choose_frame(update:Update,context:ContextTypes.DEFAULT_TYPE):
     q=update.callback_query; await q.answer()
