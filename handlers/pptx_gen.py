@@ -49,9 +49,6 @@ def _count_keyboard():
     return InlineKeyboardMarkup([[InlineKeyboardButton(f"{n} ta",callback_data=f"pptx:count:{n}") for n in _COUNT_OPTIONS[:4]],
                                  [InlineKeyboardButton(f"{n} ta",callback_data=f"pptx:count:{n}") for n in _COUNT_OPTIONS[4:]]])
 
-def _design_keyboard():
-    return _keyboard([(k,f"{i+1}. {THEMES[k][0]}") for i,k in enumerate(_DESIGN_KEYS)],"pptx:design",2)
-
 def _design_preview_keyboard(index):
     total=len(_DESIGN_KEYS)
     return InlineKeyboardMarkup([
@@ -67,18 +64,39 @@ async def _show_design_preview(query,context,index,edit=False):
     context.user_data["pptx_design_index"]=index
     context.user_data["pptx_settings"]["design"]=key
     preview=await asyncio.to_thread(_preview_png,key)
-    caption=(f"🎨 <b>{THEMES[key][0]}</b>\n"
-             f"Dizayn namunasi {index+1}/{len(_DESIGN_KEYS)}\n\n"
+    caption=(f"🎨 <b>{THEMES[key][0]}</b>\\n"
+             f"Dizayn namunasi {index+1}/{len(_DESIGN_KEYS)}\\n\\n"
              "Yoqsa «Tasdiqlash»ni bosing yoki boshqa namunalarni ko‘ring.")
     if edit:
-        await query.message.edit_media(
-            media=InputMediaPhoto(media=InputFile(preview,filename="design-preview.png"),
-                                  caption=caption,parse_mode=ParseMode.HTML),
-            reply_markup=_design_preview_keyboard(index))
+        try:
+            await query.message.edit_media(
+                media=InputMediaPhoto(
+                    media=InputFile(preview,filename=f"design-{key}.png"),
+                    caption=caption,parse_mode=ParseMode.HTML),
+                reply_markup=_design_preview_keyboard(index))
+        except Exception:
+            logger.exception("Dizayn preview rasmini tahrirlashda xatolik")
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            await context.bot.send_photo(
+                chat_id=query.message.chat_id,
+                photo=InputFile(await asyncio.to_thread(_preview_png,key),
+                                filename=f"design-{key}.png"),
+                caption=caption,parse_mode=ParseMode.HTML,
+                reply_markup=_design_preview_keyboard(index))
     else:
-        await context.bot.send_photo(query.message.chat_id,
-            photo=InputFile(preview,filename="design-preview.png"),caption=caption,
-            parse_mode=ParseMode.HTML,reply_markup=_design_preview_keyboard(index))
+        # Delete the old count/list message before showing the first visual sample.
+        try:
+            await query.message.delete()
+        except Exception:
+            logger.exception("Eski tanlash xabarini o‘chirish imkoni bo‘lmadi")
+        await context.bot.send_photo(
+            chat_id=query.message.chat_id,
+            photo=InputFile(preview,filename=f"design-{key}.png"),
+            caption=caption,parse_mode=ParseMode.HTML,
+            reply_markup=_design_preview_keyboard(index))
 
 def _frame_keyboard():
     return _keyboard(list(FRAMES.items()),"pptx:frame",2)
@@ -135,7 +153,8 @@ async def receive_count(update:Update,context:ContextTypes.DEFAULT_TYPE):
     except Exception: return PX_COUNT
     if count not in _COUNT_OPTIONS: return PX_COUNT
     context.user_data["px_count"]=count
-    await q.edit_message_text("🎨 20 ta professional dizayndan birini tanlang:",reply_markup=_design_keyboard())
+    # Skip the old 20-button list and open the first visual preview immediately.
+    await _show_design_preview(q,context,0)
     return PX_DESIGN
 
 async def choose_design(update:Update,context:ContextTypes.DEFAULT_TYPE):
