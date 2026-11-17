@@ -218,6 +218,17 @@ async def _post_init(application):
         logger.error(f"🤖 To'lovlarni qayta rejalashtirishda xato: {type(e).__name__}: {e}", exc_info=True)
 
 
+    # Bot yangilangandan keyin avvaldan ulangan Business akkauntlari uchun
+    # /bossiyons menyu buyrug'ini ham qayta tiklaymiz.
+    try:
+        for connection in business_storage.get_active_connections():
+            owner_id = connection.get("user_id")
+            if owner_id:
+                await business_autoreply.ensure_command_visible(application.bot, int(owner_id))
+    except Exception as e:
+        logger.warning("📇 Business Auto Reply buyruqlarini tiklashda xato: %s", e, exc_info=True)
+
+
 async def _on_business_message(update, context):
     """📨 Connected Business account chatidagi incoming xabarni qayd etadi.
 

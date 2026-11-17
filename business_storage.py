@@ -122,6 +122,11 @@ def save_connection(business_connection) -> None:
     )
 
 
+def get_active_connections() -> list[dict]:
+    """Restart paytida shaxsiy buyruqlar menyusini tiklash uchun faol ulanishlar."""
+    return [entry for entry in _data.get("by_user", {}).values() if entry.get("is_enabled")]
+
+
 def get_connection_for_user(business_user_id: int) -> dict | None:
     """Berilgan business-account egasi (masalan /tabrik yuboruvchi A) uchun
     saqlangan eng so'nggi connection yozuvini qaytaradi (topilmasa None)."""
