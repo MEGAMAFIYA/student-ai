@@ -1806,6 +1806,9 @@ def main():
         app.run_polling(
             drop_pending_updates=True,
             bootstrap_retries=config.POLLING_BOOTSTRAP_RETRIES,
+            # Telegram Business ulanishi va shaxsiy Business xabarlari
+            # polling orqali ham aniq so'ralishi kerak.
+            allowed_updates=Update.ALL_TYPES,
         )
     except telegram.error.Conflict as e:
         logger.critical(

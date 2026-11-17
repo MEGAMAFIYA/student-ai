@@ -11,17 +11,34 @@ _WAITING_TEXT = "business_auto_reply_waiting_text"
 
 
 async def ensure_command_visible(bot, user_id: int):
-    """Business egasining bot chatidagi buyruqlar menyusiga /bossiyons qo'shadi."""
+    """Business egasining bot bilan shaxsiy chatiga /bossiyons buyrug'ini o'rnatadi.
+
+    Buyruqlar ro'yxatini har safar qayta yozamiz: Telegram ayrim scope'larda
+    global/default buyruqlarni qaytarishi mumkin. Faqat ro'yxatni tekshirib,
+    o'zgarmagan deb taxmin qilish ayrim holatlarda yangi scope'ni sozlamay
+    qoldirishi mumkin.
+    """
     try:
-        scope = BotCommandScopeChat(chat_id=user_id)
+        scope = BotCommandScopeChat(chat_id=int(user_id))
         commands = await bot.get_my_commands(scope=scope)
         if not commands:
             commands = await bot.get_my_commands()
         if not any(c.command == "bossiyons" for c in commands):
-            commands.append(BotCommand("bossiyons", "Avtomatik javob sozlash"))
-            await bot.set_my_commands(commands, scope=scope)
+            commands = list(commands) + [
+                BotCommand("bossiyons", "Avtomatik javob sozlash")
+            ]
+        # Har safar set qilish Telegram tomonida scope'ni aniq yaratadi/yangilaydi.
+        await bot.set_my_commands(commands, scope=scope)
+        logger.info(
+            "Business Auto Reply command menu set: user_id=%s command_count=%s",
+            user_id, len(commands),
+        )
+        return True
     except Exception:
-        logger.exception("Business Auto Reply command menu update failed: user_id=%s", user_id)
+        logger.exception(
+            "Business Auto Reply command menu update failed: user_id=%s", user_id
+        )
+        return False
 
 
 async def bossiyons_cmd(update, context):
