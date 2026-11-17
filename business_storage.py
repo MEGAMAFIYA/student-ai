@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 
 import config
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("business_autoreply")
 
 _DATA_FILENAME = "business_connections.json"
 _UPSTASH_KEY = "student_ai_business_connections"
@@ -74,10 +74,20 @@ _data = _load()
 
 def _save() -> None:
     raw = json.dumps(_data, ensure_ascii=False)
-    config.persist_write(
-        _DATA_FILENAME, _UPSTASH_KEY, raw,
-        commit_message="📇 Business connection ma'lumotlari yangilandi",
-    )
+    try:
+        config.persist_write(
+            _DATA_FILENAME, _UPSTASH_KEY, raw,
+            commit_message="📇 Business connection ma'lumotlari yangilandi",
+        )
+        logger.info(
+            "BUSINESS_STORAGE_SAVE_OK users=%s connections=%s autoreplies=%s",
+            len(_data.get("by_user", {})),
+            len(_data.get("by_connection_id", {})),
+            len(_data.get("auto_replies", {})),
+        )
+    except Exception:
+        logger.exception("BUSINESS_STORAGE_SAVE_FAILED")
+        raise
 
 
 def _rights_to_dict(rights) -> dict:
@@ -124,18 +134,26 @@ def save_connection(business_connection) -> None:
 
 def get_active_connections() -> list[dict]:
     """Restart paytida shaxsiy buyruqlar menyusini tiklash uchun faol ulanishlar."""
-    return [entry for entry in _data.get("by_user", {}).values() if entry.get("is_enabled")]
+    active = [entry for entry in _data.get("by_user", {}).values() if entry.get("is_enabled")]
+    logger.info("BUSINESS_ACTIVE_CONNECTIONS_READ count=%s", len(active))
+    return active
 
 
 def get_connection_for_user(business_user_id: int) -> dict | None:
-    """Berilgan business-account egasi (masalan /tabrik yuboruvchi A) uchun
-    saqlangan eng so'nggi connection yozuvini qaytaradi (topilmasa None)."""
-    return _data["by_user"].get(str(business_user_id))
+    """Berilgan business-account egasi uchun saqlangan connection yozuvini qaytaradi."""
+    entry = _data["by_user"].get(str(business_user_id))
+    logger.info("BUSINESS_CONNECTION_USER_LOOKUP user_id=%s found=%s enabled=%s",
+                business_user_id, bool(entry), entry.get("is_enabled") if entry else None)
+    return entry
 
 
 def get_user_id_for_connection(connection_id: str) -> int | None:
     uid = _data["by_connection_id"].get(connection_id)
-    return int(uid) if uid is not None else None
+    if uid is None:
+        logger.error("BUSINESS_CONNECTION_LOOKUP_MISS connection_id=%s", connection_id)
+        return None
+    logger.info("BUSINESS_CONNECTION_LOOKUP_OK connection_id=%s user_id=%s", connection_id, uid)
+    return int(uid)
 
 
 

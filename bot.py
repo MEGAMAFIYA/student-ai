@@ -78,6 +78,35 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("telegram").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
+business_logger = logging.getLogger("business_autoreply")
+
+# Telegram Business Auto Reply uchun alohida aylanuvchi log fayli.
+# Shu yozuvlar stdout'ga ham chiqadi (Render/Replit loglarida ko'rinadi).
+try:
+    from logging.handlers import RotatingFileHandler
+    os.makedirs("logs", exist_ok=True)
+    _business_log_handler = RotatingFileHandler(
+        os.getenv("BUSINESS_AUTOREPLY_LOG_FILE", "logs/business_autoreply.log"),
+        maxBytes=3 * 1024 * 1024,
+        backupCount=3,
+        encoding="utf-8",
+    )
+    _business_log_handler.setFormatter(logging.Formatter(
+        "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+    ))
+    _business_logger = business_logger
+    _business_logger.setLevel(logging.INFO)
+    if not any(
+        isinstance(h, RotatingFileHandler)
+        and getattr(h, "baseFilename", "").endswith("business_autoreply.log")
+        for h in _business_logger.handlers
+    ):
+        _business_logger.addHandler(_business_log_handler)
+    _business_logger.propagate = True
+    _business_logger.info("BUSINESS_AUTOREPLY_LOGGER_READY file=%s",
+                          _business_log_handler.baseFilename)
+except Exception:
+    logger.exception("BUSINESS_AUTOREPLY_FILE_LOGGER_INIT_FAILED; stdout logging remains active")
 
 
 async def _track_user_message(update, context):
@@ -145,8 +174,17 @@ async def _post_init(application):
         except Exception as e:
             logger.warning(f"🖼 Preview prewarm ishga tushmadi (muhim emas): {e}")
 
-    await application.bot.set_my_commands(BOT_COMMANDS, scope=BotCommandScopeDefault())
-    await application.bot.set_my_commands(BOT_COMMANDS, scope=BotCommandScopeAllGroupChats())
+    logger.info("BOT_POST_INIT_START business_auto_reply_diagnostics=enabled")
+    try:
+        await application.bot.set_my_commands(BOT_COMMANDS, scope=BotCommandScopeDefault())
+        logger.info("BOT_DEFAULT_COMMANDS_SET_OK count=%s", len(BOT_COMMANDS))
+    except Exception:
+        logger.exception("BOT_DEFAULT_COMMANDS_SET_FAILED")
+    try:
+        await application.bot.set_my_commands(BOT_COMMANDS, scope=BotCommandScopeAllGroupChats())
+        logger.info("BOT_GROUP_COMMANDS_SET_OK count=%s", len(BOT_COMMANDS))
+    except Exception:
+        logger.exception("BOT_GROUP_COMMANDS_SET_FAILED")
 
     # 🧭 "@Bot /vid ..." kabi mention orqali kelgan buyruqlarni aniqlash
     # uchun HAQIQIY (Telegram tomonidan tasdiqlangan) bot username kerak —
@@ -221,12 +259,30 @@ async def _post_init(application):
     # Bot yangilangandan keyin avvaldan ulangan Business akkauntlari uchun
     # /bossiyons menyu buyrug'ini ham qayta tiklaymiz.
     try:
-        for connection in business_storage.get_active_connections():
+        active_connections = business_storage.get_active_connections()
+        business_logger.info("BUSINESS_STARTUP_RESTORE_BEGIN active_connections=%s",
+                    len(active_connections))
+        for connection in active_connections:
             owner_id = connection.get("user_id")
+            connection_id = connection.get("connection_id")
             if owner_id:
-                await business_autoreply.ensure_command_visible(application.bot, int(owner_id))
+                business_logger.info(
+                    "BUSINESS_STARTUP_RESTORE_CONNECTION user_id=%s connection_id=%s",
+                    owner_id, connection_id,
+                )
+                ok = await business_autoreply.ensure_command_visible(
+                    application.bot, int(owner_id)
+                )
+                business_logger.info(
+                    "BUSINESS_STARTUP_RESTORE_RESULT user_id=%s success=%s",
+                    owner_id, ok,
+                )
+            else:
+                business_logger.error("BUSINESS_STARTUP_RESTORE_SKIP reason=MISSING_USER_ID entry=%s",
+                             {k: v for k, v in connection.items() if k != "connection_id"})
+        business_logger.info("BUSINESS_STARTUP_RESTORE_FINISHED")
     except Exception as e:
-        logger.warning("📇 Business Auto Reply buyruqlarini tiklashda xato: %s", e, exc_info=True)
+        business_logger.exception("BUSINESS_STARTUP_RESTORE_FAILED error=%s", e)
 
 
 async def _on_business_message(update, context):
@@ -238,7 +294,17 @@ async def _on_business_message(update, context):
     peerning haqiqiy chat_id'sini oldindan saqlab boramiz.
     """
     message = update.business_message
-    if message is None or not message.business_connection_id or not message.chat:
+    if message is None:
+        business_logger.warning("BUSINESS_MESSAGE_UPDATE_EMPTY update_id=%s", update.update_id)
+        return
+    business_logger.info(
+        "BUSINESS_MESSAGE_UPDATE_RECEIVED update_id=%s connection_id=%s chat_id=%s chat_type=%s",
+        update.update_id, getattr(message, "business_connection_id", None),
+        getattr(getattr(message, "chat", None), "id", None),
+        getattr(getattr(message, "chat", None), "type", None),
+    )
+    if not message.business_connection_id or not message.chat:
+        business_logger.error("BUSINESS_MESSAGE_UPDATE_INVALID update_id=%s", update.update_id)
         return
     business_storage.record_business_message(
         message.business_connection_id,
@@ -256,12 +322,37 @@ async def _on_business_connection(update, context):
     """
     conn = update.business_connection
     if conn is None:
+        business_logger.error("BUSINESS_CONNECTION_UPDATE_EMPTY update_id=%s", update.update_id)
         return
-    business_storage.save_connection(conn)
+    business_logger.info(
+        "BUSINESS_CONNECTION_UPDATE_RECEIVED update_id=%s user_id=%s connection_id=%s "
+        "is_enabled=%s rights=%s",
+        update.update_id, getattr(conn.user, "id", None), conn.id,
+        conn.is_enabled, getattr(conn, "rights", None),
+    )
+    try:
+        business_storage.save_connection(conn)
+        business_logger.info(
+            "BUSINESS_CONNECTION_PERSISTED user_id=%s connection_id=%s enabled=%s",
+            conn.user.id, conn.id, conn.is_enabled,
+        )
+    except Exception:
+        business_logger.exception(
+            "BUSINESS_CONNECTION_PERSIST_FAILED user_id=%s connection_id=%s",
+            conn.user.id, conn.id,
+        )
+        raise
     if conn.is_enabled:
-        await business_autoreply.ensure_command_visible(context.bot, conn.user.id)
-    if not conn.is_enabled:
-        logger.info(f"📇 BUSINESS_CONNECTION_DISABLED user_id={conn.user.id} connection_id={conn.id}")
+        ok = await business_autoreply.ensure_command_visible(context.bot, conn.user.id)
+        business_logger.info(
+            "BUSINESS_CONNECTION_COMMAND_MENU_RESULT user_id=%s success=%s",
+            conn.user.id, ok,
+        )
+    else:
+        business_logger.warning(
+            "BUSINESS_CONNECTION_DISABLED user_id=%s connection_id=%s",
+            conn.user.id, conn.id,
+        )
 
 
 async def _intercept_pro_test_answer(update, context):
@@ -1661,10 +1752,11 @@ def main():
     app.add_handler(CommandHandler("cancel", menu.cancel_cmd))
     # Telegram Business Auto Reply — faqat Business akkaunt egasining bot bilan
     # shaxsiy chatida sozlanadi; javoblar incoming BUSINESS_MESSAGE update'da yuboriladi.
-    app.add_handler(CommandHandler("bossiyons", business_autoreply.bossiyons_cmd, filters=filters.ChatType.PRIVATE), group=-2)
-    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, business_autoreply.receive_reply_text), group=-2)
-    app.add_handler(CallbackQueryHandler(business_autoreply.choice_callback, pattern=r"^bar:"), group=-2)
-    app.add_handler(CommandHandler("cancel", business_autoreply.cancel_cmd, filters=filters.ChatType.PRIVATE), group=-2)
+    app.add_handler(CommandHandler("bossiyons", business_autoreply.bossiyons_cmd, filters=filters.ChatType.PRIVATE), group=-4)
+    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, business_autoreply.receive_reply_text), group=-4)
+    app.add_handler(CallbackQueryHandler(business_autoreply.choice_callback, pattern=r"^bar:"), group=-4)
+    app.add_handler(CommandHandler("cancel", business_autoreply.cancel_cmd, filters=filters.ChatType.PRIVATE), group=-4)
+    business_logger.info("BUSINESS_AUTOREPLY_HANDLERS_REGISTERED group=-4 commands=bossiyons,cancel text=private callbacks=bar:*")
     # ❌ Conversation tashqarisida ishlayotgan jarayonlar uchun ham (conversation fallback'lari bundan OLDIN tekshiriladi).
     app.add_handler(CallbackQueryHandler(menu.cancel_cb, pattern=r"^cancel:all$"))
     app.add_handler(CommandHandler("yoqish", menu.group_enable_cmd))
@@ -1682,8 +1774,9 @@ def main():
     # Business → Chatbots orqali ulaganda/uzganda/sozlamasini
     # o'zgartirganda keladigan update. /tabrik'ning Business oqimi
     # (tabrik_business.py) shu saqlangan ma'lumotdan foydalanadi.
-    app.add_handler(BusinessConnectionHandler(_on_business_connection))
-    app.add_handler(MessageHandler(filters.UpdateType.BUSINESS_MESSAGE, _on_business_message))
+    app.add_handler(BusinessConnectionHandler(_on_business_connection), group=-5)
+    app.add_handler(MessageHandler(filters.UpdateType.BUSINESS_MESSAGE, _on_business_message), group=-5)
+    business_logger.info("BUSINESS_UPDATE_HANDLERS_REGISTERED group=-5 updates=business_connection,business_message")
     # 🎨 /rasim — Telegram Mini App orqali rasm chizish.
     app.add_handler(CommandHandler("rasim", rasim.rasim_cmd))
     app.add_handler(CommandHandler("muzey", _museum_command))
@@ -1803,6 +1896,7 @@ def main():
     # Conflict'ning o'zini hal qilmaydi. Agar boshqa instance doimiy ravishda
     # shu token bilan polling qilsa, retries tugagach xato ataylab ko'rinadi.
     try:
+        logger.info("BOT_POLLING_START allowed_updates=ALL_TYPES includes_business_connection_and_business_message")
         app.run_polling(
             drop_pending_updates=True,
             bootstrap_retries=config.POLLING_BOOTSTRAP_RETRIES,
