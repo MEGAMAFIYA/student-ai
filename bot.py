@@ -135,6 +135,15 @@ async def _post_init(application):
     BUNGA QO'SHILMAYDI — u faqat config.ADMIN_IDS ichidagi foydalanuvchilarning
     shaxsiy '/' menyusida (BotCommandScopeChat orqali) alohida ko'rsatiladi,
     boshqa hech kimga (oddiy foydalanuvchi yoki guruhlarga) ko'rinmaydi."""
+    # 🖼 Slayd previewlarini fon oqimida oldindan tayyorlash (bot ishga tushishini kechiktirmaydi).
+    if os.getenv("SLIDE_PREVIEW_PREWARM", "1").lower() in ("1", "true", "yes"):
+        try:
+            import threading
+            import slide_previews
+            threading.Thread(target=slide_previews.prewarm, name="slide-preview-prewarm", daemon=True).start()
+        except Exception as e:
+            logger.warning(f"🖼 Preview prewarm ishga tushmadi (muhim emas): {e}")
+
     await application.bot.set_my_commands(BOT_COMMANDS, scope=BotCommandScopeDefault())
     await application.bot.set_my_commands(BOT_COMMANDS, scope=BotCommandScopeAllGroupChats())
 
@@ -1342,19 +1351,27 @@ def build_guide_conv():
 
 
 def build_pptx_conv():
+    # Slayd ustasi: har bir tanlov bosqichi VIZUAL NAMUNA (callback_data "px:<bosqich>:<amal>:<indeks>").
+    # Har bir bosqich o'z holatida ro'yxatdan o'tgan; fallbacks: bekor qilish va eskirgan tugmalar.
     return ConversationHandler(
         entry_points=[CallbackQueryHandler(wallet_ui.require_payment("pptx")(pptx_gen.entry), pattern="^menu:pptx$")],
         states={
             pptx_gen.PX_TOPIC: [MessageHandler(filters.TEXT & ~filters.COMMAND, pptx_gen.receive_topic)],
-            pptx_gen.PX_COUNT: [CallbackQueryHandler(pptx_gen.receive_count, pattern="^pptx:count:")],
-            pptx_gen.PX_DESIGN: [CallbackQueryHandler(pptx_gen.choose_design, pattern="^pptx:design(:|_)")],
-            pptx_gen.PX_FRAME: [CallbackQueryHandler(pptx_gen.choose_frame, pattern="^pptx:frame:")],
-            pptx_gen.PX_PALETTE: [CallbackQueryHandler(pptx_gen.choose_palette, pattern="^pptx:palette:")],
+            pptx_gen.PX_COUNT: [CallbackQueryHandler(pptx_gen.receive_count, pattern=r"^px:cnt:")],
+            pptx_gen.PX_DESIGN: [CallbackQueryHandler(pptx_gen.choose_design, pattern=r"^px:dsg:")],
+            pptx_gen.PX_FRAME: [CallbackQueryHandler(pptx_gen.choose_frame, pattern=r"^px:frm:")],
+            pptx_gen.PX_PALETTE: [CallbackQueryHandler(pptx_gen.choose_palette, pattern=r"^px:pal:")],
             pptx_gen.PX_CUSTOM_COLOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, pptx_gen.receive_custom_color)],
-            pptx_gen.PX_FONT: [CallbackQueryHandler(pptx_gen.choose_font, pattern="^pptx:font:")],
-            pptx_gen.PX_CONFIRM: [CallbackQueryHandler(pptx_gen.choose_export, pattern="^pptx:pdf:")],
+            pptx_gen.PX_FONT: [CallbackQueryHandler(pptx_gen.choose_font, pattern=r"^px:fnt:")],
+            pptx_gen.PX_CONFIRM: [CallbackQueryHandler(pptx_gen.choose_export, pattern=r"^pptx:pdf:")],
         },
-        fallbacks=_cancel_fallbacks(),
+        fallbacks=[
+            # Rasmli xabar uchun maxsus bekor qilish (matnni tahrirlab bo'lmaydi) — umumiyidan OLDIN turadi.
+            CallbackQueryHandler(pptx_gen.cancel_cb, pattern=r"^cancel:all$"),
+            *_cancel_fallbacks(),
+            # Boshqa bosqichdan qolgan eskirgan tugma — bot yiqilmaydi, holat o'zgarmaydi.
+            CallbackQueryHandler(pptx_gen.stale_cb, pattern=r"^(px|pptx):"),
+        ],
         name="pptx_conv",
         allow_reentry=True,
     )
@@ -1691,6 +1708,8 @@ def main():
     app.add_handler(build_essay_conv())
     app.add_handler(build_translate_conv())
     app.add_handler(build_pptx_conv())
+    # Suhbat tugagach qolib ketgan eski taqdimot tugmalari (Telegram "yuklanmoqda"da qotib qolmasin).
+    app.add_handler(CallbackQueryHandler(pptx_gen.stale_cb, pattern=r"^(px|pptx):"))
     app.add_handler(build_quiz_conv())
     app.add_handler(build_solve_conv())
     app.add_handler(build_summarize_conv())

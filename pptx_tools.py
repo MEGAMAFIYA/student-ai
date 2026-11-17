@@ -19,6 +19,17 @@ def _rgb(value):
     return RGBColor(*(int(value[i:i+2],16) for i in (0,2,4)))
 
 def _font_available(name):
+    """PPTX faylga FOYDALANUVCHI TANLAGAN shrift nomi yoziladi.
+
+    Avval bu yerda server (fc-match) da shrift topilmasa "DejaVu Sans" yozilar edi — natijada
+    foydalanuvchi Arial/Calibri/Georgia tanlasa ham, PPTX'da DejaVu Sans bo'lib qolardi.
+    PowerPoint/LibreOffice shriftni o'z kompyuterida o'zi topadi (yo'q bo'lsa almashtiradi),
+    shuning uchun ro'yxatdagi shriftlar nomi o'zgarishsiz saqlanadi. Faqat NOMA'LUM nom bo'lsa
+    xavfsiz zaxira (DejaVu Sans) ishlatiladi.
+    """
+    from slide_themes import FONTS
+    if name in FONTS:
+        return name
     try:
         p=subprocess.run(["fc-match","-f","%{family}",name],capture_output=True,text=True,timeout=2)
         found=(p.stdout or "").lower()

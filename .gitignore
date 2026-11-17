@@ -38,3 +38,4 @@ data/telegram_message_effects.json
 
 # Xotiralar muzeyi foydalanuvchi ma'lumotlari (runtime)
 museum_data/
+data/slide_preview_cache/

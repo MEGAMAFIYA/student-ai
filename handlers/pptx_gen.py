@@ -1,9 +1,23 @@
+"""Telegram taqdimot ustasi (wizard): mavzu → slaydlar soni → dizayn → ramka → ranglar → shrift → eksport.
 
-"""Telegram presentation wizard: topic, count, theme, frame, palette, font, export."""
-import asyncio, json, logging, os, re, hashlib
+Slayd yaratishda foydalanuvchi tanlaydigan BARCHA parametrlar (slaydlar soni, dizayn, ramka,
+ranglar, shrift) VIZUAL NAMUNA orqali tanlanadi: bitta rasmli xabar, ostida
+[⬅️ Orqaga] [Keyingisi ➡️] [✅ TASDIQLASH]. Namunalar `slide_previews.py` da haqiqiy PPTX
+yaratuvchi (pptx_tools) orqali yaratiladi va keshlanadi.
+
+Callback xavfsizligi:
+  * callback_data = "px:<bosqich>:<amal>:<indeks>" (juda qisqa, 64 baytdan oshmaydi);
+  * har bir bosqich o'z ConversationHandler holatida ro'yxatdan o'tgan (bot.py);
+  * query.answer() har doim chaqiriladi (xato bo'lsa ham bot yiqilmaydi);
+  * bir foydalanuvchining tez-tez bosishlari parallel ishlamaydi (asyncio.Lock, ortiqcha bosish tashlanadi);
+  * eskirgan/begona xabardagi tugmalar zararsiz rad etiladi;
+  * edit_media xatolari logga yoziladi va xavfsiz zaxira (o'chirib, yangi rasm yuborish) ishlaydi;
+  * navigatsiya paytida sozlamalar O'ZGARMAYDI — faqat «✅ Tasdiqlash» ekrandagi variantni saqlaydi.
+"""
+import asyncio, html, json, logging, os, re
 from io import BytesIO
-from PIL import Image, ImageDraw, ImageFont
 from telegram import Update, InputFile, InputMediaPhoto, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import BadRequest, RetryAfter, TelegramError
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode, ChatAction
 from cancel_registry import cancel_markup
@@ -15,16 +29,28 @@ from slide_images import make_illustration
 from slide_export import pptx_to_pdf
 from handlers.menu import main_menu_keyboard
 from handlers import wallet_ui
+import slide_previews as sp
 import storage
 import config
 
 logger=logging.getLogger(__name__)
 (PX_TOPIC,PX_COUNT,PX_DESIGN,PX_FRAME,PX_PALETTE,PX_CUSTOM_COLOR,PX_FONT,PX_CONFIRM)=range(8)
-_COUNT_OPTIONS=[5,7,10,12,15,20,25,30]
+_COUNT_OPTIONS=sp.COUNT_OPTIONS
 _DESIGN_KEYS=list(THEMES)
 _FRAME_KEYS=list(FRAMES)
 _PALETTE_KEYS=list(PALETTES)
 _BUILD_SEMAPHORE=asyncio.Semaphore(max(1,int(os.getenv("SLIDE_BUILD_CONCURRENCY","2"))))
+
+# Bosqich -> ConversationHandler holati
+_STEP_STATE={sp.STEP_COUNT:PX_COUNT,sp.STEP_DESIGN:PX_DESIGN,sp.STEP_FRAME:PX_FRAME,
+             sp.STEP_PALETTE:PX_PALETTE,sp.STEP_FONT:PX_FONT}
+# Tasdiqlangandan keyin keyingi bosqich
+_NEXT_STEP={sp.STEP_COUNT:sp.STEP_DESIGN,sp.STEP_DESIGN:sp.STEP_FRAME,sp.STEP_FRAME:sp.STEP_PALETTE,
+            sp.STEP_PALETTE:sp.STEP_FONT}
+
+_USER_LOCKS={}          # user_id -> asyncio.Lock (parallel bosishlarga qarshi)
+_BG_TASKS=set()         # fon vazifalariga havola (GC o'chirib yubormasin)
+_STALE_TEXT="⌛ Bu tugma eskirgan. Taqdimotni menyudan qaytadan boshlang."
 
 _SYSTEM="""Siz professional taqdimot muharriri va mavzu bo‘yicha mutaxassissiz.
 BARCHA taqdimot matnlari qat'iy O‘ZBEK TILIDA, lotin yozuvida bo‘lsin. Mavzu inglizcha yoki boshqa tilda berilgan bo‘lsa ham, uni o‘zbekchaga tarjima qilib taqdimot yarating. Sarlavha, punktlar, jadval, diagramma yorliqlari va manba izohlari ham o‘zbekcha bo‘lsin. Inglizcha sarlavha yoki standart iboralarni ishlatmang. Mazmunli va faktlarga ehtiyotkor yondashing.
@@ -39,103 +65,162 @@ Birinchi kontent slaydi mavzuga kirish, oxirgi kontent slaydi xulosa bo‘lsin.
 Slaydlar soni so‘ralgan aniq miqdorda bo‘lsin (titul va yakuniy slayddan tashqari).
 Matnlar slaydga sig‘adigan darajada ixcham bo‘lsin."""
 
-def _keyboard(items,prefix,cols=2):
-    rows=[]
-    for i in range(0,len(items),cols):
-        rows.append([InlineKeyboardButton(label,callback_data=f"{prefix}:{key}") for key,label in items[i:i+cols]])
-    return InlineKeyboardMarkup(rows)
 
-def _count_keyboard():
-    return InlineKeyboardMarkup([[InlineKeyboardButton(f"{n} ta",callback_data=f"pptx:count:{n}") for n in _COUNT_OPTIONS[:4]],
-                                 [InlineKeyboardButton(f"{n} ta",callback_data=f"pptx:count:{n}") for n in _COUNT_OPTIONS[4:]]])
+# ----------------------------------------------------------------------------
+# Yordamchilar
+# ----------------------------------------------------------------------------
+def _user_lock(user_id):
+    lock=_USER_LOCKS.get(user_id)
+    if lock is None:
+        if len(_USER_LOCKS)>2000:
+            for k in [k for k,v in _USER_LOCKS.items() if not v.locked()][:1000]: _USER_LOCKS.pop(k,None)
+        lock=_USER_LOCKS[user_id]=asyncio.Lock()
+    return lock
 
-def _design_preview_keyboard(index):
-    total=len(_DESIGN_KEYS)
+async def _safe_answer(q,text=None,alert=False):
+    """query.answer() — eskirgan callback ("query is too old") bot'ni yiqitmasin."""
+    try:
+        await q.answer(text=text,show_alert=alert)
+    except Exception as e:
+        logger.info("callback answer() bajarilmadi (eskirgan bo‘lishi mumkin): %s: %s",type(e).__name__,e)
+
+async def _best_effort(coro,what=""):
+    try:
+        return await coro
+    except Exception as e:
+        logger.info("%s bajarilmadi: %s: %s",what or "Amal",type(e).__name__,e)
+        return None
+
+def _retry_seconds(exc):
+    ra=getattr(exc,"retry_after",1)
+    try: return float(ra.total_seconds() if hasattr(ra,"total_seconds") else ra)
+    except Exception: return 1.0
+
+def _short(text,n=150):
+    text=str(text or "")
+    return text if len(text)<=n else text[:n-1]+"…"
+
+def _palette_label(s):
+    if s.get("palette")=="custom":
+        return f"O‘z ranglarim ({s.get('custom_bg','')} {s.get('custom_accent','')} {s.get('custom_text','')})"
+    if s.get("palette") in PALETTES: return PALETTES[s["palette"]][0]
+    return "Dizaynning o‘z ranglari"
+
+def _prefetch(step,idx,settings):
+    """Qo'shni namunalarni fon oqimida tayyorlab qo'yadi — «Keyingisi/Orqaga» tezroq ishlaydi."""
+    n=sp.total(step); snap=dict(settings)
+    for j in {(idx+1)%n,(idx-1)%n}:
+        try:
+            t=asyncio.create_task(asyncio.to_thread(sp.get_preview,step,j,snap))
+        except RuntimeError:
+            return
+        _BG_TASKS.add(t); t.add_done_callback(_BG_TASKS.discard)
+
+# ----------------------------------------------------------------------------
+# Yagona boshqaruv: [⬅️ Orqaga] [Keyingisi ➡️] / [✅ TASDIQLASH]
+# ----------------------------------------------------------------------------
+def _carousel_keyboard(step,idx):
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("⬅️ Orqaga",callback_data="pptx:design_prev"),
-         InlineKeyboardButton(f"{index+1}/{total}",callback_data="pptx:design_count"),
-         InlineKeyboardButton("Keyingisi ➡️",callback_data="pptx:design_next")],
-        [InlineKeyboardButton("✅ Tasdiqlash",callback_data="pptx:design_confirm")],
+        [InlineKeyboardButton("⬅️ Orqaga",callback_data=sp.make_cb(step,"p",idx)),
+         InlineKeyboardButton("Keyingisi ➡️",callback_data=sp.make_cb(step,"n",idx))],
+        [InlineKeyboardButton("✅ TASDIQLASH",callback_data=sp.make_cb(step,"ok",idx))],
+        [InlineKeyboardButton("❌ Bekor qilish",callback_data="cancel:all")],
     ])
 
-async def _show_design_preview(query,context,index,edit=False):
-    index %= len(_DESIGN_KEYS)
-    key=_DESIGN_KEYS[index]
-    context.user_data["pptx_design_index"]=index
-    context.user_data["pptx_settings"]["design"]=key
-    preview=await asyncio.to_thread(_preview_png,key)
-    caption=(f"🎨 <b>{THEMES[key][0]}</b>\\n"
-             f"Dizayn namunasi {index+1}/{len(_DESIGN_KEYS)}\\n\\n"
-             "Yoqsa «Tasdiqlash»ni bosing yoki boshqa namunalarni ko‘ring.")
-    if edit:
-        try:
-            await query.message.edit_media(
-                media=InputMediaPhoto(
-                    media=InputFile(preview,filename=f"design-{key}.png"),
-                    caption=caption,parse_mode=ParseMode.HTML),
-                reply_markup=_design_preview_keyboard(index))
-        except Exception:
-            logger.exception("Dizayn preview rasmini tahrirlashda xatolik")
+def _carousel_caption(step,idx):
+    icon,title=sp.STEP_TITLES[step]
+    _,label=sp.items(step)[idx]
+    return (f"{icon} <b>{html.escape(title)}: {html.escape(label)}</b>\n"
+            f"Namuna {idx+1} / {sp.total(step)}\n\n"
+            f"{html.escape(sp.describe(step,idx))}\n\n"
+            "Yoqsa «✅ Tasdiqlash»ni bosing yoki ⬅️ ➡️ bilan boshqa namunalarni ko‘ring.")
+
+def _confirm_keyboard():
+    return InlineKeyboardMarkup([[InlineKeyboardButton("📄 PPTX + PDF",callback_data="pptx:pdf:yes"),
+                                  InlineKeyboardButton("📊 Faqat PPTX",callback_data="pptx:pdf:no")],
+                                 [InlineKeyboardButton("❌ Bekor qilish",callback_data="cancel:all")]])
+
+def _summary_caption(ud):
+    s=ud["pptx_settings"]
+    return ("📋 <b>Taqdimot sozlamalari</b>\n\n"
+            f"Mavzu: {html.escape(_short(ud.get('px_topic')))}\n"
+            f"Slaydlar: {ud.get('px_count')} ta\n"
+            f"Dizayn: {html.escape(THEMES[s['design']][0])}\n"
+            f"Ramka: {html.escape(FRAMES[s['frame']])}\n"
+            f"Ranglar: {html.escape(_palette_label(s))}\n"
+            f"Shrift: {html.escape(s['font'])}\n\n"
+            "PDF nusxasi ham kerakmi?")
+
+async def _show_photo(context,chat_id,message_id,data,caption,kb,filename):
+    """Rasmli xabarni almashtiradi: avval edit_media; xato bo'lsa — eski xabarni o'chirib yangisini yuboradi.
+    Natijadagi xabar obyektini (yoki tahrirlangan xabar id sini) qaytaradi -> (message_id)."""
+    if message_id:
+        for attempt in (1,2):
             try:
-                await query.message.delete()
+                await context.bot.edit_message_media(
+                    chat_id=chat_id,message_id=message_id,
+                    # MUHIM: edit_media uchun media — to'g'ridan-to'g'ri `bytes` (PTB o'zi "attach" qiladi).
+                    # InputFile obyektini InputMediaPhoto ichiga berish faylni biriktirmay qo'yishi mumkin.
+                    media=InputMediaPhoto(media=data,caption=caption,parse_mode=ParseMode.HTML),
+                    reply_markup=kb)
+                return message_id
+            except BadRequest as e:
+                if "message is not modified" in str(e).lower():
+                    return message_id                      # bir xil namuna — xato emas
+                logger.error("edit_media BadRequest (chat=%s msg=%s): %s",chat_id,message_id,e); break
+            except RetryAfter as e:
+                wait=_retry_seconds(e)
+                logger.warning("edit_media RetryAfter %.1fs (chat=%s msg=%s)",wait,chat_id,message_id)
+                if attempt==1 and wait<=3:
+                    await asyncio.sleep(wait+0.2); continue
+                break
+            except TelegramError as e:
+                logger.error("edit_media Telegram xatosi (chat=%s msg=%s): %s: %s",chat_id,message_id,type(e).__name__,e); break
             except Exception:
-                pass
-            await context.bot.send_photo(
-                chat_id=query.message.chat_id,
-                photo=InputFile(await asyncio.to_thread(_preview_png,key),
-                                filename=f"design-{key}.png"),
-                caption=caption,parse_mode=ParseMode.HTML,
-                reply_markup=_design_preview_keyboard(index))
-    else:
-        # Delete the old count/list message before showing the first visual sample.
-        try:
-            await query.message.delete()
-        except Exception:
-            logger.exception("Eski tanlash xabarini o‘chirish imkoni bo‘lmadi")
-        await context.bot.send_photo(
-            chat_id=query.message.chat_id,
-            photo=InputFile(preview,filename=f"design-{key}.png"),
-            caption=caption,parse_mode=ParseMode.HTML,
-            reply_markup=_design_preview_keyboard(index))
+                logger.exception("edit_media kutilmagan xatosi (chat=%s msg=%s)",chat_id,message_id); break
+        # Zaxira: eski xabarni o'chirib, yangi rasm yuboramiz.
+        await _best_effort(context.bot.delete_message(chat_id=chat_id,message_id=message_id),"Eski namunani o‘chirish")
+    sent=await context.bot.send_photo(chat_id=chat_id,photo=InputFile(data,filename=filename),
+                                      caption=caption,parse_mode=ParseMode.HTML,reply_markup=kb)
+    return sent.message_id
 
-def _frame_keyboard():
-    return _keyboard(list(FRAMES.items()),"pptx:frame",2)
+async def _show_step(context,chat_id,message_id,step,idx):
+    """`step` bosqichining `idx`-namunasini ko'rsatadi. Sozlamalar O'ZGARMAYDI (faqat ko'rsatilgan o'rin eslab qolinadi)."""
+    ud=context.user_data; settings=ud["pptx_settings"]
+    data=await asyncio.to_thread(sp.get_preview,step,idx,settings)
+    mid=await _show_photo(context,chat_id,message_id,data,_carousel_caption(step,idx),
+                          _carousel_keyboard(step,idx),f"{step}-{idx}.jpg")
+    ud["px_msg_id"]=mid; ud["px_step"]=step
+    ud.setdefault("px_pos",{})[step]=idx
+    _prefetch(step,idx,settings)
+    return mid
 
-def _palette_keyboard():
-    items=[("design_default","✨ Dizaynning o‘z ranglari")]+[(k,v[0]) for k,v in PALETTES.items()]+[("custom","🎨 O‘z ranglarim (HEX)")]
-    return _keyboard(items,"pptx:palette",2)
+async def _show_final(context,chat_id,message_id):
+    ud=context.user_data
+    data=await asyncio.to_thread(sp.get_preview,sp.STEP_FONT,0,ud["pptx_settings"],final=True)
+    mid=await _show_photo(context,chat_id,message_id,data,_summary_caption(ud),_confirm_keyboard(),"final.jpg")
+    ud["px_msg_id"]=mid; ud["px_step"]="confirm"
+    return PX_CONFIRM
 
-def _font_keyboard():
-    return _keyboard([(f"f{i}",name) for i,name in enumerate(FONTS)],"pptx:font",2)
+def _wizard_alive(ud):
+    return "pptx_settings" in ud and "px_topic" in ud
 
-def _preview_png(key):
-    name,bg,accent,fg,_=THEMES[key]
-    im=Image.new("RGB",(1000,563),bg); d=ImageDraw.Draw(im)
-    try: font=ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",40)
-    except Exception: font=ImageFont.load_default()
-    try: body=ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",22)
-    except Exception: body=ImageFont.load_default()
-    d.rounded_rectangle((32,32,968,531),radius=24,outline=accent,width=7)
-    if key in ("technology","dark_premium","luxury","premium_gold","gradient"):
-        d.rectangle((32,32,270,531),fill=accent)
-        d.ellipse((720,65,900,245),outline=accent,width=14)
-    elif key in ("newspaper","academic","history"):
-        d.rectangle((75,90,925,100),fill=accent)
-        d.rectangle((75,445,925,450),fill=accent)
-    else:
-        d.rounded_rectangle((70,75,930,480),radius=28,fill="#FFFFFF")
-        d.rectangle((70,75,88,480),fill=accent)
-    d.text((115,150),name,font=font,fill=fg)
-    d.text((118,230),"Professional presentation",font=body,fill=accent)
-    d.rounded_rectangle((118,300,480,370),radius=14,fill=accent)
-    d.text((145,318),"STUDENT AI",font=body,fill="#FFFFFF")
-    b=BytesIO(); im.save(b,"PNG"); b.seek(0); return b
+def _is_wizard_message(q,ud):
+    mid=ud.get("px_msg_id")
+    return q.message is not None and mid is not None and q.message.message_id==mid
 
+async def _drop_keyboard(q):
+    await _best_effort(q.edit_message_reply_markup(reply_markup=None),"Eskirgan tugmalarni olib tashlash")
+
+# ----------------------------------------------------------------------------
+# Bosqichlar
+# ----------------------------------------------------------------------------
 async def entry(update:Update,context:ContextTypes.DEFAULT_TYPE):
-    q=update.callback_query; await q.answer()
+    q=update.callback_query; await _safe_answer(q)
     context.user_data.clear()
     context.user_data["flow"]="pptx"
-    context.user_data["pptx_settings"]={"design":"modern_blue","frame":"thin","palette":"design_default","font":"Arial","pdf":False}
+    context.user_data["pptx_settings"]=dict(sp.DEFAULT_SETTINGS)
+    if q.message is not None: context.user_data["px_prompt_id"]=q.message.message_id
     await q.edit_message_text("📊 PROFESSIONAL TAQDIMOT\n\nTaqdimot mavzusini kiriting:",reply_markup=cancel_markup())
     return PX_TOPIC
 
@@ -143,106 +228,139 @@ async def receive_topic(update:Update,context:ContextTypes.DEFAULT_TYPE):
     topic=(update.message.text or "").strip()
     if not topic or len(topic)>300:
         await update.message.reply_text("Mavzuni kiriting (1–300 belgi)."); return PX_TOPIC
-    context.user_data["px_topic"]=topic
-    await update.message.reply_text(f"✅ Mavzu: {topic}\n\nSlaydlarning umumiy sonini tanlang (titul va yakuniy slayd ham hisoblanadi):",reply_markup=_count_keyboard())
+    ud=context.user_data
+    ud["px_topic"]=topic
+    ud.setdefault("pptx_settings",dict(sp.DEFAULT_SETTINGS))
+    chat_id=update.effective_chat.id
+    # Mavzu so'rovi xabarini tozalaymiz va birinchi VIZUAL namunani ko'rsatamiz.
+    if ud.get("px_prompt_id"):
+        await _best_effort(context.bot.delete_message(chat_id=chat_id,message_id=ud["px_prompt_id"]),"Mavzu so‘rovini o‘chirish")
+    await _best_effort(update.message.reply_chat_action(ChatAction.UPLOAD_PHOTO),"chat action")
+    await _show_step(context,chat_id,None,sp.STEP_COUNT,0)
     return PX_COUNT
 
-async def receive_count(update:Update,context:ContextTypes.DEFAULT_TYPE):
-    q=update.callback_query; await q.answer()
-    try: count=int(q.data.rsplit(":",1)[1])
-    except Exception: return PX_COUNT
-    if count not in _COUNT_OPTIONS: return PX_COUNT
-    context.user_data["px_count"]=count
-    # Skip the old 20-button list and open the first visual preview immediately.
-    await _show_design_preview(q,context,0)
-    return PX_DESIGN
+async def _confirm_step(update,context,step,idx):
+    q=update.callback_query; ud=context.user_data; s=ud["pptx_settings"]
+    shown=ud.get("px_pos",{}).get(step)
+    if shown is not None and shown!=idx:
+        logger.info("Eskirgan «Tasdiqlash» rad etildi: step=%s bosilgan=%s ekranda=%s",step,idx,shown)
+        return _STEP_STATE[step]
+    key,_=sp.items(step)[idx]
+    chat_id=q.message.chat_id; mid=q.message.message_id
+    if step==sp.STEP_COUNT:
+        ud["px_count"]=int(key)
+    elif step==sp.STEP_DESIGN:
+        s["design"]=key
+    elif step==sp.STEP_FRAME:
+        s["frame"]=key
+    elif step==sp.STEP_PALETTE:
+        if key=="custom":
+            return await _ask_custom_colors(context,chat_id,mid)
+        s["palette"]=key
+        for k in ("custom_bg","custom_accent","custom_text"): s.pop(k,None)
+    elif step==sp.STEP_FONT:
+        s["font"]=FONTS[int(key[1:])]
+        return await _show_final(context,chat_id,mid)
+    nxt=_NEXT_STEP[step]
+    ud.setdefault("px_pos",{}).pop(nxt,None)
+    await _show_step(context,chat_id,mid,nxt,0)
+    return _STEP_STATE[nxt]
 
-async def choose_design(update:Update,context:ContextTypes.DEFAULT_TYPE):
-    q=update.callback_query; await q.answer()
-    action=q.data
-    if action.startswith("pptx:design:"):
-        key=action.split(":",2)[-1]
-        if key not in THEMES: return PX_DESIGN
-        await _show_design_preview(q,context,_DESIGN_KEYS.index(key))
-        return PX_DESIGN
-    if action=="pptx:design_prev":
-        index=int(context.user_data.get("pptx_design_index",0))-1
-        await _show_design_preview(q,context,index,edit=True)
-        return PX_DESIGN
-    if action=="pptx:design_next":
-        index=int(context.user_data.get("pptx_design_index",0))+1
-        await _show_design_preview(q,context,index,edit=True)
-        return PX_DESIGN
-    if action=="pptx:design_count":
-        return PX_DESIGN
-    if action=="pptx:design_confirm":
-        label=THEMES[context.user_data['pptx_settings']['design']][0]
-        chat_id=q.message.chat_id
-        await q.message.delete()
-        await context.bot.send_message(chat_id,
-            f"✅ <b>{label}</b> dizayni tasdiqlandi.\n\n🖼 Endi ramka va bezak turini tanlang:",
-            parse_mode=ParseMode.HTML,reply_markup=_frame_keyboard())
-        return PX_FRAME
-    return PX_DESIGN
+async def _ask_custom_colors(context,chat_id,message_id):
+    """«O‘z ranglarim (HEX)» tanlandi: namuna rasmi qoladi, tagiga HEX kiritish ko'rsatmasi chiqadi."""
+    text=("🎨 <b>O‘z ranglarim (HEX)</b>\n\nFon, urg‘u va matn ranglarini shu tartibda HEX kodda yuboring:\n\n"
+          "<code>#102A43 #38BDF8 #FFFFFF</code>")
+    ok=await _best_effort(context.bot.edit_message_caption(chat_id=chat_id,message_id=message_id,caption=text,
+                                                           parse_mode=ParseMode.HTML,reply_markup=cancel_markup()),"HEX ko‘rsatmasi")
+    if ok is None:
+        await _best_effort(context.bot.delete_message(chat_id=chat_id,message_id=message_id),"Namunani o‘chirish")
+        sent=await context.bot.send_message(chat_id,text,parse_mode=ParseMode.HTML,reply_markup=cancel_markup())
+        context.user_data["px_msg_id"]=sent.message_id
+    context.user_data["px_step"]="custom"
+    return PX_CUSTOM_COLOR
 
-async def choose_frame(update:Update,context:ContextTypes.DEFAULT_TYPE):
-    q=update.callback_query; await q.answer()
-    key=q.data.split(":",2)[-1]
-    if key not in FRAMES: return PX_FRAME
-    context.user_data["pptx_settings"]["frame"]=key
-    await q.edit_message_text("🌈 Ranglar to‘plamini tanlang:",reply_markup=_palette_keyboard())
-    return PX_PALETTE
+async def _carousel_cb(update,context,step):
+    q=update.callback_query; ud=context.user_data
+    state=_STEP_STATE[step]
+    parsed=sp.parse_cb(q.data)
+    if not _wizard_alive(ud):
+        await _safe_answer(q,_STALE_TEXT,True); await _drop_keyboard(q); return ConversationHandler.END
+    if parsed is None or parsed[0]!=step or not _is_wizard_message(q,ud):
+        await _safe_answer(q,_STALE_TEXT,True); await _drop_keyboard(q); return state
+    await _safe_answer(q)                                  # har doim, ishdan OLDIN
+    _,act,idx=parsed
+    user=update.effective_user
+    lock=_user_lock(user.id if user else 0)
+    if lock.locked():                                       # tez-tez bosish: parallel so'rov yo'q
+        return state
+    async with lock:
+        try:
+            if act in ("p","n"):
+                await _show_step(context,q.message.chat_id,q.message.message_id,step,sp.nav_index(idx,act,sp.total(step)))
+                return state
+            return await _confirm_step(update,context,step,idx)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Namuna tanlash bosqichida xatolik: step=%s act=%s idx=%s",step,act,idx)
+            await _best_effort(context.bot.send_message(q.message.chat_id,"⚠️ Namunani ko‘rsatishda xatolik yuz berdi. Qayta urinib ko‘ring."),"Xato xabari")
+            return state
 
-async def choose_palette(update:Update,context:ContextTypes.DEFAULT_TYPE):
-    q=update.callback_query; await q.answer()
-    key=q.data.split(":",2)[-1]
-    if key=="custom":
-        await q.edit_message_text("HEX ranglarini quyidagi tartibda yuboring:\n\nFon  Urg‘u  Matn\n\nMasalan: #102A43 #38BDF8 #FFFFFF")
-        return PX_CUSTOM_COLOR
-    if key!="design_default" and key not in PALETTES: return PX_PALETTE
-    context.user_data["pptx_settings"]["palette"]=key
-    await q.edit_message_text("🔤 Shriftni tanlang:",reply_markup=_font_keyboard())
-    return PX_FONT
+async def receive_count(update,context):   return await _carousel_cb(update,context,sp.STEP_COUNT)
+async def choose_design(update,context):   return await _carousel_cb(update,context,sp.STEP_DESIGN)
+async def choose_frame(update,context):    return await _carousel_cb(update,context,sp.STEP_FRAME)
+async def choose_palette(update,context):  return await _carousel_cb(update,context,sp.STEP_PALETTE)
+async def choose_font(update,context):     return await _carousel_cb(update,context,sp.STEP_FONT)
+
+_HEX_RE=re.compile(r"(?<![0-9A-Za-z])#?([0-9a-fA-F]{6})(?![0-9A-Za-z])")
 
 async def receive_custom_color(update:Update,context:ContextTypes.DEFAULT_TYPE):
-    vals=re.findall(r"#[0-9a-fA-F]{6}",update.message.text or "")
+    vals=["#"+v.upper() for v in _HEX_RE.findall(update.message.text or "")]
+    ud=context.user_data; chat_id=update.effective_chat.id
     if len(vals)!=3:
-        await update.message.reply_text("Uchta HEX rang kiriting. Masalan: #102A43 #38BDF8 #FFFFFF")
+        old=ud.pop("px_err_id",None)
+        if old: await _best_effort(context.bot.delete_message(chat_id=chat_id,message_id=old),"Eski xato xabari")
+        sent=await update.message.reply_text("Uchta HEX rang kiriting. Masalan: #102A43 #38BDF8 #FFFFFF")
+        ud["px_err_id"]=sent.message_id
         return PX_CUSTOM_COLOR
-    s=context.user_data["pptx_settings"]
+    s=ud["pptx_settings"]
     s.update({"custom_bg":vals[0],"custom_accent":vals[1],"custom_text":vals[2],"palette":"custom"})
-    await update.message.reply_text("🔤 Shriftni tanlang:",reply_markup=_font_keyboard())
+    # Ortiqcha xabarlarni tozalaymiz (foydalanuvchi yuborgan HEX va oldingi xato xabari).
+    await _best_effort(update.message.delete(),"HEX xabarini o‘chirish")
+    if ud.get("px_err_id"):
+        await _best_effort(context.bot.delete_message(chat_id=chat_id,message_id=ud.pop("px_err_id")),"Xato xabarini o‘chirish")
+    ud.setdefault("px_pos",{}).pop(sp.STEP_FONT,None)
+    await _show_step(context,chat_id,ud.get("px_msg_id"),sp.STEP_FONT,0)
     return PX_FONT
 
-async def choose_font(update:Update,context:ContextTypes.DEFAULT_TYPE):
-    q=update.callback_query; await q.answer()
-    key=q.data.split(":",2)[-1]
-    try: idx=int(key[1:]); font=FONTS[idx]
-    except Exception: return PX_FONT
-    context.user_data["pptx_settings"]["font"]=font
-    return await show_confirmation(update,context)
-
 async def show_confirmation(update,context):
-    s=context.user_data["pptx_settings"]; topic=context.user_data["px_topic"]; count=context.user_data["px_count"]
-    label=THEMES[s["design"]][0]; frame=FRAMES[s["frame"]]
-    palette=PALETTES.get(s.get("palette"),("Dizayn ranglari",))[0]
-    text=(f"📋 **Taqdimot sozlamalari**\n\nMavzu: {topic}\nSlaydlar: {count} ta\n"
-          f"Dizayn: {label}\nRamka: {frame}\nRang: {palette}\nShrift: {s['font']}\n\n"
-          "PDF nusxasi ham kerakmi?")
-    kb=InlineKeyboardMarkup([[InlineKeyboardButton("📄 PPTX + PDF",callback_data="pptx:pdf:yes"),
-                              InlineKeyboardButton("📊 Faqat PPTX",callback_data="pptx:pdf:no")],
-                             [InlineKeyboardButton("❌ Bekor qilish",callback_data="cancel:all")]])
-    if update.callback_query:
-        await update.callback_query.edit_message_text(text,parse_mode=ParseMode.MARKDOWN,reply_markup=kb)
-    else: await update.message.reply_text(text,parse_mode=ParseMode.MARKDOWN,reply_markup=kb)
-    return PX_CONFIRM
+    """Yakuniy sozlamalar (mavjud nom saqlandi): umumiy preview + PDF tanlovi."""
+    q=update.callback_query
+    chat_id=q.message.chat_id if q and q.message else update.effective_chat.id
+    mid=q.message.message_id if q and q.message else context.user_data.get("px_msg_id")
+    return await _show_final(context,chat_id,mid)
 
 async def choose_export(update:Update,context:ContextTypes.DEFAULT_TYPE):
-    q=update.callback_query; await q.answer()
-    s=context.user_data["pptx_settings"]; s["pdf"]=q.data.endswith(":yes")
-    topic=context.user_data.get("px_topic",""); count=int(context.user_data.get("px_count",5))
+    q=update.callback_query; ud=context.user_data
+    if not _wizard_alive(ud):
+        await _safe_answer(q,_STALE_TEXT,True); await _drop_keyboard(q); return ConversationHandler.END
+    if not _is_wizard_message(q,ud):
+        await _safe_answer(q,_STALE_TEXT,True); await _drop_keyboard(q); return PX_CONFIRM
+    await _safe_answer(q)
+    if ud.get("px_building"): return PX_CONFIRM            # qayta bosish: ikkinchi generatsiya boshlanmasin
+    ud["px_building"]=True
+    s=ud["pptx_settings"]; s["pdf"]=q.data.endswith(":yes")
+    topic=ud.get("px_topic",""); count=int(ud.get("px_count",5))
     chat_id=update.effective_chat.id; user=update.effective_user
-    await q.edit_message_text("⏳ AI mavzuni tahlil qilmoqda va slaydlar mazmunini tayyorlamoqda…")
+    status=None
+    await _best_effort(q.message.delete(),"Yakuniy namunani o‘chirish")
+    try:
+        status=await context.bot.send_message(chat_id,"⏳ AI mavzuni tahlil qilmoqda va slaydlar mazmunini tayyorlamoqda…",reply_markup=cancel_markup())
+    except Exception:
+        logger.exception("Holat xabarini yuborib bo‘lmadi")
+    async def _status(text):
+        if status is not None:
+            await _best_effort(status.edit_text(text,reply_markup=cancel_markup()),"Holat xabarini yangilash")
     try:
         slides=await _generate_slides(topic,count-2)
         if not slides: raise RuntimeError("AI slayd matnlarini yaratolmadi")
@@ -252,11 +370,11 @@ async def choose_export(update:Update,context:ContextTypes.DEFAULT_TYPE):
         # Optional image API use is explicitly opt-in; offline illustrations always remain available.
         if os.getenv("SLIDE_IMAGES_ENABLED","0").lower() in ("1","true","yes"):
             await _try_optional_generated_images(topic,slides,images)
-        await q.edit_message_text(f"🛠 {count} slaydli PowerPoint qurilmoqda…")
+        await _status(f"🛠 {count} slaydli PowerPoint qurilmoqda…")
         async with _BUILD_SEMAPHORE:
             pptx=await asyncio.to_thread(build_presentation,topic,slides,"Student AI",s,images)
         filename=_safe_filename(topic)+".pptx"
-        await context.bot.send_document(chat_id,document=InputFile(pptx,filename=filename),
+        sent_pptx=await context.bot.send_document(chat_id,document=InputFile(pptx,filename=filename),
             caption=f"📊 {topic}\n✅ {count} ta slayd · {THEMES[s['design']][0]}",reply_markup=main_menu_keyboard())
         if s.get("pdf"):
             try:
@@ -269,20 +387,45 @@ async def choose_export(update:Update,context:ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(chat_id,"⚠️ PPTX tayyor, ammo PDF eksportida xatolik yuz berdi.")
         if user:
             try:
-                storage.record_file(user.id,"pptx",topic,sent_pptx.document.file_id if sent_pptx.document else "")
+                storage.record_file(user.id,"pptx",topic,sent_pptx.document.file_id if getattr(sent_pptx,"document",None) else "")
                 storage.record_usage("pptx",user.id)
             except Exception: logger.exception("Could not record PPTX usage")
         await wallet_ui.finalize_success(context,update=update,chat_id=chat_id)
-        try: await q.delete_message()
-        except Exception: pass
     except Exception as e:
         logger.exception("PPTX generation failed for user=%s",getattr(user,"id",None))
         try: await context.bot.send_message(chat_id,"❌ Taqdimot yaratishda xatolik yuz berdi. Birozdan so‘ng qayta urinib ko‘ring.")
         except Exception: pass
         await wallet_ui.finalize_failure(context,update=update,chat_id=chat_id,reason="pptx_generation_failed")
     finally:
+        if status is not None:
+            await _best_effort(status.delete(),"Holat xabarini o‘chirish")
         context.user_data.clear()
     return ConversationHandler.END
+
+# ----------------------------------------------------------------------------
+# Bekor qilish va eskirgan tugmalar
+# ----------------------------------------------------------------------------
+async def cancel_cb(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    """«❌ Bekor qilish»: rasmli xabarni tozalaydi (matn emas, shuning uchun edit_text ishlamaydi)."""
+    q=update.callback_query
+    chat_id=q.message.chat_id if q.message else update.effective_chat.id
+    try:
+        from handlers import menu as _menu
+        _menu._cancel_everything(update,context)
+    except Exception:
+        logger.exception("Bekor qilishda tozalash xatosi"); context.user_data.clear()
+    await _safe_answer(q,"❌ Bekor qilindi")
+    if q.message is not None:
+        await _best_effort(q.message.delete(),"Namuna xabarini o‘chirish")
+    await _best_effort(context.bot.send_message(chat_id,"❌ Bekor qilindi.",reply_markup=main_menu_keyboard()),"Bekor qilish xabari")
+    return ConversationHandler.END
+
+async def stale_cb(update:Update,context:ContextTypes.DEFAULT_TYPE):
+    """Eskirgan/begona taqdimot tugmasi: bot yiqilmaydi, foydalanuvchiga tushunarli javob beriladi."""
+    q=update.callback_query
+    await _safe_answer(q,_STALE_TEXT,True)
+    await _drop_keyboard(q)
+    return None
 
 def _safe_filename(topic):
     name=re.sub(r"[^\w\- ]+","",topic,flags=re.UNICODE).strip().replace(" ","_")[:48]
