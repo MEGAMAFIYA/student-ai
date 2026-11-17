@@ -141,6 +141,18 @@ class BusinessStorageTests(unittest.TestCase):
         self.assertIsNotNone(entry)
         self.assertEqual(entry["connection_id"], "conn_persist")
 
+    def test_auto_reply_new_peer_only_once(self):
+        self.business_storage.set_auto_reply(123, "Bandman", "new")
+        self.assertEqual(self.business_storage.get_auto_reply(123)["text"], "Bandman")
+        self.assertTrue(self.business_storage.record_auto_reply_peer(123, 9001))
+        self.assertFalse(self.business_storage.record_auto_reply_peer(123, 9001))
+        self.assertTrue(self.business_storage.record_auto_reply_peer(123, 9002))
+
+    def test_auto_reply_all_mode_is_persisted(self):
+        self.business_storage.set_auto_reply(456, "Keyin yozing", "all")
+        self.assertEqual(self.business_storage.get_auto_reply(456)["mode"], "all")
+        self.assertTrue(self.business_storage.should_send_auto_reply(456, 9003))
+
     def test_reconnection_overwrites_old_entry(self):
         # Foydalanuvchi botni qayta ulasa (eski connection_id o'rniga yangisi).
         conn1 = _FakeBusinessConnection("conn_old", 888)

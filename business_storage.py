@@ -41,6 +41,8 @@ _DEFAULT_DATA = {
     "by_connection_id": {},
     # "<business_user_id>" -> {"<chat_id>": last_incoming_unix_ts}
     "recent_peers": {},
+    "auto_replies": {},
+    "auto_reply_seen": {},
 }
 
 
@@ -52,15 +54,17 @@ def _load() -> dict:
     raw, source = config.persist_read(_DATA_FILENAME, _UPSTASH_KEY)
     if not raw:
         logger.info("📇 Business connection ma'lumotlari topilmadi — bo'sh holatdan boshlanadi.")
-        return {"by_user": {}, "by_connection_id": {}, "recent_peers": {}}
+        return {"by_user": {}, "by_connection_id": {}, "recent_peers": {}, "auto_replies": {}, "auto_reply_seen": {}}
     try:
         data = json.loads(raw)
     except Exception as e:
         logger.error(f"📇 business_connections JSON parse xato: {e} — bo'sh holatdan boshlanadi.")
-        return {"by_user": {}, "by_connection_id": {}, "recent_peers": {}}
+        return {"by_user": {}, "by_connection_id": {}, "recent_peers": {}, "auto_replies": {}, "auto_reply_seen": {}}
     data.setdefault("by_user", {})
     data.setdefault("by_connection_id", {})
     data.setdefault("recent_peers", {})
+    data.setdefault("auto_replies", {})
+    data.setdefault("auto_reply_seen", {})
     logger.info(f"📇 {source} dan business connection ma'lumotlari yuklandi ({len(data['by_user'])} ta).")
     return data
 
@@ -210,3 +214,49 @@ def can_delete_sent_messages(entry: dict | None) -> bool:
     # xabar chatda qolib ketadi). Chaqiruvchi baribir har bir delete natijasini
     # alohida tekshiradi va DELETE_FAILED logini yozadi.
     return rights.get("can_delete_sent_messages") is not False
+
+
+# --- Business Auto Reply -------------------------------------------------
+def set_auto_reply(business_user_id: int, text: str, mode: str) -> None:
+    """Foydalanuvchining avtomatik javob matni va rejimini saqlaydi."""
+    if mode not in ("new", "all"):
+        raise ValueError("mode must be 'new' or 'all'")
+    with _lock:
+        uid = str(int(business_user_id))
+        _data.setdefault("auto_replies", {})[uid] = {
+            "text": str(text), "mode": mode, "updated_ts": time.time(),
+        }
+        # Mavjud storage'dagi oxirgi 24 soatda yozgan peerlar yangi hisoblanmasin.
+        if mode == "new":
+            known = _data.setdefault("auto_reply_seen", {}).setdefault(uid, [])
+            for peer in _data.get("recent_peers", {}).get(uid, {}):
+                if peer not in known:
+                    known.append(peer)
+        _save()
+
+def get_auto_reply(business_user_id: int) -> dict | None:
+    return _data.get("auto_replies", {}).get(str(int(business_user_id)))
+
+def record_auto_reply_peer(business_user_id: int, chat_id: int) -> bool:
+    """Peerning birinchi marta yozayotganini doimiy qayd etadi; yangi bo'lsa True."""
+    uid, peer = str(int(business_user_id)), str(int(chat_id))
+    with _lock:
+        seen = _data.setdefault("auto_reply_seen", {}).setdefault(uid, [])
+        if peer in seen:
+            return False
+        seen.append(peer)
+        if len(seen) > 20000:
+            del seen[:-20000]
+        _save()
+        return True
+
+
+def should_send_auto_reply(business_user_id: int, chat_id: int) -> bool:
+    """Moslama mavjud bo'lsa va yangi/all rejimiga ko'ra javob berish kerak bo'lsa True."""
+    settings = get_auto_reply(business_user_id)
+    if not settings:
+        return False
+    if settings.get("mode") == "all":
+        return True
+    # Eski chaqiruvchilar uchun xavfsiz fallback; asosiy oqim record_auto_reply_peer ishlatadi.
+    return record_auto_reply_peer(business_user_id, chat_id)

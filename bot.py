@@ -56,6 +56,7 @@ import render_keepalive
 import game
 import chat_games
 import drawing_game
+from handlers import business_autoreply
 from handlers import (
     menu, universal_chat, course_work, ai_image, translate as translate_handler, images_to_pdf,
     edit_pdf, guide, inline_query, developer, pptx_gen, essay, quiz, solve, summarize, managed_tests,
@@ -233,6 +234,7 @@ async def _on_business_message(update, context):
         message.chat.id,
         getattr(message, "date", None),
     )
+    await business_autoreply.process_business_message(message, context)
 
 
 async def _on_business_connection(update, context):
@@ -245,6 +247,8 @@ async def _on_business_connection(update, context):
     if conn is None:
         return
     business_storage.save_connection(conn)
+    if conn.is_enabled:
+        await business_autoreply.ensure_command_visible(context.bot, conn.user.id)
     if not conn.is_enabled:
         logger.info(f"📇 BUSINESS_CONNECTION_DISABLED user_id={conn.user.id} connection_id={conn.id}")
 
@@ -1644,6 +1648,12 @@ def main():
 
     app.add_handler(CommandHandler("start", menu.start_cmd))
     app.add_handler(CommandHandler("cancel", menu.cancel_cmd))
+    # Telegram Business Auto Reply — faqat Business akkaunt egasining bot bilan
+    # shaxsiy chatida sozlanadi; javoblar incoming BUSINESS_MESSAGE update'da yuboriladi.
+    app.add_handler(CommandHandler("bossiyons", business_autoreply.bossiyons_cmd, filters=filters.ChatType.PRIVATE), group=-2)
+    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, business_autoreply.receive_reply_text), group=-2)
+    app.add_handler(CallbackQueryHandler(business_autoreply.choice_callback, pattern=r"^bar:"), group=-2)
+    app.add_handler(CommandHandler("cancel", business_autoreply.cancel_cmd, filters=filters.ChatType.PRIVATE), group=-2)
     # ❌ Conversation tashqarisida ishlayotgan jarayonlar uchun ham (conversation fallback'lari bundan OLDIN tekshiriladi).
     app.add_handler(CallbackQueryHandler(menu.cancel_cb, pattern=r"^cancel:all$"))
     app.add_handler(CommandHandler("yoqish", menu.group_enable_cmd))
