@@ -27,6 +27,7 @@ from pptx_tools import build_presentation
 from slide_themes import THEMES, PALETTES, FRAMES, FONTS
 from slide_images import make_illustration
 from slide_export import pptx_to_pdf
+from slide_quality import normalize_slide, validate_deck, clean_references, choose_layout
 from handlers.menu import main_menu_keyboard
 from handlers import wallet_ui
 import slide_previews as sp
@@ -432,31 +433,42 @@ def _safe_filename(topic):
     return name or "student_ai_presentation"
 
 async def _generate_slides(topic,count):
+    """AI kontentini qat'iy JSON va mazmuniy xavfsizlik tekshiruvlaridan o'tkazadi."""
     prompt=(f"Mavzu: {topic}\nKontent slaydlari: aynan {count} ta.\n"
-            "Taqdimot uchun ilmiy, mantiqiy va takrorlanmaydigan kontent yarating. "
-            "MUHIM: JSON ichidagi barcha ko‘rinadigan matnlar faqat o‘zbek tilida (lotin yozuvida) bo‘lsin; inglizcha matn yozmang. "
-            "Har bir heading, bullets, jadval kataklari va diagramma labels o‘zbekcha bo‘lsin. "
-            "Kerak bo‘lsa chart/table qo‘shing. references ro‘yxatida faqat tekshirish mumkin bo‘lgan manbalar bo‘lsin.")
+            "Ilmiy, mantiqiy va takrorlanmaydigan kontent yarating. "
+            "Barcha ko‘rinadigan matnlar O‘zbek tilida, lotin yozuvida bo‘lsin. "
+            "JSON maydonlari: heading, bullets, layout, chart, table. "
+            "layout tavsiya sifatida title|text_focus|two_col|cards|full_image|chart|table|timeline|comparison|process|statistics|infographic bo‘lishi mumkin. "
+            "Diagramma uchun faqat tekshiriladigan yoki nazariy modelga tegishli aniq qiymatlar bering; ishonchli raqam bo‘lmasa chart bermang. "
+            "Keyns mavzusida nazariy grafik kerak bo‘lsa chart.type=keynesian_cross, investment_interest yoki multiplier dan foydalaning. "
+            "references faqat real manbalar: muallif/tashkilot, asar, yil va URL/DOI mavjud bo‘lsa yozilsin; ishonchingiz bo‘lmasa bo‘sh massiv. "
+            "Titul va yakuniy slaydni JSONga kiritmang.")
     for attempt in range(2):
         raw=await ask_ai(PPTX_AI,prompt,_SYSTEM)
         if not raw: continue
         try:
             cleaned=re.sub(r"^```(?:json)?\s*|```\s*$","",raw.strip(),flags=re.I|re.M)
             data=json.loads(cleaned)
-            slides=data.get("slides") if isinstance(data,dict) else data
-            if not isinstance(slides,list): continue
-            result=[]
-            for item in slides[:count]:
-                if not isinstance(item,dict) or not item.get("heading"): continue
-                bullets=item.get("bullets") or []
-                if isinstance(bullets,str): bullets=[bullets]
-                result.append({"heading":str(item["heading"])[:140],"bullets":[str(x)[:260] for x in bullets[:6]],
-                               "layout":item.get("layout"),"chart":item.get("chart"),"table":item.get("table")})
-            if len(result)==count:
-                refs=data.get("references",[]) if isinstance(data,dict) else []
-                if refs: result[-1]["references"]=[str(x)[:240] for x in refs[:4]]
-                return result
-        except Exception as e: logger.warning("PPTX AI JSON parse attempt %s failed: %s",attempt+1,e)
+            if not isinstance(data,dict) or not isinstance(data.get("slides"),list):
+                continue
+            raw_slides=data["slides"][:count]
+            result=[normalize_slide(x,i) for i,x in enumerate(raw_slides) if isinstance(x,dict) and x.get("heading")]
+            if len(result)!=count:
+                logger.warning("PPTX AI kontent soni noto‘g‘ri: %s/%s",len(result),count)
+                continue
+            prev=None
+            for i,item in enumerate(result):
+                item["layout"]=choose_layout(item,prev)
+                prev=item["layout"]
+            refs=clean_references(data.get("references",[]))
+            if refs: result[-1]["references"]=refs
+            ok,errors=validate_deck(result,count)
+            if not ok:
+                logger.warning("PPTX kontent validatsiyasi: %s", "; ".join(errors[:8]))
+                continue
+            return result
+        except Exception as e:
+            logger.warning("PPTX AI JSON parse/validation attempt %s failed: %s",attempt+1,e)
     return None
 
 async def _try_optional_generated_images(topic,slides,images):
