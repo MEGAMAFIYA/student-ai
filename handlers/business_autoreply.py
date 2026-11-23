@@ -16,7 +16,7 @@ _DRAFT_KEY = "business_auto_reply_draft"
 
 
 async def ensure_command_visible(bot, user_id: int) -> bool:
-    """Business egasining bot bilan shaxsiy chatiga /bossiyons buyrug'ini o'rnatadi."""
+    """Business egasining shaxsiy chatiga Business commandlarini o'rnatadi."""
     user_id = int(user_id)
     logger.info("COMMAND_MENU_START user_id=%s", user_id)
     try:
@@ -36,6 +36,8 @@ async def ensure_command_visible(bot, user_id: int) -> bool:
             )
         if not any(c.command == "bossiyons" for c in commands):
             commands.append(BotCommand("bossiyons", "Avtomatik javob sozlash"))
+        if not any(c.command == "al_yordamchi" for c in commands):
+            commands.append(BotCommand("al_yordamchi", "Shaxsiy AI yordamchi"))
         await bot.set_my_commands(commands, scope=scope)
         logger.info(
             "COMMAND_MENU_SET_OK user_id=%s command_count=%s commands=%s",
@@ -44,11 +46,13 @@ async def ensure_command_visible(bot, user_id: int) -> bool:
 
         # Telegram'ga qayta so'rov yuborib, buyruq haqiqatan scope'da saqlanganini tekshiramiz.
         verified = await bot.get_my_commands(scope=scope)
-        visible = any(c.command == "bossiyons" for c in verified)
+        visible_bossiyons = any(c.command == "bossiyons" for c in verified)
+        visible_al = any(c.command == "al_yordamchi" for c in verified)
+        visible = visible_bossiyons and visible_al
         if visible:
             logger.info(
-                "COMMAND_MENU_VERIFY_OK user_id=%s commands=%s",
-                user_id, [c.command for c in verified],
+                "COMMAND_MENU_VERIFY_OK user_id=%s commands=%s bossiyons=%s al_yordamchi=%s",
+                user_id, [c.command for c in verified], visible_bossiyons, visible_al,
             )
             return True
         logger.error(
