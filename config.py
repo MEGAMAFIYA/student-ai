@@ -596,6 +596,57 @@ REMINDER_TZ_OFFSET_HOURS = float(os.getenv("REMINDER_TZ_OFFSET_HOURS", "5"))
 # o'sha holda AI_FUNCTIONS'dagi eski bitta-kalit rejimi ishlaydi (moslik uchun).
 KEY_POOLS: dict[str, list[dict]] = {p: [] for p in ALL_KEY_PROVIDERS}
 
+# AL Yordamchi uchun foydalanuvchi kesimidagi maxsus kalitlar.
+# Bu pool bot funksiyalarining KEY_POOLS ro'yxatidan butunlay mustaqil.
+# Kalitlar {str(user_id): {"provider": ..., "key": ..., "model": ...}} ko'rinishida.
+AL_USER_KEYS: dict[str, dict] = {}
+_AL_USER_KEYS_LOCK = threading.RLock()
+_RUNTIME_CONFIG_WRITE_LOCK = threading.RLock()
+
+
+def get_al_user_key(user_id: int, provider: str | None = None) -> dict:
+    """Faqat ko'rsatilgan egaga tegishli AL kalitini qaytaradi (copy)."""
+    with _AL_USER_KEYS_LOCK:
+        entry = dict(AL_USER_KEYS.get(str(int(user_id))) or {})
+    if provider and entry.get("provider") != provider:
+        return {}
+    return entry
+
+
+def set_al_user_key(user_id: int, provider: str, api_key: str, model: str = "") -> bool:
+    """AL kalitini egaga bog'lab, KEY_POOLS'dan alohida doimiy saqlaydi."""
+    if not has_durable_runtime_storage():
+        logger.error("[AL KEY] Doimiy saqlash sozlanmagan; user_id=%s kaliti saqlanmadi.", user_id)
+        return False
+    if provider not in SUPPORTED_PROVIDERS or not str(api_key or "").strip():
+        return False
+    uid = str(int(user_id))
+    with _RUNTIME_CONFIG_WRITE_LOCK, _AL_USER_KEYS_LOCK:
+        previous = dict(AL_USER_KEYS.get(uid) or {})
+        AL_USER_KEYS[uid] = {
+            "provider": provider,
+            "key": str(api_key).strip(),
+            "model": str(model or (previous.get("model") if previous.get("provider") == provider else "") or "").strip(),
+        }
+        saved = _save_runtime_overrides()
+        if not saved:
+            AL_USER_KEYS[uid] = previous
+            return False
+    logger.info("[AL KEY] Shaxsiy AL kaliti saqlandi: owner=%s provider=%s", user_id, provider)
+    return True
+
+
+def delete_al_user_key(user_id: int) -> bool:
+    uid = str(int(user_id))
+    with _RUNTIME_CONFIG_WRITE_LOCK, _AL_USER_KEYS_LOCK:
+        previous = AL_USER_KEYS.pop(uid, None)
+        if previous is None:
+            return True
+        if not _save_runtime_overrides():
+            AL_USER_KEYS[uid] = previous
+            return False
+    return True
+
 # ============================================================
 # 🖼 KURS ISHI RASMLARI — ADMINISTRATOR STANDART SOZLAMALARI
 # ============================================================
@@ -1317,9 +1368,10 @@ def _load_runtime_overrides() -> None:
         logger.error(f"Runtime konfiguratsiyani JSON qilib o'qishda xato: {e} — .env qiymatlari ishlatiladi.")
         return
 
-    if "functions" in data or "key_pools" in data or "music_search_sources" in data:
+    if "functions" in data or "key_pools" in data or "music_search_sources" in data or "al_user_keys" in data:
         functions_data = data.get("functions", {})
         pools_data = data.get("key_pools", {})
+        al_user_keys_data = data.get("al_user_keys", {})
         if isinstance(data.get("course_images"), dict):
             COURSE_IMAGE_DEFAULTS.update(sanitize_course_image_settings(data["course_images"], COURSE_IMAGE_DEFAULTS))
         music_data = data.get("music_search_sources", {})
@@ -1327,6 +1379,7 @@ def _load_runtime_overrides() -> None:
     else:
         functions_data = data  # eski format
         pools_data = {}
+        al_user_keys_data = {}
         music_data = {}
         tabrik_data = {}
 
@@ -1373,9 +1426,23 @@ def _load_runtime_overrides() -> None:
             ]
             total_keys += len(KEY_POOLS[provider])
 
+    if isinstance(al_user_keys_data, dict):
+        with _AL_USER_KEYS_LOCK:
+            AL_USER_KEYS.clear()
+            for uid, entry in al_user_keys_data.items():
+                if str(uid).isdigit() and isinstance(entry, dict):
+                    provider = str(entry.get("provider") or "")
+                    key = str(entry.get("key") or "").strip()
+                    if provider in SUPPORTED_PROVIDERS and key:
+                        AL_USER_KEYS[str(uid)] = {
+                            "provider": provider,
+                            "key": key,
+                            "model": str(entry.get("model") or ""),
+                        }
+
     logger.info(
         f"{source} dan {len(functions_data)} ta funksiya sozlamasi "
-        f"va {total_keys} ta AI kalit yuklandi."
+        f"va {total_keys} ta umumiy AI kalit, {len(AL_USER_KEYS)} ta AL shaxsiy kaliti yuklandi."
     )
 
 
@@ -1385,26 +1452,31 @@ def has_durable_runtime_storage() -> bool:
 
 
 def _save_runtime_overrides() -> bool:
-    """Joriy AI_FUNCTIONS + KEY_POOLS holatini Upstash Redis'ga (sozlangan
-    bo'lsa) yoki mahalliy runtime_ai_config.json fayliga yozadi."""
-    data = {
-        "functions": {prefix: {f: cfg.get(f, "") for f in _EDITABLE_FIELDS} for prefix, cfg in AI_FUNCTIONS.items()},
-        "key_pools": {
-            provider: [{"key": e.get("key", ""), "model": e.get("model", "")} for e in entries]
-            for provider, entries in KEY_POOLS.items()
-        },
-        "music_search_sources": dict(MUSIC_SEARCH_SOURCES),
-        "course_images": dict(COURSE_IMAGE_DEFAULTS),
-        "tabrik_settings": {
-            "emojis": list(DEFAULT_TABRIK_EMOJIS),
-            "emoji_delay": TABRIK_EMOJI_DELAY_SEC,
-            "revert_minutes": TABRIK_REVERT_MINUTES,
-            "audio_file_id": TABRIK_AUDIO_FILE_ID,
-        },
-    }
-    raw = json.dumps(data, ensure_ascii=False)
-    return persist_write(_RUNTIME_CONFIG_FILENAME, _UPSTASH_KEY, raw, commit_message="🔧 /developer: AI sozlamalari/kalitlari yangilandi")
-
+    """Saqlangan AI sozlamalari, umumiy pool va AL shaxsiy kalitlarini atomik snapshot qiladi."""
+    with _RUNTIME_CONFIG_WRITE_LOCK, _AL_USER_KEYS_LOCK:
+        data = {
+            "functions": {prefix: {f: cfg.get(f, "") for f in _EDITABLE_FIELDS} for prefix, cfg in AI_FUNCTIONS.items()},
+            "key_pools": {
+                provider: [{"key": e.get("key", ""), "model": e.get("model", "")} for e in entries]
+                for provider, entries in KEY_POOLS.items()
+            },
+            "al_user_keys": {
+                uid: dict(entry) for uid, entry in AL_USER_KEYS.items()
+            },
+            "music_search_sources": dict(MUSIC_SEARCH_SOURCES),
+            "course_images": dict(COURSE_IMAGE_DEFAULTS),
+            "tabrik_settings": {
+                "emojis": list(DEFAULT_TABRIK_EMOJIS),
+                "emoji_delay": TABRIK_EMOJI_DELAY_SEC,
+                "revert_minutes": TABRIK_REVERT_MINUTES,
+                "audio_file_id": TABRIK_AUDIO_FILE_ID,
+            },
+        }
+        raw = json.dumps(data, ensure_ascii=False)
+        return persist_write(
+            _RUNTIME_CONFIG_FILENAME, _UPSTASH_KEY, raw,
+            commit_message="🔧 /developer: AI sozlamalari/kalitlari yangilandi"
+        )
 
 def update_ai_field(prefix: str, field: str, value: str) -> bool:
     """Bitta funksiyaning bitta maydonini (provider/model/api_key/base_url)

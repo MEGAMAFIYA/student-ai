@@ -5,8 +5,9 @@ Format:
     {"keys": {"<provider>": [{"key","model"}, ...]}, "al_yordamchi": {...}}
 Old format (faqat provider kalitlari) ham backward-compatible.
 `al_yordamchi` foydalanuvchining yordamchi sozlamalari va xotira DB ulanishini
-saqlaydi. AL API kalitlari bu faylda saqlanmaydi; ular config.KEY_POOLS'dagi
-umumiy /developer > Kalitlar > AI kalitlari ro'yxatidan olinadi.
+saqlaydi. AL API kalitlari alohida config.AL_USER_KEYS saqlash joyida, egasi
+Telegram ID bo'yicha bog'langan holda saqlanadi; bot funksiyalarining KEY_POOLS
+kalitlari AL Yordamchi uchun hech qachon ishlatilmaydi.
 
 FARQI: bular botning UMUMIY kalitlaridan (config.KEY_POOLS, /developer
 orqali boshqariladi) MUSTAQIL — har bir foydalanuvchi FAQAT o'zining
@@ -16,8 +17,8 @@ GitHub'da botning umumiy holatidan (GITHUB_DATA_DIR) ALOHIDA, shaxsiy
 
     {MENING_KABINETIM_DIR}/{user_id}/mening_kalitlarim.json
 
-AL Yordamchi kalitlari bundan mustasno: ular /developer > Kalitlar > AI
-kalitlari orqali saqlanadigan umumiy provider pool'dan foydalanadi.
+AL Yordamchi kalitlari botning boshqa funksiyalar kalitlaridan alohida runtime
+konfiguratsiyada saqlanadi va doimiy backend orqali deploydan keyin tiklanadi.
 
 Ishlatilish tartibi (ai_clients.ask_ai_with_source): pullik funksiya
 chaqirilganda AVVAL shu yerdagi kalitlar sinaladi, ULAR ISHLAMASA
@@ -81,11 +82,8 @@ def get_pools(user_id: int) -> dict:
 
 
 def get_assistant_config(user_id: int) -> dict:
-    """AL YORDAMCHI sozlamalari. API kalitlar bu yerda saqlanmaydi:
-    ular /developer > Kalitlar > AI kalitlari umumiy KEY_POOLS'dan olinadi."""
+    """AL YORDAMCHI sozlamalari; maxfiy API kaliti config.AL_USER_KEYS'da turadi."""
     cfg = dict(_read_data(user_id).get("al_yordamchi") or {})
-    # Eski versiyalarda foydalanuvchi kaliti shu JSON ichida bo'lgan.
-    # Uni runtime sozlamadan ham qaytarmaymiz; yangi saqlashda ham yozilmaydi.
     cfg.pop("key", None)
     return cfg
 
@@ -95,7 +93,7 @@ def save_assistant_config(user_id: int, values: dict) -> bool:
     """AL YORDAMCHI konfiguratsiyasini mavjud shaxsiy kalitlarni buzmasdan saqlaydi."""
     data = _read_data(user_id)
     assistant = dict(values or {})
-    assistant.pop("key", None)  # API kalitlar faqat /developer KEY_POOLS'da turadi.
+    assistant.pop("key", None)
     data["al_yordamchi"] = assistant
     return _save_all(user_id, data, f"🤖 AL YORDAMCHI sozlamalari yangilandi: user_id={user_id}")
 

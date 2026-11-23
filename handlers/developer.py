@@ -547,8 +547,19 @@ def _provider_choice_keyboard(back_callback: str, choose_prefix: str) -> InlineK
 def _keys_menu_text() -> str:
     lines = [
         "🔑 <b>AI kalitlari</b>\n",
-        "ℹ️ Bu yerda saqlangan provider kalitlari AL YORDAMCHI tomonidan ham umumiy to'plam sifatida ishlatiladi. AL kalitlari foydalanuvchining shaxsiy GitHub fayliga yozilmaydi.\n",
+        "ℹ️ Bu yerdagi provider kalitlari faqat bot funksiyalari uchun. AL YORDAMCHI ulardan foydalanmaydi.\n"
+        "🤖 AL YORDAMCHI kalitlari alohida saqlanadi va egasining Telegram ID raqamiga bog‘langan:\n",
     ]
+    al_entries = getattr(config, "AL_USER_KEYS", {})
+    if al_entries:
+        for owner_id, entry in sorted(al_entries.items(), key=lambda item: str(item[0])):
+            masked = _esc(_mask_key(entry.get("key", "")))
+            provider_label = _esc(_provider_label(entry.get("provider", "")))
+            model = _esc(entry.get("model") or "model tanlanmagan")
+            lines.append(f"  • Egasi <code>{_esc(owner_id)}</code> — {provider_label}: <code>{masked}</code> — <code>{model}</code>")
+    else:
+        lines.append("  <i>(hali AL Yordamchi uchun shaxsiy kalit kiritilmagan)</i>")
+    lines.append("")
     for provider in config.ALL_KEY_PROVIDERS:
         pool = config.KEY_POOLS.get(provider, [])
         lines.append(f"<b>{_esc(_provider_label(provider))} kalitlar:</b>")

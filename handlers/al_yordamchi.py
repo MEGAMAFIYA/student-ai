@@ -4,7 +4,7 @@
 Oqim:
 1) Business akkaunt ulangan bo'lsa, foydalanuvchi /al_yordamchi ni ochadi.
 2) Provider tanlanadi, foydalanuvchidan API kaliti so'raladi va model tanlangach
-   kalit /developer > Kalitlar > AI kalitlari bilan bir xil KEY_POOLS to'plamiga yoziladi.
+   kalit AL_USER_KEYS alohida saqlash joyida egasining ID raqamiga bog'lanib saqlanadi.
 3) Keyingi safar faqat boshqaruv menyusi chiqadi.
 4) Xotira uchun Neon/Supabase kabi PostgreSQL connection string kiritiladi.
 5) "Yangi foydalanuvchi" rejimi yangi chatlardan boshlangan suhbatlarga,
@@ -32,7 +32,7 @@ _WAIT_KEY = "al_waiting"
 _TMP = "al_tmp"  # eski sessiyalarni bekor qilish uchun moslik
 
 FREE_MODELS = {
-    "gemini": ["gemini-3.6-flash", "gemini-2.5-flash"],
+    "gemini": ["gemini-3.8-flash"],
     "groq": ["llama-3.1-8b-instant", "llama-3.3-70b-versatile"],
     "mistral": ["mistral-small-latest"],
     "openrouter": ["meta-llama/llama-3.3-70b-instruct:free", "google/gemma-3-27b-it:free"],
@@ -53,20 +53,30 @@ def _esc(s):
     return escape(str(s or ""))
 
 
-def _provider_key_entries(provider):
-    """AL Yordamchi uchun /developer > Kalitlar bo'limidagi umumiy kalitlar."""
-    return [
-        dict(entry) for entry in config.KEY_POOLS.get(provider, [])
-        if isinstance(entry, dict) and str(entry.get("key") or "").strip()
-    ]
+def _personal_key(user_id, provider=None):
+    """Faqat shu owner uchun saqlangan AL kaliti; KEY_POOLS umuman o'qilmaydi."""
+    entry = config.get_al_user_key(user_id, provider)
+    return str(entry.get("key") or "").strip()
+
+
+def _al_models(provider):
+    """AL uchun model ro'yxati; Gemini'da eskirgan model nomlari chiqarilmaydi."""
+    if provider == "gemini":
+        return ["gemini-3.8-flash"]
+    models, seen = [], set()
+    for model in [config.DEFAULT_MODEL_BY_PROVIDER.get(provider, "")] + FREE_MODELS.get(provider, []):
+        if model and model not in seen:
+            models.append(model)
+            seen.add(model)
+    return models
 
 
 def _provider_links_text():
     return (
         "🔑 <b>AL YORDAMCHI uchun AI provayderini tanlang</b>\n\n"
-        "Tanlaganingizdan keyin API kalitingizni yuborishingiz so'raladi. "
-        "Kalit shaxsiy GitHub faylingizga emas, /developer → Kalitlar → AI kalitlari "
-        "bo'limida ishlatiladigan umumiy KEY_POOLS saqlash joyiga qo'shiladi."
+        "Tanlaganingizdan keyin o'zingizning API kalitingizni bir marta yuborasiz. "
+        "Kalit AL Yordamchi uchun alohida saqlash joyida faqat sizning Telegram ID raqamingizga bog'lanadi. "
+        "Botning boshqa funksiyalari uchun saqlangan kalitlar ishlatilmaydi."
     )
 
 
@@ -79,15 +89,10 @@ def _provider_keyboard():
 
 
 def _model_text(provider):
-    models = []
-    seen = set()
-    for m in [config.DEFAULT_MODEL_BY_PROVIDER.get(provider, "")] + FREE_MODELS.get(provider, []):
-        if m and m not in seen:
-            models.append(m)
-            seen.add(m)
+    models = _al_models(provider)
     lines = [
         f"🤖 <b>{_esc(_label(provider))}</b> tanlandi.",
-        "API kalit qabul qilindi. Endi modelni tanlang:",
+        "Endi AL Yordamchi ishlatadigan modelni tanlang:",
         "",
         "Tavsiya qilinadigan modellar:",
     ]
@@ -98,12 +103,7 @@ def _model_text(provider):
 
 
 def _model_keyboard(provider):
-    models = []
-    seen = set()
-    for m in [config.DEFAULT_MODEL_BY_PROVIDER.get(provider, "")] + FREE_MODELS.get(provider, []):
-        if m and m not in seen:
-            models.append(m)
-            seen.add(m)
+    models = _al_models(provider)
     rows = [[InlineKeyboardButton(m[:48], callback_data=f"al:model:{provider}:{i}")]
             for i, m in enumerate(models)]
     rows.append([InlineKeyboardButton("✍️ Boshqa model nomi", callback_data=f"al:model_manual:{provider}")])
@@ -123,7 +123,7 @@ def _main_text(user_id):
         "🤖 <b>AL YORDAMCHI</b>\n\n"
         f"Holat: {'🟢 YOQILGAN' if enabled else '🔴 O‘CHIRILGAN'}\n"
         f"AI: <code>{_esc(_label(provider) if provider else 'ulanmagan')}</code>\n"
-        f"Umumiy kalitlar: <code>{len(_provider_key_entries(provider)) if provider else 0} ta</code>\n"
+        f"Shaxsiy API kalit: <code>{'saqlangan' if _personal_key(user_id, provider) else 'kiritilmagan'}</code>\n"
         f"Model: <code>{_esc(model or 'tanlanmagan')}</code>\n"
         f"Xotira: {'🟢 ulangan' if db_ready else '⚪ ulanmagan'}\n"
         f"Foydalanuvchi turi: <code>{_esc(mode or 'tanlanmagan')}</code>\n"
@@ -161,7 +161,7 @@ async def al_yordamchi_cmd(update, context):
         return
 
     cfg = user_ai_keys.get_assistant_config(user.id)
-    if not cfg.get("provider") or not _provider_key_entries(cfg.get("provider")) or not cfg.get("model"):
+    if not cfg.get("provider") or not _personal_key(user.id, cfg.get("provider")) or not cfg.get("model"):
         context.user_data[_WAIT_KEY] = {"stage": "provider"}
         await message.reply_text(_provider_links_text(), parse_mode=ParseMode.HTML, reply_markup=_provider_keyboard())
         return
@@ -193,30 +193,30 @@ async def callback(update, context):
         if provider not in config.SUPPORTED_PROVIDERS:
             await q.edit_message_text("⚠️ Provider topilmadi.")
             return
-        if _provider_key_entries(provider):
-            context.user_data[_WAIT_KEY] = {"stage": "model_manual_or_pick", "provider": provider}
+        cfg = user_ai_keys.get_assistant_config(user_id)
+        saved_key = _personal_key(user_id, provider)
+        if saved_key:
+            context.user_data[_WAIT_KEY] = {
+                "stage": "model_manual_or_pick", "provider": provider, "api_key": saved_key
+            }
             await q.edit_message_text(
-                f"✅ <b>{_esc(_label(provider))}</b> uchun umumiy kalitlar topildi.\n"
-                "Yangi API key so'ralmaydi. Endi AL Yordamchi ishlatadigan modelni tanlang:",
+                f"✅ <b>{_esc(_label(provider))}</b> uchun shaxsiy API kalitingiz avval saqlangan.\\n"
+                "Qayta so'ralmaydi. Modelni tanlang:",
                 parse_mode=ParseMode.HTML,
                 reply_markup=_model_keyboard(provider),
             )
         else:
             context.user_data[_WAIT_KEY] = {"stage": "api_key", "provider": provider}
             await q.edit_message_text(
-                f"🔐 <b>{_esc(_label(provider))}</b> API kalitingizni yuboring.\n\n"
-                "Kalit /developer → Kalitlar → AI kalitlari bilan bir xil umumiy saqlash joyiga qo'shiladi.",
+                f"🔐 <b>{_esc(_label(provider))}</b> uchun o'zingizning API kalitingizni yuboring.\\n\\n"
+                "Kalit faqat shaxsiy faylingizda saqlanadi va deploydan keyin ham qoladi.",
                 parse_mode=ParseMode.HTML,
             )
         return
 
     if data.startswith("al:model:"):
         _, _, provider, idx = data.split(":")
-        models = []
-        seen = set()
-        for m in [config.DEFAULT_MODEL_BY_PROVIDER.get(provider, "")] + FREE_MODELS.get(provider, []):
-            if m and m not in seen:
-                models.append(m); seen.add(m)
+        models = _al_models(provider)
         i = int(idx)
         if not (0 <= i < len(models)):
             await q.edit_message_text("⚠️ Model topilmadi.")
@@ -226,19 +226,18 @@ async def callback(update, context):
         if pending.get("provider") != provider:
             await q.edit_message_text("⚠️ Provider bosqichi topilmadi. /al_yordamchi buyrug'idan qayta boshlang.")
             return
-        if api_key:
-            _idx, durable = config.add_key_checked(provider, api_key, models[i])
-            if not durable:
-                await q.edit_message_text(
-                    "❌ API kalit vaqtinchalik xotiraga tushdi, lekin doimiy saqlanmadi. "
-                    "Render deployidan keyin yo'qolmasligi uchun Upstash, Neon yoki GitHub saqlashini sozlang."
-                )
-                return
-        elif not _provider_key_entries(provider):
-            await q.edit_message_text("⚠️ Bu provider uchun saqlangan kalit topilmadi. API kalitni qayta yuboring.")
+        if not api_key:
+            api_key = _personal_key(user_id, provider)
+        if not api_key:
+            await q.edit_message_text("⚠️ Shaxsiy API kalit topilmadi. Provider tanlab kalitni bir marta yuboring.")
+            return
+        if not await asyncio.to_thread(config.set_al_user_key, user_id, provider, api_key, models[i]):
+            await q.edit_message_text(
+                "❌ AL kaliti doimiy saqlanmadi. Render deployidan keyin yo'qolmasligi uchun "
+                "Upstash, Neon yoki GitHub runtime saqlashini sozlang."
+            )
             return
         cfg = user_ai_keys.get_assistant_config(user_id)
-        cfg.pop("key", None)
         cfg.update({"provider": provider, "model": models[i]})
         if not await asyncio.to_thread(user_ai_keys.save_assistant_config, user_id, cfg):
             await q.edit_message_text("❌ Sozlamani saqlashda xato. Qayta urinib ko‘ring.")
@@ -246,7 +245,7 @@ async def callback(update, context):
         context.user_data.pop(_WAIT_KEY, None)
         context.user_data.pop(_TMP, None)
         await q.edit_message_text(
-            "✅ API kalit va AL YORDAMCHI modeli /developer → Kalitlar → AI kalitlari umumiy to'plamiga saqlandi.\n\n" + _main_text(user_id),
+            "✅ Shaxsiy API kalitingiz va AL Yordamchi modeli saqlandi. Keyingi safar qayta so'ralmaydi.\n\n" + _main_text(user_id),
             parse_mode=ParseMode.HTML,
             reply_markup=_main_keyboard(user_id),
         )
@@ -377,10 +376,10 @@ async def callback(update, context):
 
     if data == "al:toggle":
         cfg = user_ai_keys.get_assistant_config(user_id)
-        if not cfg.get("enabled") and (not cfg.get("provider") or not _provider_key_entries(cfg.get("provider"))):
+        if not cfg.get("enabled") and (not cfg.get("provider") or not _personal_key(user_id, cfg.get("provider")) or not cfg.get("model")):
             context.user_data[_WAIT_KEY] = {"stage": "provider"}
             await q.edit_message_text(
-                "⚠️ Yordamchini yoqishdan oldin /developer → Kalitlar → AI kalitlari bo'limida kalit bo'lishi kerak.\n\n" + _provider_links_text(),
+                "⚠️ Yordamchini yoqishdan oldin shaxsiy API kalitingizni saqlang.\n\n" + _provider_links_text(),
                 parse_mode=ParseMode.HTML, reply_markup=_provider_keyboard(),
             )
             return
@@ -420,11 +419,18 @@ async def receive_setup_text(update, context):
         if not text or len(text) > 1000 or any(ch.isspace() for ch in text):
             await message.reply_text("⚠️ API kalit formati noto'g'ri. Kalitni bo'sh joylarsiz qayta yuboring.")
             return True
-        context.user_data[_WAIT_KEY] = {"stage": "model_manual_or_pick", "provider": provider, "api_key": text}
         try:
             await message.delete()
         except Exception:
             logger.warning("AL_API_KEY_MESSAGE_DELETE_FAILED user_id=%s", user.id)
+        if not await asyncio.to_thread(config.set_al_user_key, user.id, provider, text, ""):
+            await message.reply_text(
+                "❌ API kalit doimiy saqlanmadi. Render deployidan keyin ham saqlanishi uchun "
+                "Upstash, Neon yoki GitHub runtime saqlashini sozlang."
+            )
+            context.user_data.pop(_WAIT_KEY, None)
+            return True
+        context.user_data[_WAIT_KEY] = {"stage": "model_manual_or_pick", "provider": provider, "api_key": text}
         await message.reply_text(_model_text(provider), parse_mode=ParseMode.HTML, reply_markup=_model_keyboard(provider))
         return True
 
@@ -434,20 +440,19 @@ async def receive_setup_text(update, context):
             await message.reply_text("⚠️ Model nomi noto‘g‘ri. Qaytadan yuboring.")
             return True
         api_key = str(state.get("api_key") or "").strip()
-        if api_key:
-            _idx, durable = config.add_key_checked(provider, api_key, text)
-            if not durable:
-                await message.reply_text(
-                    "❌ API kalit doimiy saqlanmadi. Render deployidan keyin saqlanishi uchun "
-                    "Upstash, Neon yoki GitHub saqlashini sozlang."
-                )
-                return True
-        elif not _provider_key_entries(provider):
-            await message.reply_text("⚠️ Saqlangan API kalit topilmadi. /al_yordamchi buyrug'idan qayta boshlang.")
+        if not api_key:
+            api_key = _personal_key(user.id, provider)
+        if not api_key:
+            await message.reply_text("⚠️ Shaxsiy API kalit topilmadi. Provider tanlab kalitni bir marta yuboring.")
             context.user_data.pop(_WAIT_KEY, None)
             return True
+        if not await asyncio.to_thread(config.set_al_user_key, user.id, provider, api_key, text):
+            await message.reply_text(
+                "❌ AL kaliti doimiy saqlanmadi. Render deployidan keyin yo'qolmasligi uchun "
+                "Upstash, Neon yoki GitHub runtime saqlashini sozlang."
+            )
+            return True
         cfg = user_ai_keys.get_assistant_config(user.id)
-        cfg.pop("key", None)
         cfg.update({"provider": provider, "model": text})
         if not await asyncio.to_thread(user_ai_keys.save_assistant_config, user.id, cfg):
             await message.reply_text("❌ Sozlamani saqlashda xato.")
@@ -455,7 +460,7 @@ async def receive_setup_text(update, context):
         context.user_data.pop(_WAIT_KEY, None)
         context.user_data.pop(_TMP, None)
         await message.reply_text(
-            "✅ API kalit va AL YORDAMCHI modeli /developer → Kalitlar → AI kalitlari umumiy to'plamiga saqlandi.\n\n" + _main_text(user.id),
+            "✅ Shaxsiy API kalitingiz va AL Yordamchi modeli saqlandi. Keyingi safar qayta so'ralmaydi.\n\n" + _main_text(user.id),
             parse_mode=ParseMode.HTML,
             reply_markup=_main_keyboard(user.id),
         )
@@ -554,29 +559,26 @@ yo'q deb yozing. Bu blok foydalanuvchiga yuborilmaydi.
 """.strip()
 
 
-async def _dispatch_with_shared_keys(provider, model, prompt, system, history, label):
-    """AL uchun /developer KEY_POOLS'dagi kalitlarni navbat bilan sinaydi."""
-    entries = _provider_key_entries(provider)
-    last = (None, "missing_key", "Umumiy kalitlar to'plamida kalit yo'q.")
-    for index, entry in enumerate(entries, start=1):
-        key = str(entry.get("key") or "").strip()
-        if not key:
-            continue
-        use_model = model or str(entry.get("model") or "").strip()
-        if not use_model:
-            last = (None, "missing_model", f"Kalit #{index} uchun model ko'rsatilmagan.")
-            continue
-        raw, status, detail = await ai_clients._dispatch(
-            provider, key, use_model, "", prompt, system, history,
-            f"{label} (umumiy kalit #{index})"
-        )
-        if raw:
-            return raw, "ok", ""
-        last = (raw, status, detail)
-        # Limit/vaqtinchalik xatoda keyingi umumiy kalitni sinab ko'ramiz.
-        logger.warning("AL_SHARED_KEY_FAILED provider=%s index=%s status=%s", provider, index, status)
-    return last
-
+async def _dispatch_with_personal_key(owner_id, provider, model, prompt, system, history, label):
+    """Faqat owner tomonidan AL uchun kiritilgan shaxsiy kalit bilan ishlaydi."""
+    cfg = user_ai_keys.get_assistant_config(owner_id)
+    key = _personal_key(owner_id, provider)
+    if not key:
+        return None, "missing_key", "AL uchun shaxsiy API kalit saqlanmagan."
+    if not model:
+        return None, "missing_model", "AL modeli tanlanmagan."
+    # Gemini 2.5 Flash retired; Gemini 3.8 Flash — amaldagi barqaror model.
+    if provider == "gemini" and model in {
+        "gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite", "gemini-3.6-flash"
+    }:
+        model = "gemini-3.8-flash"
+        cfg["model"] = model
+        await asyncio.to_thread(config.set_al_user_key, owner_id, provider, key, model)
+        await asyncio.to_thread(user_ai_keys.save_assistant_config, owner_id, cfg)
+        logger.info("AL_MODEL_AUTO_MIGRATED owner=%s model=%s", owner_id, model)
+    return await ai_clients._dispatch(
+        provider, key, model, "", prompt, system, history, label
+    )
 
 async def process_business_message(message, context) -> bool:
     """AI yordamchi ustuvor bo'lsa True; aks holda eski auto-reply ishlashi uchun False."""
@@ -596,9 +598,9 @@ async def process_business_message(message, context) -> bool:
     cfg = user_ai_keys.get_assistant_config(owner_id)
     if not cfg.get("enabled") or not cfg.get("provider") or not cfg.get("model"):
         return False
-    key_entries = _provider_key_entries(cfg.get("provider"))
-    if not key_entries:
-        logger.warning("AL_NO_SHARED_KEYS owner=%s provider=%s", owner_id, cfg.get("provider"))
+    personal_key = _personal_key(owner_id, cfg.get("provider"))
+    if not personal_key:
+        logger.warning("AL_NO_PERSONAL_KEY owner=%s provider=%s", owner_id, cfg.get("provider"))
         return True
 
     # Media/voice/video/photo/document uchun hech qachon javob yubormaymiz.
@@ -627,8 +629,8 @@ async def process_business_message(message, context) -> bool:
                     "barqaror faktlarni ajratib, XOTIRA blokida qaytaring. "
                     "Javob qisqa bo'lsin.\n\n" + text
                 )
-                raw, status, detail = await _dispatch_with_shared_keys(
-                    cfg["provider"], cfg["model"], prompt, system, None, "AL YORDAMCHI memory"
+                raw, status, detail = await _dispatch_with_personal_key(
+                    owner_id, cfg["provider"], cfg["model"], prompt, system, None, "AL YORDAMCHI memory"
                 )
                 if raw:
                     _, memories_to_save = _extract_reply_and_memories(raw)
@@ -693,8 +695,8 @@ async def process_business_message(message, context) -> bool:
         memories = await al_yordamchi_db.a_list_memories(db_dsn, owner_id, 40) if db_dsn else []
         history = await al_yordamchi_db.a_get_history(db_dsn, owner_id, peer_id, 16) if db_dsn else []
         system = _build_system(owner_name, memories)
-        raw, status, detail = await _dispatch_with_shared_keys(
-            cfg["provider"], cfg["model"], text, system, history, "AL YORDAMCHI"
+        raw, status, detail = await _dispatch_with_personal_key(
+            owner_id, cfg["provider"], cfg["model"], text, system, history, "AL YORDAMCHI"
         )
         if not raw:
             logger.warning(
