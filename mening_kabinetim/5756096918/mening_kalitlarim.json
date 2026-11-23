@@ -7,9 +7,11 @@
     "special_users": [
       8927782893
     ],
-    "audience_mode": "new",
+    "audience_mode": "old",
     "known_peers": [
-      8927782893
+      8265468282,
+      8927782893,
+      8409708335
     ]
   }
 }
