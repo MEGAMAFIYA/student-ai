@@ -69,6 +69,35 @@ def cancel_user_jobs(chat_id, user_id, exclude=None) -> int:
     return cancelled
 
 
+def has_active_job(chat_id, user_id, exclude_current=True) -> bool:
+    """Shu foydalanuvchining joriy update'dan boshqa ishlayotgan vazifasi bormi?"""
+    if user_id is None:
+        return False
+    try:
+        current = asyncio.current_task() if exclude_current else None
+    except RuntimeError:
+        current = None
+    tasks = _JOBS.get(_key(chat_id, user_id), ())
+    return any(task is not current and not task.done() for task in list(tasks))
+
+
+def has_active_user_job(user_id, exclude_current=True) -> bool:
+    """Foydalanuvchining istalgan chatdagi boshqa faol update vazifasi bormi?"""
+    if user_id is None:
+        return False
+    try:
+        current = asyncio.current_task() if exclude_current else None
+    except RuntimeError:
+        current = None
+    uid = int(user_id)
+    for (_, job_user_id), tasks in list(_JOBS.items()):
+        if job_user_id != uid:
+            continue
+        if any(task is not current and not task.done() for task in list(tasks)):
+            return True
+    return False
+
+
 def active_count(chat_id, user_id) -> int:
     return sum(1 for t in _JOBS.get(_key(chat_id, user_id), ()) if not t.done())
 

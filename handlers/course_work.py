@@ -613,8 +613,11 @@ async def _generate_and_send(update, context, topic: str, pages: int, status, n_
             "✅ Titul, mundarija, kirish, 3 bob, xulosa va adabiyotlar ro'yxati bilan."
             + (f"\n🖼 {sections['figure_count']} ta rasm qo'shildi." if sections.get("figure_count") else "")
         ),
-        reply_markup=main_menu_keyboard(),
     )
+    # Inline menu tugmalari matnli xabarda bo‘lishi kerak: hujjat xabariga
+    # biriktirilgan tugma bosilganda ConversationHandler edit_message_text
+    # qila olmaydi va foydalanuvchiga sessiya/xatolik ko‘rsatadi.
+    await update.message.reply_text("🏠 Bosh menyu:", reply_markup=main_menu_keyboard())
     try:
         await status.delete()
     except Exception:

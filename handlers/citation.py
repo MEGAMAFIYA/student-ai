@@ -172,8 +172,9 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pdf_buf = await asyncio.to_thread(make_pdf, "Adabiyotlar ro'yxati", full_text)
         msg = await context.bot.send_document(
             chat_id, document=InputFile(pdf_buf, filename="adabiyotlar_royxati.pdf"),
-            caption="📚 Adabiyotlar ro'yxati.", reply_markup=main_menu_keyboard(),
+            caption="📚 Adabiyotlar ro'yxati.",
         )
+        await context.bot.send_message(chat_id, "🏠 Bosh menyu:", reply_markup=main_menu_keyboard())
         if user_id and msg.document:
             storage.record_file(user_id, "citation", "Adabiyotlar ro'yxati", msg.document.file_id)
         try:

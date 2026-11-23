@@ -134,8 +134,8 @@ async def receive_topic_and_generate(update: Update, context: ContextTypes.DEFAU
     msg = await update.message.reply_document(
         document=InputFile(pdf_buf, filename=f"{topic[:40]}.pdf"),
         caption=f"🗒 {label}: {topic}\n📎 {actual_pages} bet (so'ralgan: {pages}+).",
-        reply_markup=main_menu_keyboard(),
     )
+    await update.message.reply_text("🏠 Bosh menyu:", reply_markup=main_menu_keyboard())
     if user_id and msg.document:
         storage.record_file(user_id, "essay", topic, msg.document.file_id)
         storage.record_usage("essay", user_id)

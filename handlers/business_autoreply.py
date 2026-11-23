@@ -230,6 +230,15 @@ async def process_business_message(message, context):
             connection_id, chat.id,
         )
         return
+    # Business auto-reply ham egasi boshqa funksiyada bo‘lsa xabar yubormaydi.
+    try:
+        import feature_guard
+        if feature_guard.is_user_busy(context.application, owner_id):
+            logger.info("BUSINESS_AUTOREPLY_SKIP reason=OWNER_ACTIVE_FEATURE owner_id=%s", owner_id)
+            return
+    except Exception:
+        logger.exception("Business auto-reply busy-guard tekshiruvida xato owner_id=%s", owner_id)
+        return
     sender = getattr(message, "from_user", None)
     if not sender:
         logger.warning("BUSINESS_AUTOREPLY_SKIP reason=NO_SENDER owner_id=%s chat_id=%s",

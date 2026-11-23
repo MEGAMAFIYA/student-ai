@@ -115,8 +115,8 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
         update.effective_chat.id,
         document=InputFile(pdf_buf, filename="qollanma.pdf"),
         caption=f"📖 {len(questions)} ta savol-javobdan iborat qo'llanma tayyor.",
-        reply_markup=main_menu_keyboard(),
     )
+    await context.bot.send_message(update.effective_chat.id, "🏠 Bosh menyu:", reply_markup=main_menu_keyboard())
 
     # 💰 Kamida bitta savolga javob olindi va qo'llanma yetkazib berildi.
     await wallet_ui.finalize_success(context, update=update, chat_id=chat_id)

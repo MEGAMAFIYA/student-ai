@@ -218,8 +218,8 @@ async def export_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id,
         document=InputFile(pdf_buf, filename=f"test_{topic[:30]}.pdf"),
         caption=f"📋 {topic} — natija: {score}/{len(questions)}",
-        reply_markup=main_menu_keyboard(),
     )
+    await context.bot.send_message(chat_id, "🏠 Bosh menyu:", reply_markup=main_menu_keyboard())
     logger.info(f"📋 Test natijasi PDF yuborildi: chat_id={chat_id}, mavzu='{topic}'.")
     if user_id and msg.document:
         storage.record_file(user_id, "quiz_pdf", topic, msg.document.file_id)

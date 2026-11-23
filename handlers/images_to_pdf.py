@@ -81,8 +81,8 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             update.effective_chat.id,
             document=InputFile(pdf_buf, filename="suratlar.pdf"),
             caption=f"📄 {len(images)} ta rasmdan tayyorlangan PDF.",
-            reply_markup=main_menu_keyboard(),
         )
+        await context.bot.send_message(update.effective_chat.id, "🏠 Bosh menyu:", reply_markup=main_menu_keyboard())
         logger.info(f"🖼 PDF muvaffaqiyatli yuborildi: chat_id={update.effective_chat.id}.")
         await wallet_ui.finalize_success(context, update=update)
     except Exception as e:

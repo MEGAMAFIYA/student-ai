@@ -96,6 +96,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     chat = update.effective_chat
+    user = update.effective_user
+    # Universal AI faqat boshqa funksiya faol bo‘lmaganda ishlaydi.
+    # ConversationHandler xabarni ushlay olmagan holatda ham pastga tushib
+    # ketadigan matnlar shu markaziy tekshiruvda bloklanadi.
+    try:
+        import feature_guard
+        if user and feature_guard.is_user_busy(context.application, user.id):
+            logger.info("UNIVERSAL_AI_BLOCKED user_id=%s reason=ACTIVE_FEATURE", user.id)
+            return
+    except Exception:
+        logger.exception("Universal AI busy-guard tekshiruvida xato")
+        return  # xavfsiz tomoni: tekshiruv ishlamasa AI javob bermasin
+
     is_group = chat.type in ("group", "supergroup")
     user_text = update.message.text.strip()
 
@@ -300,6 +313,7 @@ async def _try_course_work(update: Update, context: ContextTypes.DEFAULT_TYPE, t
         reply_markup=cancel_markup(),
     )
 
+    context.user_data["_student_feature_running"] = True
     try:
         result = await asyncio.wait_for(
             course_work.generate_course_work(topic, pages, status),
@@ -318,6 +332,7 @@ async def _try_course_work(update: Update, context: ContextTypes.DEFAULT_TYPE, t
             "❌ Kurs ishini yaratib bo'lmadi — AI xizmatlari hozir javob bermayapti. "
             "Birozdan so'ng qayta urinib ko'ring."
         )
+        context.user_data.pop("_student_feature_running", None)
         return
 
     sections, pdf_buf, actual_pages = result
@@ -328,12 +343,13 @@ async def _try_course_work(update: Update, context: ContextTypes.DEFAULT_TYPE, t
             f"📄 {topic}\n📎 {actual_pages} bet (so'ralgan: {pages}+)\n"
             "✅ Titul, mundarija, kirish, 3 bob, xulosa va adabiyotlar ro'yxati bilan."
         ),
-        reply_markup=main_menu_keyboard(),
     )
+    await update.message.reply_text("🏠 Bosh menyu:", reply_markup=main_menu_keyboard())
     try:
         await status.delete()
     except Exception:
         pass
+    context.user_data.pop("_student_feature_running", None)
 
 
 async def _try_translate(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> bool:

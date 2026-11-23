@@ -887,7 +887,7 @@ def _github_get_sha(url: str) -> str | None:
         return None
 
 
-def _github_put_content(path: str, content_bytes: bytes, message: str, max_attempts: int = 3) -> bool:
+def _github_put_content_unlocked(path: str, content_bytes: bytes, message: str, max_attempts: int = 3) -> bool:
     """GitHub Contents API orqali BITTA fayl yozadigan YAGONA umumiy
     funksiya — barcha GitHub'ga yozuvchi joylar (`_github_write_file`,
     `github_upload_binary`, `github_write_text_file`) shu orqali ishlaydi,
@@ -949,6 +949,18 @@ def _github_put_content(path: str, content_bytes: bytes, message: str, max_attem
         "so'rov juda tez-tez yozmoqda)."
     )
     return False
+
+
+# Bir xil JSON faylga parallel PUT so‘rovlari yuborilsa GitHub eski SHA sabab
+# 409 Conflict qaytaradi. Bitta Render processida har bir path yozuvini ketma-ket qilamiz.
+_GITHUB_WRITE_LOCKS = {}
+_GITHUB_WRITE_LOCKS_GUARD = threading.Lock()
+
+def _github_put_content(path: str, content_bytes: bytes, message: str, max_attempts: int = 3) -> bool:
+    with _GITHUB_WRITE_LOCKS_GUARD:
+        lock = _GITHUB_WRITE_LOCKS.setdefault(path, threading.RLock())
+    with lock:
+        return _github_put_content_unlocked(path, content_bytes, message, max_attempts)
 
 
 def _github_read_file(filename: str) -> str | None:

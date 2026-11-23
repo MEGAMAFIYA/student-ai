@@ -111,8 +111,8 @@ async def receive_instruction(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_document(
         document=InputFile(pdf_buf, filename=f"{filename}_tahrirlangan.pdf"),
         caption="✅ Hujjat tahrirlandi.",
-        reply_markup=main_menu_keyboard(),
     )
+    await update.message.reply_text("🏠 Bosh menyu:", reply_markup=main_menu_keyboard())
 
     try:
         await status.delete()

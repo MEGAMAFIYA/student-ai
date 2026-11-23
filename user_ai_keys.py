@@ -22,10 +22,26 @@ botning umumiy kalitiga (yoki zaxira provayderlarga) o'tiladi.
 
 import json
 import logging
+import threading
+from functools import wraps
 
 import config
 
 logger = logging.getLogger(__name__)
+
+_USER_WRITE_LOCKS = {}
+_USER_WRITE_LOCKS_GUARD = threading.Lock()
+
+def _serialized_user_write(func):
+    """Bitta foydalanuvchi JSON fayliga parallel read-modify-write'larni ketma-ket bajaradi."""
+    @wraps(func)
+    def wrapper(user_id, *args, **kwargs):
+        uid = int(user_id)
+        with _USER_WRITE_LOCKS_GUARD:
+            lock = _USER_WRITE_LOCKS.setdefault(uid, threading.RLock())
+        with lock:
+            return func(uid, *args, **kwargs)
+    return wrapper
 
 
 def _path(user_id: int) -> str:
@@ -65,6 +81,7 @@ def get_assistant_config(user_id: int) -> dict:
     return dict(_read_data(user_id).get("al_yordamchi") or {})
 
 
+@_serialized_user_write
 def save_assistant_config(user_id: int, values: dict) -> bool:
     """AL YORDAMCHI konfiguratsiyasini mavjud shaxsiy kalitlarni buzmasdan saqlaydi."""
     data = _read_data(user_id)
@@ -72,6 +89,7 @@ def save_assistant_config(user_id: int, values: dict) -> bool:
     return _save_all(user_id, data, f"🤖 AL YORDAMCHI sozlamalari yangilandi: user_id={user_id}")
 
 
+@_serialized_user_write
 def update_assistant_config(user_id: int, **updates) -> bool:
     data = _read_data(user_id)
     cfg = dict(data.get("al_yordamchi") or {})
@@ -96,6 +114,7 @@ def has_any_keys(user_id: int) -> bool:
     return any(pool for pool in get_text_pools(user_id).values())
 
 
+@_serialized_user_write
 def _save_all(user_id: int, data: dict, message: str) -> bool:
     raw = json.dumps(data, ensure_ascii=False, indent=2)
     ok = config.github_write_text_file(_path(user_id), raw, message=message)
@@ -104,12 +123,14 @@ def _save_all(user_id: int, data: dict, message: str) -> bool:
     return ok
 
 
+@_serialized_user_write
 def _save_pools(user_id: int, pools: dict, message: str) -> bool:
     """Oddiy shaxsiy kalitlarni saqlaydi va AL YORDAMCHI sozlamalarini asraydi."""
     data = _read_data(user_id)
     data["keys"] = pools
     return _save_all(user_id, data, message)
 
+@_serialized_user_write
 def add_key(user_id: int, provider: str, api_key: str, model: str) -> tuple[int, bool]:
     """Yangi kalitni MAVJUD to'plamga (boshqa provayderlar/kalitlar
     saqlanib qolgan holda) ro'yxat oxiriga qo'shadi.
@@ -131,6 +152,7 @@ def add_key(user_id: int, provider: str, api_key: str, model: str) -> tuple[int,
     return last_index, False
 
 
+@_serialized_user_write
 def update_key_field(user_id: int, provider: str, index: int, field: str, value: str) -> bool:
     """`index` — 1 dan boshlanadi (foydalanuvchiga ko'rsatiladigan
     raqamlash bilan bir xil). Qaytaradi: MUVAFFAQIYATLI saqlandimi
@@ -143,6 +165,7 @@ def update_key_field(user_id: int, provider: str, index: int, field: str, value:
     return _save_pools(user_id, pools, f"🔑 Shaxsiy AI kaliti yangilandi: user_id={user_id}, provider={provider}#{index}")
 
 
+@_serialized_user_write
 def delete_key(user_id: int, provider: str, index: int) -> bool:
     """Qaytaradi: MUVAFFAQIYATLI o'chirilib, saqlandimi."""
     pools = get_pools(user_id)

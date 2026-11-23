@@ -88,8 +88,8 @@ async def receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = await context.bot.send_document(
             chat_id, document=InputFile(pdf_buf, filename="imlo_tekshiruvi.pdf"),
             caption="✅ Imlo tekshiruvi natijasi (uzun bo'lgani uchun PDF qilib berildi).",
-            reply_markup=main_menu_keyboard(),
         )
+        await context.bot.send_message(chat_id, "🏠 Bosh menyu:", reply_markup=main_menu_keyboard())
         if user_id and msg.document:
             storage.record_file(user_id, "grammar", "Imlo tekshiruvi", msg.document.file_id)
 

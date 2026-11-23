@@ -12,6 +12,7 @@ Oqim:
 7) Incoming media (voice/photo/video/document) uchun hech qanday AI javob yuborilmaydi.
 """
 import logging
+import asyncio
 import re
 from html import escape
 
@@ -164,7 +165,12 @@ async def callback(update, context):
         return
     user_id = q.from_user.id
     data = q.data or ""
-    await q.answer()
+    try:
+        await q.answer()
+    except Exception as exc:
+        # Telegram callback query muddati o'tgan bo'lsa ham sozlash jarayoni
+        # davom etishi kerak; eskirgan query sabab handler yiqilmasin.
+        logger.warning("AL_CALLBACK_ANSWER_SKIPPED user_id=%s error=%s", user_id, exc)
 
     if data == "al:cancel":
         context.user_data.pop(_WAIT_KEY, None)
@@ -203,7 +209,7 @@ async def callback(update, context):
             return
         cfg = user_ai_keys.get_assistant_config(user_id)
         cfg.update({"provider": provider, "key": key, "model": models[i]})
-        if not user_ai_keys.save_assistant_config(user_id, cfg):
+        if not await asyncio.to_thread(user_ai_keys.save_assistant_config, user_id, cfg):
             await q.edit_message_text("❌ Kalitni saqlashda xato. Qayta urinib ko‘ring.")
             return
         context.user_data.pop(_WAIT_KEY, None)
@@ -286,7 +292,7 @@ async def callback(update, context):
             known = {int(x) for x in (cfg.get("known_peers") or []) if str(x).lstrip("-").isdigit()}
             known.update(recent_peers)
             cfg["known_peers"] = list(known)[-20000:]
-        user_ai_keys.save_assistant_config(user_id, cfg)
+        await asyncio.to_thread(user_ai_keys.save_assistant_config, user_id, cfg)
         label = "🆕 yangi" if mode == "new" else "👴 eski"
         await q.edit_message_text(
             f"✅ AI yordamchi yoqildi. Rejim: <b>{label} foydalanuvchilar</b>.\n\n" +
@@ -330,14 +336,14 @@ async def callback(update, context):
         target = int(data.split(":")[-1])
         cfg = user_ai_keys.get_assistant_config(user_id)
         cfg["special_users"] = [x for x in (cfg.get("special_users") or []) if int(x) != target]
-        user_ai_keys.save_assistant_config(user_id, cfg)
+        await asyncio.to_thread(user_ai_keys.save_assistant_config, user_id, cfg)
         await q.edit_message_text(_main_text(user_id), parse_mode=ParseMode.HTML, reply_markup=_main_keyboard(user_id))
         return
 
     if data == "al:toggle":
         cfg = user_ai_keys.get_assistant_config(user_id)
         cfg["enabled"] = not bool(cfg.get("enabled"))
-        user_ai_keys.save_assistant_config(user_id, cfg)
+        await asyncio.to_thread(user_ai_keys.save_assistant_config, user_id, cfg)
         await q.edit_message_text(_main_text(user_id), parse_mode=ParseMode.HTML, reply_markup=_main_keyboard(user_id))
         return
 
@@ -392,7 +398,7 @@ async def receive_setup_text(update, context):
             return True
         cfg = user_ai_keys.get_assistant_config(user.id)
         cfg.update({"provider": provider, "key": tmp["key"], "model": text})
-        if not user_ai_keys.save_assistant_config(user.id, cfg):
+        if not await asyncio.to_thread(user_ai_keys.save_assistant_config, user.id, cfg):
             await message.reply_text("❌ Kalitni saqlashda xato.")
             return True
         context.user_data.pop(_WAIT_KEY, None)
@@ -421,7 +427,7 @@ async def receive_setup_text(update, context):
         cfg = user_ai_keys.get_assistant_config(user.id)
         cfg["db_dsn"] = text
         cfg["db_provider"] = "postgresql"
-        user_ai_keys.save_assistant_config(user.id, cfg)
+        await asyncio.to_thread(user_ai_keys.save_assistant_config, user.id, cfg)
         context.user_data.pop(_WAIT_KEY, None)
         await message.reply_text(
             "✅ Xotira database ulandi va jadvallar tayyorlandi.\n\n" +
@@ -442,7 +448,7 @@ async def receive_setup_text(update, context):
         if target not in special:
             special.append(target)
         cfg["special_users"] = special[:100]
-        user_ai_keys.save_assistant_config(user.id, cfg)
+        await asyncio.to_thread(user_ai_keys.save_assistant_config, user.id, cfg)
         context.user_data.pop(_WAIT_KEY, None)
         await message.reply_text(
             f"✅ {target} maxsus tanishlar ro‘yxatiga qo‘shildi.",
@@ -507,6 +513,16 @@ async def process_business_message(message, context) -> bool:
     owner_id = business_storage.get_user_id_for_connection(message.business_connection_id)
     if not owner_id:
         return False
+
+    # Egasi botdagi istalgan funksiyani ishlatayotgan bo‘lsa, Business AI jim turadi.
+    try:
+        import feature_guard
+        if feature_guard.is_user_busy(context.application, owner_id):
+            logger.info("AL_REPLY_BLOCKED owner=%s reason=ACTIVE_FEATURE", owner_id)
+            return True
+    except Exception:
+        logger.exception("AL Yordamchi busy-guard tekshiruvida xato owner=%s", owner_id)
+        return True
 
     cfg = user_ai_keys.get_assistant_config(owner_id)
     if not cfg.get("enabled") or not cfg.get("provider") or not cfg.get("key") or not cfg.get("model"):
@@ -573,7 +589,7 @@ async def process_business_message(message, context) -> bool:
             if is_new:
                 known.add(peer_id)
                 cfg["known_peers"] = list(known)[-20000:]
-                user_ai_keys.save_assistant_config(owner_id, cfg)
+                await asyncio.to_thread(user_ai_keys.save_assistant_config, owner_id, cfg)
     except Exception:
         logger.exception("Peer state update failed user_id=%s peer=%s", owner_id, peer_id)
         is_new = True
@@ -591,7 +607,7 @@ async def process_business_message(message, context) -> bool:
                 allowed = True
                 active_peers.add(peer_id)
                 cfg["active_peers"] = list(active_peers)[-20000:]
-                user_ai_keys.save_assistant_config(owner_id, cfg)
+                await asyncio.to_thread(user_ai_keys.save_assistant_config, owner_id, cfg)
         elif mode == "old":
             # Old rejim — assistant yoqilishidan oldin tanilgan peerlar.
             allowed = not is_new

@@ -376,7 +376,7 @@ async def choose_export(update:Update,context:ContextTypes.DEFAULT_TYPE):
             pptx=await asyncio.to_thread(build_presentation,topic,slides,"Student AI",s,images)
         filename=_safe_filename(topic)+".pptx"
         sent_pptx=await context.bot.send_document(chat_id,document=InputFile(pptx,filename=filename),
-            caption=f"📊 {topic}\n✅ {count} ta slayd · {THEMES[s['design']][0]}",reply_markup=main_menu_keyboard())
+            caption=f"📊 {topic}\n✅ {count} ta slayd · {THEMES[s['design']][0]}")
         if s.get("pdf"):
             try:
                 async with _BUILD_SEMAPHORE:
@@ -392,6 +392,7 @@ async def choose_export(update:Update,context:ContextTypes.DEFAULT_TYPE):
                 storage.record_usage("pptx",user.id)
             except Exception: logger.exception("Could not record PPTX usage")
         await wallet_ui.finalize_success(context,update=update,chat_id=chat_id)
+        await context.bot.send_message(chat_id, "🏠 Bosh menyu:", reply_markup=main_menu_keyboard())
     except Exception as e:
         logger.exception("PPTX generation failed for user=%s",getattr(user,"id",None))
         try: await context.bot.send_message(chat_id,"❌ Taqdimot yaratishda xatolik yuz berdi. Birozdan so‘ng qayta urinib ko‘ring.")

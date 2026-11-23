@@ -146,8 +146,8 @@ async def _do_translate(update, context, target_lang: str, edit_query=None, stat
             chat_id,
             document=InputFile(pdf_buf, filename=f"{filename}_{target_lang}.pdf"),
             caption=f"✅ {target_lang} tiliga tarjima qilindi.",
-            reply_markup=main_menu_keyboard(),
         )
+        await context.bot.send_message(chat_id, "🏠 Bosh menyu:", reply_markup=main_menu_keyboard())
     else:
         if len(translated) > 3800:
             bio = BytesIO(translated.encode("utf-8"))
@@ -155,8 +155,8 @@ async def _do_translate(update, context, target_lang: str, edit_query=None, stat
                 chat_id,
                 document=InputFile(bio, filename="tarjima.txt"),
                 caption=f"✅ {target_lang} tiliga tarjima qilindi (matn uzun bo'lgani uchun fayl sifatida).",
-                reply_markup=main_menu_keyboard(),
             )
+            await context.bot.send_message(chat_id, "🏠 Bosh menyu:", reply_markup=main_menu_keyboard())
         else:
             await context.bot.send_message(
                 chat_id,

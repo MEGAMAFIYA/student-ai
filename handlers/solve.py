@@ -122,8 +122,8 @@ async def _send_solution(update, context, status_msg, label, solution, chat_id, 
         msg = await context.bot.send_document(
             chat_id, document=InputFile(pdf_buf, filename="masala_yechimi.pdf"),
             caption="🧮 Yechim (javob uzun bo'lgani uchun PDF qilib berildi).",
-            reply_markup=main_menu_keyboard(),
         )
+        await context.bot.send_message(chat_id, "🏠 Bosh menyu:", reply_markup=main_menu_keyboard())
         if user_id and msg.document:
             storage.record_file(user_id, "solve", "Masala yechimi", msg.document.file_id)
 
