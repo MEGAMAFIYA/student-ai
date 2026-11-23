@@ -2,7 +2,7 @@
   "keys": {},
   "al_yordamchi": {
     "provider": "gemini",
-    "model": "gemini-2.5-flash",
+    "model": "gemini-3.8-flash",
     "enabled": true,
     "special_users": [
       8927782893
