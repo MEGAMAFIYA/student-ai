@@ -7,6 +7,9 @@
     "special_users": [
       8927782893
     ],
-    "audience_mode": "new"
+    "audience_mode": "new",
+    "known_peers": [
+      8927782893
+    ]
   }
 }
