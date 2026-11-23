@@ -1149,14 +1149,15 @@ def persist_read(local_filename: str, upstash_key: str) -> tuple[str | None, str
     return None, ""
 
 
-def persist_write(local_filename: str, upstash_key: str, raw: str, commit_message: str = "") -> None:
+def persist_write(local_filename: str, upstash_key: str, raw: str, commit_message: str = "") -> bool:
     """Umumiy yozish funksiyasi — xuddi shu ustuvorlik bilan (Upstash ->
     Neon -> GitHub -> mahalliy fayl) ma'lumotni saqlaydi."""
     if USE_UPSTASH:
         resp = _upstash_request(["SET", upstash_key, raw])
         if resp is None or resp.get("result") != "OK":
             logger.error(f"❌ Upstash Redis'ga '{local_filename}' yozib bo'lmadi — o'zgarish DOIMIY saqlanmagan bo'lishi mumkin!")
-        return
+            return False
+        return True
 
     if USE_NEON:
         ok = _neon_set(upstash_key, raw)
@@ -1165,7 +1166,7 @@ def persist_write(local_filename: str, upstash_key: str, raw: str, commit_messag
         else:
             logger.error(f"❌ '{local_filename}' Neon/Postgres'ga yozilmadi — o'zgarish DOIMIY saqlanmagan bo'lishi mumkin! Mahalliy faylga zaxira sifatida yozib qo'yiladi.")
             _write_local_fallback(local_filename, raw)
-        return
+        return bool(ok)
 
     if USE_GITHUB:
         ok = _github_write_file(local_filename, raw, commit_message or f"Auto-update {local_filename}")
@@ -1174,9 +1175,10 @@ def persist_write(local_filename: str, upstash_key: str, raw: str, commit_messag
         else:
             logger.error(f"❌ '{local_filename}' GitHub'ga yozilmadi — o'zgarish DOIMIY saqlanmagan bo'lishi mumkin! Mahalliy faylga zaxira sifatida yozib qo'yiladi.")
             _write_local_fallback(local_filename, raw)
-        return
+        return bool(ok)
 
     _write_local_fallback(local_filename, raw)
+    return False
 
 
 # ------------------------------------------------------------
@@ -1377,7 +1379,12 @@ def _load_runtime_overrides() -> None:
     )
 
 
-def _save_runtime_overrides() -> None:
+def has_durable_runtime_storage() -> bool:
+    """Render deploylarida ham runtime_ai_config.json saqlanishi uchun tashqi backend borligini bildiradi."""
+    return bool(USE_UPSTASH or USE_NEON or USE_GITHUB)
+
+
+def _save_runtime_overrides() -> bool:
     """Joriy AI_FUNCTIONS + KEY_POOLS holatini Upstash Redis'ga (sozlangan
     bo'lsa) yoki mahalliy runtime_ai_config.json fayliga yozadi."""
     data = {
@@ -1396,7 +1403,7 @@ def _save_runtime_overrides() -> None:
         },
     }
     raw = json.dumps(data, ensure_ascii=False)
-    persist_write(_RUNTIME_CONFIG_FILENAME, _UPSTASH_KEY, raw, commit_message="🔧 /developer: AI sozlamalari/kalitlari yangilandi")
+    return persist_write(_RUNTIME_CONFIG_FILENAME, _UPSTASH_KEY, raw, commit_message="🔧 /developer: AI sozlamalari/kalitlari yangilandi")
 
 
 def update_ai_field(prefix: str, field: str, value: str) -> bool:
@@ -1427,15 +1434,37 @@ def bulk_update_model_by_provider(provider: str, model: str) -> list[str]:
 
 # ---------- Kalitlar to'plami (KEY_POOLS) bilan ishlash ----------
 
-def add_key(provider: str, key: str, model: str) -> int:
-    """Provider kalitlar to'plamiga yangi kalitni RO'YXAT OXIRIGA qo'shadi.
-    Qo'shilgan kalitning 1-based tartib raqamini qaytaradi."""
+def add_key_checked(provider: str, key: str, model: str) -> tuple[int, bool]:
+    """Kalitni umumiy KEY_POOLS'ga bir marta qo'shib, doimiy saqlanganini bildiradi.
+
+    Bir xil API key qayta yuborilsa dublikat yaratilmaydi; mavjud yozuv modeli
+    yangilanadi. `bool` faqat Upstash/Neon/GitHub kabi tashqi backendga yozilganda True.
+    """
     if provider not in KEY_POOLS:
         KEY_POOLS[provider] = []
-    KEY_POOLS[provider].append({"key": key.strip(), "model": model.strip()})
-    _save_runtime_overrides()
-    idx = len(KEY_POOLS[provider])
-    logger.info(f"[DEVELOPER] {provider} kalitlar to'plamiga yangi kalit qo'shildi (#{idx}).")
+    clean_key = str(key or "").strip()
+    clean_model = str(model or "").strip()
+    if not clean_key or not clean_model:
+        return 0, False
+    pool = KEY_POOLS[provider]
+    for idx, entry in enumerate(pool, start=1):
+        if str(entry.get("key") or "").strip() == clean_key:
+            changed = str(entry.get("model") or "").strip() != clean_model
+            if changed:
+                entry["model"] = clean_model
+            saved = _save_runtime_overrides()
+            logger.info("[AL] %s kalit KEY_POOLS'da mavjud (#%s); dublikat qo'shilmadi.", provider, idx)
+            return idx, bool(saved)
+    pool.append({"key": clean_key, "model": clean_model})
+    saved = _save_runtime_overrides()
+    idx = len(pool)
+    logger.info("[AL] %s kalit KEY_POOLS'ga qo'shildi (#%s), durable=%s.", provider, idx, bool(saved))
+    return idx, bool(saved)
+
+
+def add_key(provider: str, key: str, model: str) -> int:
+    """Moslik uchun eski API: kalitni umumiy KEY_POOLS'ga qo'shadi, index qaytaradi."""
+    idx, _saved = add_key_checked(provider, key, model)
     return idx
 
 

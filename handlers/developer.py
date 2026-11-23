@@ -545,7 +545,10 @@ def _provider_choice_keyboard(back_callback: str, choose_prefix: str) -> InlineK
 # ============================================================
 
 def _keys_menu_text() -> str:
-    lines = ["🔑 <b>AI kalitlari</b>\n"]
+    lines = [
+        "🔑 <b>AI kalitlari</b>\n",
+        "ℹ️ Bu yerda saqlangan provider kalitlari AL YORDAMCHI tomonidan ham umumiy to'plam sifatida ishlatiladi. AL kalitlari foydalanuvchining shaxsiy GitHub fayliga yozilmaydi.\n",
+    ]
     for provider in config.ALL_KEY_PROVIDERS:
         pool = config.KEY_POOLS.get(provider, [])
         lines.append(f"<b>{_esc(_provider_label(provider))} kalitlar:</b>")
