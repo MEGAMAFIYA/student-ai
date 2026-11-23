@@ -4,8 +4,10 @@
 - Telegram Business auto-reply endi faqat `message.text` bo'lsa javob beradi.
 - Voice, photo, video, document va boshqa media uchun statik auto-reply yuborilmaydi.
 - Connected Business foydalanuvchilar uchun `/al_yordamchi` komandasi qo'shildi.
-- AI key/model foydalanuvchining o'z `mening_kalitlarim.json` faylida `al_yordamchi` bo'limida saqlanadi.
-- AI yordamchi botning umumiy AI keylariga fallback qilmaydi: faqat shu foydalanuvchi tanlagan provider/key/model ishlatiladi.
+- AL YORDAMCHI uchun API kalitlar foydalanuvchining `mening_kalitlarim.json` faylida saqlanmaydi.
+- AL YORDAMCHI administrator boshqaradigan `/developer` → `Kalitlar` → `AI kalitlari` umumiy `KEY_POOLS` ro'yxatidan foydalanadi.
+- Foydalanuvchi faqat provider va modelni tanlaydi; shu provider uchun umumiy ro'yxatdagi kalitlar navbat bilan sinab ko'riladi.
+- AL yordamchi uchun tanlangan provider kalitlari bo'lmasa, administrator avval `/developer` → `Kalitlar` → `AI kalitlari` bo'limidan kalit qo'shishi kerak.
 - AI memory uchun Neon yoki Supabase PostgreSQL connection string ishlatiladi.
 - Xotira, peerlar va chat history alohida `al_*` jadvallarda saqlanadi.
 - `Yangi foydalanuvchilar`, `Eski foydalanuvchilar`, `Maxsus tanishlar` rejimlari qo'shildi.
@@ -25,3 +27,11 @@
 
 ## Muhim
 `.env` fayli xavfsizlik sababli bu yangilangan ZIP ichiga kiritilmagan. Mavjud deploy `.env`/Environment Variables qiymatlarini o'zingiz saqlab qoling.
+
+## 2026-11-23 — AL kalitlarini umumiy to'plamga o'tkazish
+
+- AL API kalit kiritish bosqichi olib tashlandi.
+- `/al_yordamchi` provider/model tanlaydi, kalit esa `config.KEY_POOLS` dan olinadi.
+- Birinchi kalit ishlamasa, shu provider pool'dagi keyingi kalitlar ham sinab ko'riladi.
+- `user_ai_keys.get_assistant_config()` eski `key` maydonini qaytarmaydi; `save_assistant_config()` uni yozmaydi.
+- `/developer` → `Kalitlar` → `AI kalitlari` matnida AL Yordamchi ham shu pool'dan foydalanishi ko'rsatildi.

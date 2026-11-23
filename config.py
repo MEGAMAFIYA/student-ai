@@ -916,8 +916,10 @@ def _github_lock_delete(url: str, owner: str) -> None:
         return
     try:
         with httpx.Client(timeout=15.0) as client:
-            response = client.delete(
-                url, headers=_github_headers(),
+            # httpx.Client.delete() ayrim httpx versiyalarida json= parametrini
+            # qabul qilmaydi; request() esa DELETE body'ni qo'llab-quvvatlaydi.
+            response = client.request(
+                "DELETE", url, headers=_github_headers(),
                 json={"message": "chore: release bot runtime lock", "sha": sha, "branch": GITHUB_BRANCH},
             )
         if response.status_code not in (200, 204, 404):
