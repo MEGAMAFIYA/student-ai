@@ -3,6 +3,6 @@
   "al_yordamchi": {
     "provider": "gemini",
     "model": "gemini-2.5-flash",
-    "enabled": false
+    "enabled": true
   }
 }
