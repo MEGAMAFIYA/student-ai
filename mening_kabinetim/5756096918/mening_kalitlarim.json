@@ -6,6 +6,7 @@
     "enabled": true,
     "special_users": [
       8927782893
-    ]
+    ],
+    "audience_mode": "new"
   }
 }
