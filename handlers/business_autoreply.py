@@ -238,6 +238,15 @@ async def process_business_message(message, context):
         )
         return
 
+    # Faqat sof MATNLI xabarlar uchun eski avtomatik javob ishlaydi.
+    # Ovozli xabar, foto, video, hujjat va boshqa media uchun javob yuborilmaydi.
+    if not (getattr(message, "text", None) or "").strip():
+        logger.info(
+            "BUSINESS_AUTOREPLY_SKIP reason=NON_TEXT_MEDIA owner_id=%s chat_id=%s",
+            owner_id, chat.id,
+        )
+        return
+
     is_new_peer = business_storage.record_auto_reply_peer(owner_id, chat.id)
     settings = business_storage.get_auto_reply(owner_id)
     if not settings or not settings.get("text"):

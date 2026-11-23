@@ -56,7 +56,7 @@ import render_keepalive
 import game
 import chat_games
 import drawing_game
-from handlers import business_autoreply
+from handlers import business_autoreply, al_yordamchi
 from handlers import (
     menu, universal_chat, course_work, ai_image, translate as translate_handler, images_to_pdf,
     edit_pdf, guide, inline_query, developer, pptx_gen, essay, quiz, solve, summarize, managed_tests,
@@ -311,6 +311,11 @@ async def _on_business_message(update, context):
         message.chat.id,
         getattr(message, "date", None),
     )
+    # AL YORDAMCHI yoqilgan foydalanuvchida u eski statik auto-reply'dan
+    # ustun turadi. True qaytsa, update boshqa Business javobiga o'tmaydi.
+    handled_by_ai = await al_yordamchi.process_business_message(message, context)
+    if handled_by_ai:
+        return
     await business_autoreply.process_business_message(message, context)
 
 
@@ -1753,10 +1758,13 @@ def main():
     # Telegram Business Auto Reply — faqat Business akkaunt egasining bot bilan
     # shaxsiy chatida sozlanadi; javoblar incoming BUSINESS_MESSAGE update'da yuboriladi.
     app.add_handler(CommandHandler("bossiyons", business_autoreply.bossiyons_cmd, filters=filters.ChatType.PRIVATE), group=-4)
-    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, business_autoreply.receive_reply_text), group=-4)
+    app.add_handler(CommandHandler("al_yordamchi", al_yordamchi.al_yordamchi_cmd, filters=filters.ChatType.PRIVATE), group=-4)
+    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, al_yordamchi.receive_setup_text), group=-4)
     app.add_handler(CallbackQueryHandler(business_autoreply.choice_callback, pattern=r"^bar:"), group=-4)
+    app.add_handler(CallbackQueryHandler(al_yordamchi.callback, pattern=r"^al:"), group=-4)
+    app.add_handler(CommandHandler("cancel", al_yordamchi.cancel_cmd, filters=filters.ChatType.PRIVATE), group=-4)
     app.add_handler(CommandHandler("cancel", business_autoreply.cancel_cmd, filters=filters.ChatType.PRIVATE), group=-4)
-    business_logger.info("BUSINESS_AUTOREPLY_HANDLERS_REGISTERED group=-4 commands=bossiyons,cancel text=private callbacks=bar:*")
+    business_logger.info("BUSINESS_AUTOREPLY_HANDLERS_REGISTERED group=-4 commands=bossiyons,al_yordamchi,cancel text=private callbacks=bar:*,al:*")
     # ❌ Conversation tashqarisida ishlayotgan jarayonlar uchun ham (conversation fallback'lari bundan OLDIN tekshiriladi).
     app.add_handler(CallbackQueryHandler(menu.cancel_cb, pattern=r"^cancel:all$"))
     app.add_handler(CommandHandler("yoqish", menu.group_enable_cmd))

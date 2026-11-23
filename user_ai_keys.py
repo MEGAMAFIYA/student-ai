@@ -1,9 +1,11 @@
 """
 🔑 Foydalanuvchining SHAXSIY AI kalitlari.
 
-Format config.KEY_POOLS bilan BIR XIL: {"<provider>": [{"key","model"}, ...]}
-— shuning uchun ai_clients.py'dagi mavjud _dispatch()/provider mantig'ini
-qayta ishlatish mumkin (duplicate yo'q).
+Format:
+    {"<provider>": [{"key","model"}, ...], "al_yordamchi": {...}}
+Old format (faqat provider kalitlari) ham backward-compatible.
+`al_yordamchi` shu foydalanuvchining alohida AI yordamchi kaliti/modeli,
+xotira DB ulanishi va yordamchi sozlamalarini saqlaydi.
 
 FARQI: bular botning UMUMIY kalitlaridan (config.KEY_POOLS, /developer
 orqali boshqariladi) MUSTAQIL — har bir foydalanuvchi FAQAT o'zining
@@ -30,19 +32,51 @@ def _path(user_id: int) -> str:
     return f"{config.MENING_KABINETIM_DIR}/{user_id}/mening_kalitlarim.json"
 
 
-def get_pools(user_id: int) -> dict:
-    """{"<provider>": [{"key","model"}, ...]} — hech narsa bo'lmasa yoki
-    GitHub sozlanmagan bo'lsa bo'sh lug'at."""
+def _read_data(user_id: int) -> dict:
+    """Shaxsiy faylning yangi/eskirgan formatini yagona ko'rinishga keltiradi."""
     raw = config.github_read_text_file(_path(user_id))
     if not raw:
-        return {}
+        return {"keys": {}, "al_yordamchi": {}}
     try:
         data = json.loads(raw)
-        return data if isinstance(data, dict) else {}
     except Exception as e:
         logger.error(f"🔑 Foydalanuvchi kalitlarini o'qishda JSON xato (user_id={user_id}): {e}")
-        return {}
+        return {"keys": {}, "al_yordamchi": {}}
+    if not isinstance(data, dict):
+        return {"keys": {}, "al_yordamchi": {}}
+    if "keys" in data or "al_yordamchi" in data:
+        keys = data.get("keys", {})
+        assistant = data.get("al_yordamchi", {})
+        return {
+            "keys": keys if isinstance(keys, dict) else {},
+            "al_yordamchi": assistant if isinstance(assistant, dict) else {},
+        }
+    # Eski format: {"gemini": [...], "groq": [...]}
+    return {"keys": data, "al_yordamchi": {}}
 
+
+def get_pools(user_id: int) -> dict:
+    """{"<provider>": [{"key","model"}, ...]} — faqat oddiy shaxsiy AI kalitlari."""
+    return _read_data(user_id)["keys"]
+
+
+def get_assistant_config(user_id: int) -> dict:
+    """Foydalanuvchining /AL YORDAMCHI uchun maxsus sozlamalari."""
+    return dict(_read_data(user_id).get("al_yordamchi") or {})
+
+
+def save_assistant_config(user_id: int, values: dict) -> bool:
+    """AL YORDAMCHI konfiguratsiyasini mavjud shaxsiy kalitlarni buzmasdan saqlaydi."""
+    data = _read_data(user_id)
+    data["al_yordamchi"] = dict(values or {})
+    return _save_all(user_id, data, f"🤖 AL YORDAMCHI sozlamalari yangilandi: user_id={user_id}")
+
+
+def update_assistant_config(user_id: int, **updates) -> bool:
+    data = _read_data(user_id)
+    cfg = dict(data.get("al_yordamchi") or {})
+    cfg.update(updates)
+    return save_assistant_config(user_id, cfg)
 
 def get_text_pools(user_id: int) -> dict:
     """Faqat MATN AI provayderlari (config.SUPPORTED_PROVIDERS) kalitlari —
@@ -62,18 +96,19 @@ def has_any_keys(user_id: int) -> bool:
     return any(pool for pool in get_text_pools(user_id).values())
 
 
-def _save_pools(user_id: int, pools: dict, message: str) -> bool:
-    """GitHub'ga yozadi va MUVAFFAQIYAT/MUVAFFAQIYATSIZLIKNI qaytaradi —
-    chaqiruvchi funksiyalar (add_key/update_key_field/delete_key) shu
-    natijani albatta tekshirib, foydalanuvchiga FAQAT haqiqatda saqlangan
-    bo'lsa muvaffaqiyat xabarini ko'rsatishi kerak (qarang:
-    handlers/my_cabinet.py)."""
-    raw = json.dumps(pools, ensure_ascii=False, indent=2)
+def _save_all(user_id: int, data: dict, message: str) -> bool:
+    raw = json.dumps(data, ensure_ascii=False, indent=2)
     ok = config.github_write_text_file(_path(user_id), raw, message=message)
     if not ok:
         logger.error(f"🔑 Foydalanuvchi kalitlari GitHub'ga YOZILMADI (user_id={user_id}): {message}")
     return ok
 
+
+def _save_pools(user_id: int, pools: dict, message: str) -> bool:
+    """Oddiy shaxsiy kalitlarni saqlaydi va AL YORDAMCHI sozlamalarini asraydi."""
+    data = _read_data(user_id)
+    data["keys"] = pools
+    return _save_all(user_id, data, message)
 
 def add_key(user_id: int, provider: str, api_key: str, model: str) -> tuple[int, bool]:
     """Yangi kalitni MAVJUD to'plamga (boshqa provayderlar/kalitlar

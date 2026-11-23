@@ -117,6 +117,9 @@ def save_connection(business_connection) -> None:
             "connection_id": connection_id,
             "user_id": business_connection.user.id,
             "user_chat_id": getattr(business_connection, "user_chat_id", business_connection.user.id),
+            "first_name": getattr(business_connection.user, "first_name", "") or "",
+            "last_name": getattr(business_connection.user, "last_name", "") or "",
+            "username": getattr(business_connection.user, "username", "") or "",
             "is_enabled": bool(business_connection.is_enabled),
             "rights": _rights_to_dict(getattr(business_connection, "rights", None)),
             "updated_ts": time.time(),
@@ -237,6 +240,38 @@ def can_delete_sent_messages(entry: dict | None) -> bool:
     # xabar chatda qolib ketadi). Chaqiruvchi baribir har bir delete natijasini
     # alohida tekshiradi va DELETE_FAILED logini yozadi.
     return rights.get("can_delete_sent_messages") is not False
+
+
+def get_recent_business_peers(business_user_id: int, max_age_sec: int = 30 * 24 * 60 * 60) -> list[int]:
+    """Business akkauntga oldin yozgan peerlar ro'yxati.
+
+    `recent_peers` tarixiy storage sifatida emas, reply oynasini kuzatish uchun
+    yaratilgan. Shuning uchun bu ro'yxat faqat shu storage'da saqlanib qolgan
+    va ko'rsatilgan muddatdan oshmagan peerlarni qaytaradi.
+    """
+    uid = str(int(business_user_id))
+    peers = _data.get("recent_peers", {}).get(uid, {})
+    cutoff = time.time() - max_age_sec
+    out = []
+    for peer, seen in peers.items():
+        try:
+            if float(seen) >= cutoff:
+                out.append(int(peer))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def get_auto_reply_seen_peers(business_user_id: int, limit: int = 20000) -> list[int]:
+    """Old auto-reply tarixida ko'rilgan peerlar — yangi/eskini ajratishda yordam beradi."""
+    raw = _data.get("auto_reply_seen", {}).get(str(int(business_user_id)), [])
+    out = []
+    for peer in raw[-max(1, int(limit)):]:
+        try:
+            out.append(int(peer))
+        except (TypeError, ValueError):
+            continue
+    return out
 
 
 # --- Business Auto Reply -------------------------------------------------
