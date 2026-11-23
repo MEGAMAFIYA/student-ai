@@ -20,6 +20,8 @@ import re
 import threading
 import atexit
 import time
+import uuid
+from contextlib import contextmanager
 import httpx
 from dotenv import load_dotenv
 
@@ -867,6 +869,120 @@ def _github_contents_url(path: str) -> str:
     return f"https://api.github.com/repos/{GITHUB_REPO}/contents/{path}"
 
 
+# GitHub Contents API uchun jarayonlararo (distributed) lease-lock.
+# threading.RLock faqat bitta Python process ichida ishlaydi; Render deploy
+# overlapida eski va yangi process alohida bo'lgani uchun GitHub'dagi lock
+# fayli orqali barcha instance'lar o'zaro navbat kutadi.
+_GITHUB_LOCK_ROOT = ".bot_runtime_locks"
+
+def _github_lock_url(name: str) -> str:
+    safe = re.sub(r"[^a-zA-Z0-9_.-]+", "_", str(name))
+    return _github_contents_url(f"{_GITHUB_LOCK_ROOT}/{safe}.json")
+
+def _github_lock_read(url: str):
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            response = client.get(url, headers=_github_headers(), params={"ref": GITHUB_BRANCH})
+        if response.status_code == 404:
+            return None, None
+        response.raise_for_status()
+        item = response.json()
+        encoded = item.get("content", "")
+        payload = json.loads(base64.b64decode(encoded).decode("utf-8"))
+        return item.get("sha"), payload if isinstance(payload, dict) else {}
+    except Exception as exc:
+        logger.warning("GitHub distributed lock o'qilmadi: %s: %s", type(exc).__name__, exc)
+        return None, None
+
+def _github_lock_put(url: str, payload: dict, sha: str | None, message: str) -> bool:
+    body = {
+        "message": message,
+        "content": base64.b64encode(json.dumps(payload, separators=(",", ":")).encode("utf-8")).decode("ascii"),
+        "branch": GITHUB_BRANCH,
+    }
+    if sha:
+        body["sha"] = sha
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            response = client.put(url, headers=_github_headers(), json=body)
+        return response.status_code in (200, 201)
+    except Exception as exc:
+        logger.warning("GitHub distributed lock yozilmadi: %s: %s", type(exc).__name__, exc)
+        return False
+
+def _github_lock_delete(url: str, owner: str) -> None:
+    sha, payload = _github_lock_read(url)
+    if not sha or not payload or payload.get("owner") != owner:
+        return
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            response = client.delete(
+                url, headers=_github_headers(),
+                json={"message": "chore: release bot runtime lock", "sha": sha, "branch": GITHUB_BRANCH},
+            )
+        if response.status_code not in (200, 204, 404):
+            logger.warning("GitHub lock bo'shatilmadi: HTTP %s", response.status_code)
+    except Exception as exc:
+        logger.warning("GitHub lock bo'shatishda xato: %s: %s", type(exc).__name__, exc)
+
+def _github_lock_renew(url: str, owner: str, lease_seconds: int) -> bool:
+    sha, payload = _github_lock_read(url)
+    if not sha or not payload or payload.get("owner") != owner:
+        return False
+    payload["expires_at"] = time.time() + lease_seconds
+    return _github_lock_put(url, payload, sha, "chore: renew bot runtime lease")
+
+@contextmanager
+def github_distributed_lock(name: str, lease_seconds: int = 120, wait_timeout: int = 180, heartbeat: bool = False):
+    """GitHub'da CAS orqali distributed lock. Render'dagi bir nechta process/
+    deploy overlapida bir xil resursni faqat bitta instance ishlatishini ta'minlaydi.
+    GitHub sozlanmagan lokal muhitda lock talab qilinmaydi (True qaytariladi)."""
+    if not USE_GITHUB:
+        logger.warning("GITHUB_TOKEN/GITHUB_REPO yo'q: distributed lock o'chirilgan (%s)", name)
+        yield True
+        return
+
+    url = _github_lock_url(name)
+    owner = uuid.uuid4().hex
+    deadline = time.monotonic() + max(1, wait_timeout)
+    acquired = False
+    while time.monotonic() < deadline:
+        sha, current = _github_lock_read(url)
+        now = time.time()
+        if current is None:
+            candidate = {"owner": owner, "expires_at": now + lease_seconds, "created_at": now}
+            acquired = _github_lock_put(url, candidate, None, f"chore: acquire {name} runtime lock")
+        elif float(current.get("expires_at", 0) or 0) <= now:
+            candidate = {"owner": owner, "expires_at": now + lease_seconds, "created_at": now}
+            acquired = bool(sha) and _github_lock_put(url, candidate, sha, f"chore: take over expired {name} lock")
+        if acquired:
+            break
+        time.sleep(1.5)
+
+    if not acquired:
+        logger.error("GitHub distributed lock olinmadi: %s (wait_timeout=%ss)", name, wait_timeout)
+        yield False
+        return
+
+    stop_heartbeat = threading.Event()
+    heartbeat_thread = None
+    if heartbeat:
+        def _heartbeat_loop():
+            interval = max(10, lease_seconds // 3)
+            while not stop_heartbeat.wait(interval):
+                if not _github_lock_renew(url, owner, lease_seconds):
+                    logger.critical("Distributed lock lease yangilanmadi (%s); boshqa instance lockni olishi mumkin", name)
+        heartbeat_thread = threading.Thread(target=_heartbeat_loop, name=f"github-lock-{name}", daemon=True)
+        heartbeat_thread.start()
+    try:
+        yield True
+    finally:
+        stop_heartbeat.set()
+        if heartbeat_thread:
+            heartbeat_thread.join(timeout=3)
+        _github_lock_delete(url, owner)
+
+
 def _github_get_sha(url: str) -> str | None:
     """Contents API orqali faylning JORIY "sha" qiymatini o'qiydi (PUT
     qilishdan OLDIN chaqiriladi — mavjud faylni yangilash uchun GitHub
@@ -960,7 +1076,13 @@ def _github_put_content(path: str, content_bytes: bytes, message: str, max_attem
     with _GITHUB_WRITE_LOCKS_GUARD:
         lock = _GITHUB_WRITE_LOCKS.setdefault(path, threading.RLock())
     with lock:
-        return _github_put_content_unlocked(path, content_bytes, message, max_attempts)
+        # Global lock branch ref update'larining ham parallel ketishini oldini oladi;
+        # per-path thread lock esa shu processdagi read-modify-write tartibini saqlaydi.
+        with github_distributed_lock("github_contents_writes", lease_seconds=180, wait_timeout=240) as acquired:
+            if not acquired:
+                logger.error("GitHub write lock olinmadi; '%s' saqlanmadi", path)
+                return False
+            return _github_put_content_unlocked(path, content_bytes, message, max_attempts)
 
 
 def _github_read_file(filename: str) -> str | None:

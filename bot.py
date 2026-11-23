@@ -1904,20 +1904,32 @@ def main():
     # Conflict'ning o'zini hal qilmaydi. Agar boshqa instance doimiy ravishda
     # shu token bilan polling qilsa, retries tugagach xato ataylab ko'rinadi.
     try:
-        logger.info("BOT_POLLING_START allowed_updates=ALL_TYPES includes_business_connection_and_business_message")
-        app.run_polling(
-            drop_pending_updates=True,
-            bootstrap_retries=config.POLLING_BOOTSTRAP_RETRIES,
-            # Telegram Business ulanishi va shaxsiy Business xabarlari
-            # polling orqali ham aniq so'ralishi kerak.
-            allowed_updates=Update.ALL_TYPES,
-        )
+        # Render rolling deploy paytida eski process hali polling qilayotganida
+        # yangisi ham start olishi mumkin. GitHub lease-lock yangi processni
+        # eskisi to'liq to'xtab lockni bo'shatguncha kutdiradi. Lease heartbeat
+        # bilan yangilanadi; SIGTERM/graceful stop'da finally lock bo'shatiladi.
+        with config.github_distributed_lock(
+            "telegram_polling", lease_seconds=180, wait_timeout=600, heartbeat=True
+        ) as polling_lock_acquired:
+            if not polling_lock_acquired:
+                raise RuntimeError(
+                    "Telegram polling uchun yagona instance lock olinmadi. "
+                    "Eski instance to'xtaganini va GitHub ulanishini tekshiring."
+                )
+            logger.info("BOT_POLLING_LOCK_ACQUIRED; allowed_updates=ALL_TYPES")
+            app.run_polling(
+                drop_pending_updates=True,
+                bootstrap_retries=config.POLLING_BOOTSTRAP_RETRIES,
+                # Telegram Business ulanishi va shaxsiy Business xabarlari
+                # polling orqali ham aniq so'ralishi kerak.
+                allowed_updates=Update.ALL_TYPES,
+            )
     except telegram.error.Conflict as e:
         logger.critical(
-            "🚫 Telegram Conflict: boshqa bir jarayon HAM shu TELEGRAM_TOKEN bilan "
-            "getUpdates so'rovini yubormoqda — ikkita bot instansiyasi bir vaqtda "
-            "ishlab turibdi. Render dashboard'da duplicate servis/deploy yoki "
-            f"boshqa joyda ishlab turgan instansiyani tekshiring. Tafsilot: {e}"
+            "🚫 Telegram Conflict: distributed polling lock mavjud bo'lsa ham "
+            "getUpdates Conflict qaytdi. Bu shu token bilan ishlayotgan boshqa "
+            "tashqi server/process yoki webhook/polling aralashuvi bo'lishi mumkin. "
+            f"Tafsilot: {e}"
         )
         raise
 
