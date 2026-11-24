@@ -398,6 +398,97 @@ async def _task(user: dict, body: dict) -> dict:
     return {"reply": result}
 
 
+
+async def _assistant_plan(user: dict, body: dict) -> dict:
+    """AL Yordamchi: tabiiy tilni xavfsiz, ruxsat etilgan Android amaliga aylantiradi."""
+    import json as _jsonlib
+    import user_ai_keys
+    message = str(body.get("message") or body.get("text") or "").strip()[:4000]
+    if not message:
+        return {"action": "none", "reply": "Buyruqni yozing yoki ovoz bilan ayting."}
+    history = []
+    for item in (body.get("history") or [])[-10:]:
+        if isinstance(item, dict) and str(item.get("content") or "").strip():
+            history.append({"role": "assistant" if item.get("role") == "assistant" else "user", "content": str(item["content"])[:1500]})
+
+    assistant_cfg = user_ai_keys.get_assistant_config(user["id"])
+    db_dsn = str(assistant_cfg.get("db_dsn") or "").strip()
+    memory_context = ""
+    if db_dsn:
+        try:
+            import al_yordamchi_db
+            memories = await al_yordamchi_db.a_list_memories(db_dsn, user["id"], 30)
+            memory_lines = [str(m.get("memory") or "").strip() for m in memories if str(m.get("memory") or "").strip()]
+            if memory_lines:
+                memory_context = "\n\nFoydalanuvchining AL Yordamchi xotirasi:\n" + "\n".join("- " + x for x in memory_lines)[:5000]
+            stored = await al_yordamchi_db.a_get_history(db_dsn, user["id"], -1, 12)
+            if stored:
+                history = stored[-12:]
+        except Exception:
+            logger.warning("AL mobile xotirasini o'qib bo'lmadi: owner=%s", user["id"], exc_info=True)
+
+    system = (
+        "Siz Student AI ichidagi AL Yordamchisiz. O'zbek tilida ishlang. "
+        "Foydalanuvchi telefonida amaliy ish so'rasa, faqat quyidagi JSON formatida javob bering: "
+        '{"action":"none|set_alarm|create_calendar_event|create_reminder|open_app|make_call|find_contact|open_settings",'
+        '"reply":"foydalanuvchiga qisqa izoh","data":{...}}. ' 
+        "set_alarm data: hour (0-23 integer), minute (0-59 integer), label (string). "
+        "create_calendar_event data: title, date (YYYY-MM-DD), time (HH:MM), duration_minutes (integer, default 60), description. "
+        "create_reminder data: title, date (YYYY-MM-DD), time (HH:MM). "
+        "open_app data: app_name. make_call data: contact_name yoki phone. find_contact data: contact_name. "
+        "open_settings data: setting (wifi|bluetooth|sound|display|battery|location|general). "
+        "Agar sana yoki vaqt noaniq bo'lsa, action=none qilib bitta aniq savol bering. "
+        "Hech qachon bajarilgan deb yolg'on aytmang. Oddiy savol bo'lsa action=none va tabiiy javob bering. "
+        "Faqat JSON qaytaring, Markdown/fence qo'shmang. Bugungi sana vaqti: " +
+        __import__("datetime").datetime.now(__import__("zoneinfo").ZoneInfo("Asia/Tashkent")).strftime("%Y-%m-%d %H:%M")
+    ) + memory_context
+    prompt = "Foydalanuvchi buyrug'i: " + message
+    raw = None
+    key = config.get_al_user_key(user["id"])
+    if key.get("provider") and key.get("key") and key.get("model"):
+        try:
+            from ai_clients import _dispatch
+            raw, status, detail = await _dispatch(
+                str(key["provider"]), str(key["key"]), str(key["model"]), "",
+                prompt, system, history, "AL Yordamchi / mobile"
+            )
+            if not raw:
+                logger.warning("AL mobile shaxsiy AI kaliti ishlamadi: owner=%s status=%s", user["id"], status)
+        except Exception:
+            logger.exception("AL mobile shaxsiy AI so'rovi xatosi")
+    if not raw:
+        raw = await ask_ai(config.UNIVERSAL_CHAT_AI, prompt, system, history=history)
+    if not raw:
+        return {"action": "none", "reply": "AI hozir javob bera olmadi. Birozdan so'ng qayta urinib ko'ring."}
+
+    candidate = str(raw).strip()
+    if candidate.startswith("```"):
+        candidate = candidate.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    start, end = candidate.find("{"), candidate.rfind("}")
+    if start >= 0 and end > start:
+        candidate = candidate[start:end + 1]
+    try:
+        parsed = _jsonlib.loads(candidate)
+        if not isinstance(parsed, dict):
+            raise ValueError("JSON object required")
+        allowed = {"none", "set_alarm", "create_calendar_event", "create_reminder", "open_app", "make_call", "find_contact", "open_settings"}
+        action = str(parsed.get("action") or "none")
+        if action not in allowed:
+            action = "none"
+        data = parsed.get("data") if isinstance(parsed.get("data"), dict) else {}
+        reply = str(parsed.get("reply") or "")[:1000]
+        if db_dsn:
+            try:
+                import al_yordamchi_db
+                await al_yordamchi_db.a_append_history(db_dsn, user["id"], -1, "user", message)
+                await al_yordamchi_db.a_append_history(db_dsn, user["id"], -1, "assistant", reply or "Telefon amali rejalashtirildi.")
+            except Exception:
+                logger.warning("AL mobile xotirasiga yozib bo'lmadi: owner=%s", user["id"], exc_info=True)
+        return {"action": action, "data": data, "reply": reply}
+    except Exception:
+        # JSON formatni model bajarmagan bo'lsa, xavfsiz oddiy javob sifatida ko'rsatamiz.
+        return {"action": "none", "reply": str(raw)[:3000]}
+
 def _send_telegram_text(chat_id: int, text: str) -> tuple[str, str]:
     """Bot API'ga to'g'ridan-to'g'ri (sinxron) sendMessage yuboradi.
 
@@ -569,6 +660,10 @@ def handle_post(handler) -> bool:
         return True
     try:
         body = _read_json(handler)
+        if path == "/api/mobile/assistant/plan":
+            result = _run_async(_assistant_plan(user, body))
+            _json(handler, 200, result)
+            return True
         if path == "/api/mobile/chat":
             body["feature"] = "universal"
         if path == "/api/mobile/task" and str(body.get("feature", "")) in _LONG_FEATURES:

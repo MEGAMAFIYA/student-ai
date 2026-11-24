@@ -67,6 +67,29 @@ class CodeLoginApiTests(unittest.TestCase):
         self.assertEqual(captured["prompt"], "Salom")
         self.assertEqual(len(captured["history"]), 2)
 
+    def test_assistant_plan_uses_personal_al_key_and_returns_allowlisted_action(self):
+        import asyncio
+        async def fake_dispatch(provider, key, model, base_url, prompt, system, history, label):
+            self.assertEqual((provider, key, model), ("groq", "private-key", "test-model"))
+            self.assertIn("JSON", system)
+            return ('{"action":"set_alarm","reply":"Budilnikni sozlayman.","data":{"hour":7,"minute":0}}', "ok", "")
+        with mock.patch.object(self.api.config, "get_al_user_key", return_value={"provider":"groq", "key":"private-key", "model":"test-model"}), \
+             mock.patch("user_ai_keys.get_assistant_config", return_value={}), \
+             mock.patch("ai_clients._dispatch", fake_dispatch):
+            result = asyncio.run(self.api._assistant_plan({"id": 4242}, {"message":"Soat 7:00 ga budilnik qo'y"}))
+        self.assertEqual(result["action"], "set_alarm")
+        self.assertEqual(result["data"]["hour"], 7)
+
+    def test_assistant_plan_rejects_unknown_action(self):
+        import asyncio
+        async def fake_ask(cfg, prompt, system, allow_fallback=True, history=None):
+            return '{"action":"delete_all_files","reply":"No"}'
+        with mock.patch.object(self.api.config, "get_al_user_key", return_value={}), \
+             mock.patch("user_ai_keys.get_assistant_config", return_value={}), \
+             mock.patch.object(self.api, "ask_ai", fake_ask):
+            result = asyncio.run(self.api._assistant_plan({"id": 7}, {"message":"Fayllarni o'chir"}))
+        self.assertEqual(result["action"], "none")
+
     def test_course_work_runs_as_job(self):
         import time as _t
         with mobile_auth._connection() as c:

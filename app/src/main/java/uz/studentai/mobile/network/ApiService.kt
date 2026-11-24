@@ -1,6 +1,7 @@
 package uz.studentai.mobile.network
 
 import retrofit2.Response
+import com.google.gson.JsonObject
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
@@ -39,6 +40,12 @@ data class TelegramCodeSentResponse(val sent: Boolean = false, val expires_in: I
 data class ChatMessageDto(val role: String, val content: String)
 data class ChatRequest(val message: String, val history: List<ChatMessageDto> = emptyList())
 data class ChatResponse(val reply: String? = null, val error: String? = null)
+data class AssistantPlanRequest(val message: String, val history: List<ChatMessageDto> = emptyList())
+data class AssistantPlanResponse(
+    val action: String = "none",
+    val reply: String = "",
+    val data: JsonObject = JsonObject(),
+)
 
 // ---- Quiz ----
 data class QuizStartRequest(val n: Int? = null, val pro: Boolean = false, val jas: Boolean = false)
@@ -118,6 +125,9 @@ interface ApiService {
 
     @POST("api/mobile/chat")
     suspend fun chat(@Body body: ChatRequest): Response<ChatResponse>
+
+    @POST("api/mobile/assistant/plan")
+    suspend fun assistantPlan(@Body body: AssistantPlanRequest): Response<AssistantPlanResponse>
 
     @POST("api/mobile/quiz/start")
     suspend fun quizStart(@Body body: QuizStartRequest): Response<QuizQuestionResponse>
