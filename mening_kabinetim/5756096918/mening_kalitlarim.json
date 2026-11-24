@@ -12,6 +12,8 @@
       8265468282,
       8927782893,
       8409708335
-    ]
+    ],
+    "db_dsn": "postgresql://neondb_owner:npg_NsSo5IlLcmt4@ep-ancient-bread-be993qkq-pooler.c-9.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require",
+    "db_provider": "postgresql"
   }
 }
