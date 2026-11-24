@@ -7,22 +7,19 @@ import android.os.Bundle
 import android.speech.RecognizerIntent
 import android.speech.tts.TextToSpeech
 import android.view.View
+import android.util.Log
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import uz.studentai.mobile.R
 import uz.studentai.mobile.assistant.AssistantDeviceActions
 import uz.studentai.mobile.databinding.ActivityChatBinding
-import uz.studentai.mobile.local.LocalLlamaEngine
 import uz.studentai.mobile.network.ApiClient
 import uz.studentai.mobile.network.AssistantPlanRequest
 import uz.studentai.mobile.network.ChatMessageDto
-import uz.studentai.mobile.network.ChatRequest
 import uz.studentai.mobile.util.SessionManager
 import java.util.Locale
 
@@ -38,6 +35,13 @@ class ChatActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         super.onCreate(savedInstanceState)
         binding = ActivityChatBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        if (!intent.getBooleanExtra(EXTRA_AL_MODE, false)) {
+            Log.e(TAG, "AL chat activity opened without AL mode; refusing other AI routes")
+            finish()
+            return
+        }
+        getSharedPreferences("al_assistant_mode", MODE_PRIVATE).edit().putBoolean("active", true).apply()
+        Log.i(TAG, "AL mode entered; universal chat routing disabled in this screen")
         binding.toolbar.title = "AL Yordamchi"
         binding.toolbar.setNavigationOnClickListener { finish() }
         adapter = ChatAdapter(messages)
@@ -63,9 +67,11 @@ class ChatActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         lifecycleScope.launch {
             try {
                 val api = ApiClient.get(this@ChatActivity)
+                Log.i(TAG, "request_started chars=${text.length} history=${history.size}")
                 val response = api.assistantPlan(AssistantPlanRequest(text, history))
                 if (response.isSuccessful && response.body() != null) {
                     val plan = response.body()!!
+                    Log.i(TAG, "assistant_plan_received action=${plan.action}")
                     if (plan.action == "none") {
                         addAssistantMessage(plan.reply.ifBlank { "Tushundim." }, speak = true)
                     } else {
@@ -77,26 +83,13 @@ class ChatActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 } else if (response.code() == 401) {
                     handleUnauthorized()
                 } else {
-                    // Backward compatibility with servers that have not yet deployed the AL endpoint.
-                    val fallback = api.chat(ChatRequest(message = text, history = history))
-                    addAssistantMessage(fallback.body()?.reply ?: getString(R.string.error_network), speak = true)
+                    val error = "AL Yordamchi serveri xato qaytardi: HTTP ${response.code()} ${response.errorBody()?.string()?.take(300).orEmpty()}"
+                    Log.e(TAG, error)
+                    addAssistantMessage(error)
                 }
             } catch (e: Exception) {
-                // If the online assistant is unavailable, retain the existing on-device model path.
-                try {
-                    val localModel = LocalLlamaEngine.selectedModel(this@ChatActivity)
-                    if (localModel != null) {
-                        val context = messages.dropLast(1).takeLast(8).joinToString("\n") {
-                            if (it.role == "assistant") "Yordamchi: ${it.text}" else "Foydalanuvchi: ${it.text}"
-                        }
-                        val reply = withContext(Dispatchers.IO) {
-                            LocalLlamaEngine.generate(this@ChatActivity, listOf(context, "Foydalanuvchi: $text").filter { it.isNotBlank() }.joinToString("\n"))
-                        }
-                        addAssistantMessage("(Lokal AI) $reply", speak = true)
-                    } else addAssistantMessage("Aloqa xatosi: ${e.localizedMessage ?: getString(R.string.error_network)}")
-                } catch (localError: Exception) {
-                    addAssistantMessage("AI bilan bog‘lanib bo‘lmadi. Internet va server holatini tekshiring.")
-                }
+                Log.e(TAG, "AL request failed; no fallback AI will be used", e)
+                addAssistantMessage("AL Yordamchi bilan aloqa xatosi: ${e.localizedMessage ?: getString(R.string.error_network)}. Boshqa AI avtomatik ishga tushirilmadi.")
             } finally {
                 binding.typingProgress.visibility = View.GONE
                 binding.sendButton.isEnabled = true
@@ -150,8 +143,14 @@ class ChatActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     override fun onDestroy() {
         tts?.stop()
         tts?.shutdown()
+        getSharedPreferences("al_assistant_mode", MODE_PRIVATE).edit().putBoolean("active", false).apply()
+        Log.i(TAG, "AL mode exited")
         super.onDestroy()
     }
 
-    companion object { private const val REQUEST_SPEECH = 7412 }
+    companion object {
+        const val EXTRA_AL_MODE = "extra_al_mode"
+        private const val REQUEST_SPEECH = 7412
+        private const val TAG = "AL_YORDAMCHI"
+    }
 }

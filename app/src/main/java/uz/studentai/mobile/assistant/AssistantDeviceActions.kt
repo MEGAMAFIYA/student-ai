@@ -14,6 +14,7 @@ import android.provider.Settings
 import android.content.pm.PackageManager
 import android.os.Build
 import android.widget.Toast
+import android.util.Log
 import androidx.appcompat.app.AlertDialog
 import com.google.gson.JsonObject
 import uz.studentai.mobile.assistant.ReminderReceiver
@@ -24,22 +25,32 @@ import java.util.TimeZone
 
 /** Executes only the allow-listed Android actions returned by the authenticated backend. */
 object AssistantDeviceActions {
+    private const val TAG = "AL_YORDAMCHI_ACTION"
     fun execute(context: Context, action: String, data: JsonObject, reply: String, onResult: (String) -> Unit) {
+        Log.i(TAG, "action_requested=$action")
+        val finish: (String) -> Unit = { result ->
+            val failed = result.startsWith("Amalni bajarishda xatolik") || result.startsWith("Bu amal uchun ruxsat") ||
+                result.contains("topilmadi", ignoreCase = true) || result.contains("topa olmadim", ignoreCase = true)
+            Log.i(TAG, "action_finished=$action status=${if (failed) "failed" else "reported"} result_chars=${result.length}")
+            onResult(result)
+        }
         try {
             when (action) {
-                "set_alarm" -> setAlarm(context, data, onResult)
-                "create_calendar_event" -> createCalendarEvent(context, data, onResult)
-                "create_reminder" -> createReminder(context, data, onResult)
-                "open_app" -> openApp(context, data, onResult)
-                "open_settings" -> openSettings(context, data, onResult)
-                "find_contact" -> findContact(context, data, onResult)
-                "make_call" -> makeCall(context, data, onResult)
-                else -> onResult(reply.ifBlank { "Sizga qanday yordam bera olaman?" })
+                "set_alarm" -> setAlarm(context, data, finish)
+                "create_calendar_event" -> createCalendarEvent(context, data, finish)
+                "create_reminder" -> createReminder(context, data, finish)
+                "open_app" -> openApp(context, data, finish)
+                "open_settings" -> openSettings(context, data, finish)
+                "find_contact" -> findContact(context, data, finish)
+                "make_call" -> makeCall(context, data, finish)
+                else -> finish(reply.ifBlank { "Sizga qanday yordam bera olaman?" })
             }
         } catch (e: SecurityException) {
-            onResult("Bu amal uchun ruxsat kerak. Student AI sozlamalaridan tegishli ruxsatni yoqing.")
+            Log.e(TAG, "action_failed=$action reason=permission", e)
+            finish("Bu amal uchun ruxsat kerak. Student AI sozlamalaridan tegishli ruxsatni yoqing.")
         } catch (e: Exception) {
-            onResult("Amalni bajarishda xatolik: ${e.localizedMessage ?: "noma'lum xato"}")
+            Log.e(TAG, "action_failed=$action reason=${e.javaClass.simpleName}", e)
+            finish("Amalni bajarishda xatolik: ${e.localizedMessage ?: "noma'lum xato"}")
         }
     }
 

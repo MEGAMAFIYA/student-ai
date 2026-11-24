@@ -25,7 +25,7 @@
     <string name="home_logout">Chiqish</string>
 
     <string name="student_menu_title">STUDENT — funksiyalar</string>
-    <string name="student_universal_chat">\uD83E\uDD16 AL YORDAMCHI</string>
+    <string name="student_al_assistant">\uD83E\uDD16 AL YORDAMCHI</string>
     <string name="student_quiz">\uD83D\uDCCB Test/Viktorina</string>
 
     <string name="coming_soon_title">Tez orada</string>

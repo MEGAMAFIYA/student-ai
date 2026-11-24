@@ -9,7 +9,7 @@ package uz.studentai.mobile.ui
 data class StudentMenuItem(val key: String, val label: String, val implemented: Boolean)
 
 val STUDENT_MENU_ITEMS = listOf(
-    StudentMenuItem("universal", "\uD83D\uDCAC UNIVERSAL CHAT", true),
+    StudentMenuItem("al_assistant", "\uD83E\uDD16 AL YORDAMCHI", true),
     StudentMenuItem("course_work", "\uD83D\uDCD8 Kurs ishi / loyiha", true),
     StudentMenuItem("essay", "\uD83D\uDDD2 Referat/Insho", true),
     StudentMenuItem("translate", "\uD83C\uDF10 Tarjima qilish", true),

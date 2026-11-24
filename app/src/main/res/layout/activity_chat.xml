@@ -11,7 +11,7 @@
         android:layout_width="match_parent"
         android:layout_height="?attr/actionBarSize"
         android:background="@color/brand_primary"
-        android:title="@string/student_universal_chat"
+        android:title="@string/student_al_assistant"
         app:titleTextColor="@color/white"
         app:navigationIcon="@android:drawable/ic_menu_close_clear_cancel" />
 

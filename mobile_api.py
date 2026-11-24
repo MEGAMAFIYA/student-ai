@@ -413,6 +413,35 @@ async def _assistant_plan(user: dict, body: dict) -> dict:
 
     assistant_cfg = user_ai_keys.get_assistant_config(user["id"])
     db_dsn = str(assistant_cfg.get("db_dsn") or "").strip()
+    logger.info("AL mobile request started: owner=%s chars=%s history=%s", user["id"], len(message), len(history))
+
+    # Explicit memory command: persist only the text the user asked us to remember.
+    import re as _re
+    remember_match = _re.match(r"(?is)^\s*(?:iltimos[, ]*)?eslab\s+qol\s*[:,-]?\s*(.+)$", message)
+    if remember_match:
+        memory_text = remember_match.group(1).strip().strip(' .!\"')[:2000]
+    else:
+        remember_match = _re.match(r"(?is)^(.+?)\s+(?:ni\s+)?eslab\s+qol[.! ]*$", message)
+        memory_text = remember_match.group(1).strip().strip(' .!\"') if remember_match else ""
+    if remember_match:
+        memory_text = memory_text[:2000]
+        if not memory_text:
+            return {"action": "none", "reply": "Nimani eslab qolishim kerak? Matnni ‘Eslab qol: ...’ shaklida yuboring.", "memory_saved": False}
+        if not db_dsn:
+            logger.error("AL mobile memory save failed: owner=%s reason=no_personal_database", user["id"])
+            return {"action": "none", "reply": "Xotiraga saqlanmadi: AL Yordamchi uchun shaxsiy xotira bazasi ulanmagan. Sozlamalarda PostgreSQL xotira ulanishini sozlang.", "memory_saved": False, "error": "memory_database_not_configured"}
+        try:
+            import al_yordamchi_db
+            ok, detail = await al_yordamchi_db.a_test_connection(db_dsn)
+            if not ok:
+                raise RuntimeError(detail)
+            await al_yordamchi_db.a_add_memory(db_dsn, user["id"], memory_text, "mobile")
+            logger.info("AL mobile memory saved: owner=%s chars=%s", user["id"], len(memory_text))
+            return {"action": "none", "reply": "Eslab qoldim. Bu ma’lumot AL Yordamchi xotirasiga saqlandi va keyingi suhbatlarda foydalanaman.", "memory_saved": True}
+        except Exception as exc:
+            logger.exception("AL mobile memory save failed: owner=%s", user["id"])
+            return {"action": "none", "reply": f"Xotiraga saqlash amalga oshmadi: {type(exc).__name__}: {str(exc)[:220]}", "memory_saved": False, "error": "memory_save_failed"}
+
     memory_context = ""
     if db_dsn:
         try:
@@ -457,9 +486,8 @@ async def _assistant_plan(user: dict, body: dict) -> dict:
         except Exception:
             logger.exception("AL mobile shaxsiy AI so'rovi xatosi")
     if not raw:
-        raw = await ask_ai(config.UNIVERSAL_CHAT_AI, prompt, system, history=history)
-    if not raw:
-        return {"action": "none", "reply": "AI hozir javob bera olmadi. Birozdan so'ng qayta urinib ko'ring."}
+        logger.error("AL mobile AI unavailable: owner=%s; no universal/local fallback invoked", user["id"])
+        return {"action": "none", "reply": "AL Yordamchi AI javob bera olmadi. AL Yordamchi uchun AI provayderi va API kalitini tekshiring. Boshqa universal AI avtomatik ishga tushirilmadi.", "error": "assistant_ai_unavailable"}
 
     candidate = str(raw).strip()
     if candidate.startswith("```"):
@@ -484,8 +512,10 @@ async def _assistant_plan(user: dict, body: dict) -> dict:
                 await al_yordamchi_db.a_append_history(db_dsn, user["id"], -1, "assistant", reply or "Telefon amali rejalashtirildi.")
             except Exception:
                 logger.warning("AL mobile xotirasiga yozib bo'lmadi: owner=%s", user["id"], exc_info=True)
+        logger.info("AL mobile plan parsed: owner=%s action=%s", user["id"], action)
         return {"action": action, "data": data, "reply": reply}
     except Exception:
+        logger.exception("AL mobile AI response parse failed: owner=%s", user["id"])
         # JSON formatni model bajarmagan bo'lsa, xavfsiz oddiy javob sifatida ko'rsatamiz.
         return {"action": "none", "reply": str(raw)[:3000]}
 

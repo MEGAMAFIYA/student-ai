@@ -17,7 +17,7 @@ class StudentMenuActivity : AppCompatActivity() {
         binding.menuList.layoutManager = LinearLayoutManager(this)
         binding.menuList.adapter = StudentMenuAdapter(STUDENT_MENU_ITEMS) { item ->
             when (item.key) {
-                "universal" -> startActivity(Intent(this, ChatActivity::class.java))
+                "al_assistant" -> startActivity(Intent(this, ChatActivity::class.java).putExtra(ChatActivity.EXTRA_AL_MODE, true))
                 "quiz" -> startActivity(Intent(this, QuizSetupActivity::class.java))
                 "translate" -> openSimpleTool(SimpleToolKind.TRANSLATE)
                 "grammar" -> openSimpleTool(SimpleToolKind.GRAMMAR)
