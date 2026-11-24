@@ -105,6 +105,26 @@ try:
     _business_logger.propagate = True
     _business_logger.info("BUSINESS_AUTOREPLY_LOGGER_READY file=%s",
                           _business_log_handler.baseFilename)
+
+    _al_logger = logging.getLogger("al_yordamchi")
+    _al_logger.setLevel(logging.INFO)
+    _al_log_handler = RotatingFileHandler(
+        os.getenv("AL_YORDAMCHI_LOG_FILE", "logs/al_yordamchi.log"),
+        maxBytes=5 * 1024 * 1024,
+        backupCount=5,
+        encoding="utf-8",
+    )
+    _al_log_handler.setFormatter(logging.Formatter(
+        "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+    ))
+    if not any(
+        isinstance(h, RotatingFileHandler)
+        and getattr(h, "baseFilename", "").endswith("al_yordamchi.log")
+        for h in _al_logger.handlers
+    ):
+        _al_logger.addHandler(_al_log_handler)
+    _al_logger.propagate = True
+    _al_logger.info("AL_YORDAMCHI_LOGGER_READY file=%s", _al_log_handler.baseFilename)
 except Exception:
     logger.exception("BUSINESS_AUTOREPLY_FILE_LOGGER_INIT_FAILED; stdout logging remains active")
 
@@ -407,6 +427,18 @@ async def _clear_pending_on_other_command(update, context):
     if not update.message or not update.effective_chat or not update.effective_user:
         return
     pending_input.clear_pending(update.effective_chat.id, update.effective_user.id)
+
+
+async def _al_private_text_router(update, context):
+    """AL setup yoki AL private chat xabarini boshqa AI handlerlariga o'tkazmaydi."""
+    handled = await al_yordamchi.receive_setup_text(update, context)
+    if handled:
+        logger.info(
+            "AL_SETUP_INPUT_CONSUMED update_id=%s user_id=%s; downstream_handlers=STOPPED",
+            getattr(update, "update_id", None),
+            getattr(getattr(update, "effective_user", None), "id", None),
+        )
+        raise ApplicationHandlerStop
 
 
 async def _error_handler(update, context):
@@ -1759,12 +1791,13 @@ def main():
     # shaxsiy chatida sozlanadi; javoblar incoming BUSINESS_MESSAGE update'da yuboriladi.
     app.add_handler(CommandHandler("bossiyons", business_autoreply.bossiyons_cmd, filters=filters.ChatType.PRIVATE), group=-4)
     app.add_handler(CommandHandler("al_yordamchi", al_yordamchi.al_yordamchi_cmd, filters=filters.ChatType.PRIVATE), group=-4)
-    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, al_yordamchi.receive_setup_text), group=-4)
+    app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, _al_private_text_router), group=-4)
     app.add_handler(CallbackQueryHandler(business_autoreply.choice_callback, pattern=r"^bar:"), group=-4)
     app.add_handler(CallbackQueryHandler(al_yordamchi.callback, pattern=r"^al:"), group=-4)
     app.add_handler(CommandHandler("cancel", al_yordamchi.cancel_cmd, filters=filters.ChatType.PRIVATE), group=-4)
     app.add_handler(CommandHandler("cancel", business_autoreply.cancel_cmd, filters=filters.ChatType.PRIVATE), group=-4)
     business_logger.info("BUSINESS_AUTOREPLY_HANDLERS_REGISTERED group=-4 commands=bossiyons,al_yordamchi,cancel text=private callbacks=bar:*,al:*")
+    logger.info("AL_ROUTER_REGISTERED group=-4 priority=before_conversations_and_universal_chat private_text_handler=_al_private_text_router stop_mode=ApplicationHandlerStop")
     # ❌ Conversation tashqarisida ishlayotgan jarayonlar uchun ham (conversation fallback'lari bundan OLDIN tekshiriladi).
     app.add_handler(CallbackQueryHandler(menu.cancel_cb, pattern=r"^cancel:all$"))
     app.add_handler(CommandHandler("yoqish", menu.group_enable_cmd))

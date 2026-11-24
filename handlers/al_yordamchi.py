@@ -19,6 +19,7 @@ from html import escape
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
+from telegram.ext import ApplicationHandlerStop
 
 import ai_clients
 import al_yordamchi_db
@@ -151,7 +152,9 @@ async def al_yordamchi_cmd(update, context):
     user = update.effective_user
     message = update.effective_message
     if not user or not message or message.chat.type != "private":
+        logger.warning("AL_COMMAND_IGNORED reason=NOT_PRIVATE_OR_MISSING_USER update_id=%s", getattr(update, "update_id", None))
         return
+    logger.info("AL_COMMAND_RECEIVED update_id=%s user_id=%s chat_id=%s", getattr(update, "update_id", None), user.id, message.chat.id)
     entry = business_storage.get_connection_for_user(user.id)
     usable, reason = business_storage.is_connection_usable(entry)
     if not usable:
@@ -175,6 +178,7 @@ async def callback(update, context):
         return
     user_id = q.from_user.id
     data = q.data or ""
+    logger.info("AL_CALLBACK_RECEIVED update_id=%s user_id=%s callback=%s", getattr(update, "update_id", None), user_id, data.split(":", 2)[0] if data else "empty")
     try:
         await q.answer()
     except Exception as exc:
@@ -399,20 +403,48 @@ async def callback(update, context):
 
 
 async def receive_setup_text(update, context):
+    """Private text router: setup -> business autoreply draft -> AL chat -> fallback.
+
+    AL faol bo'lsa ApplicationHandlerStop bilan keyingi barcha guruhlarni,
+    ayniqsa Universal Chat va eski ConversationHandler'larni to'xtatadi.
+    """
     state = context.user_data.get(_WAIT_KEY)
+    message = update.effective_message
+    user = update.effective_user
     if not state:
-        # Bir xil handler group ichida PTB faqat birinchi mos MessageHandler'ni
-        # ishlatadi. Shuning uchun AL YORDAMCHI handleri oddiy holatda eski
-        # /bossiyons matn kutish oqimini o'ziga delegatsiya qiladi.
         from handlers import business_autoreply
+        # /bossiyons matn kiritish jarayoni AL chatidan ham ustun turadi.
+        if context.user_data.get("business_auto_reply_waiting_text"):
+            logger.info("AL_ROUTE_SETUP_DELEGATE update_id=%s user_id=%s target=business_autoreply reason=PENDING_DRAFT", getattr(update, "update_id", None), getattr(user, "id", None))
+            await business_autoreply.receive_reply_text(update, context)
+            raise ApplicationHandlerStop
+
+        if user and message and message.chat.type == "private":
+            cfg = user_ai_keys.get_assistant_config(user.id)
+            if cfg.get("enabled"):
+                logger.info("AL_ROUTE_SELECTED update_id=%s user_id=%s chat_id=%s target=al_private reason=ASSISTANT_ENABLED", getattr(update, "update_id", None), user.id, message.chat.id)
+                try:
+                    await process_private_message(update, context)
+                except Exception:
+                    logger.exception("AL_PRIVATE_ROUTER_UNHANDLED_ERROR update_id=%s user_id=%s", getattr(update, "update_id", None), user.id)
+                    try:
+                        await message.reply_text("❌ AL Yordamchi ichki xatoga uchradi. Boshqa AI'ga yuborilmadi; tafsilot logda saqlandi.")
+                    except Exception:
+                        logger.exception("AL_PRIVATE_ROUTER_ERROR_NOTICE_FAILED update_id=%s user_id=%s", getattr(update, "update_id", None), user.id)
+                raise ApplicationHandlerStop
+
+        # Bir xil handler group ichida PTB faqat birinchi mos MessageHandler'ni
+        # ishlatadi. AL sozlash kutmayotgan paytda /bossiyons oqimiga delegatsiya.
+        logger.debug("AL_ROUTE_PASSTHROUGH update_id=%s user_id=%s reason=AL_DISABLED_NO_SETUP", getattr(update, "update_id", None), getattr(user, "id", None))
         await business_autoreply.receive_reply_text(update, context)
-        return True
+        return False
     message = update.effective_message
     user = update.effective_user
     if not message or not user or message.chat.type != "private" or not message.text:
         return False
     text = message.text.strip()
     stage = state.get("stage")
+    logger.info("AL_SETUP_INPUT_RECEIVED update_id=%s user_id=%s stage=%s text_length=%s", getattr(update, "update_id", None), user.id, stage, len(text))
 
     if stage == "api_key":
         provider = state.get("provider")
@@ -580,6 +612,92 @@ async def _dispatch_with_personal_key(owner_id, provider, model, prompt, system,
         provider, key, model, "", prompt, system, history, label
     )
 
+async def process_private_message(update, context) -> bool:
+    """AL egasining shaxsiy chatidagi matnlarni faqat AL shaxsiy kaliti bilan bajaradi."""
+    message = update.effective_message
+    user = update.effective_user
+    if not message or not user or not message.text:
+        logger.warning("AL_PRIVATE_SKIP update_id=%s reason=MISSING_TEXT_OR_USER", getattr(update, "update_id", None))
+        return True
+
+    cfg = user_ai_keys.get_assistant_config(user.id)
+    if not cfg.get("enabled"):
+        return False
+
+    provider = cfg.get("provider")
+    model = cfg.get("model")
+    request_id = getattr(update, "update_id", None)
+    started = asyncio.get_running_loop().time()
+    logger.info("AL_PRIVATE_REQUEST_START request_id=%s owner=%s chat=%s provider=%s model=%s text_length=%s", request_id, user.id, message.chat.id, provider or "missing", model or "missing", len(message.text))
+
+    key = _personal_key(user.id, provider) if provider else ""
+    if not provider or not model or not key:
+        reason = "provider/model/key sozlamasi to'liq emas"
+        logger.error("AL_PRIVATE_CONFIG_INVALID request_id=%s owner=%s provider=%s model=%s has_key=%s", request_id, user.id, provider, model, bool(key))
+        await message.reply_text("❌ AL Yordamchi sozlamasi to‘liq emas. /al_yordamchi buyrug‘ini ochib AI provayderi, kalit va modelni tekshiring.")
+        return True
+
+    db_dsn = cfg.get("db_dsn")
+    memories, history = [], []
+    if db_dsn:
+        try:
+            memories = await al_yordamchi_db.a_list_memories(db_dsn, user.id, 40)
+            history = await al_yordamchi_db.a_get_history(db_dsn, user.id, user.id, 16)
+            logger.info("AL_PRIVATE_CONTEXT_LOADED request_id=%s owner=%s memories=%s history_messages=%s", request_id, user.id, len(memories), len(history))
+        except Exception:
+            logger.exception("AL_PRIVATE_CONTEXT_LOAD_FAILED request_id=%s owner=%s; AI will continue without stored context", request_id, user.id)
+            memories, history = [], []
+
+    memory_text = "\n".join(f"- {m.get('memory', '')}" for m in memories if m.get("memory")) or "- Hozircha saqlangan xotira yo'q."
+    system = (
+        "Siz foydalanuvchining AL YORDAMCHI nomli shaxsiy AI yordamchisisiz. "
+        "Foydalanuvchiga o'zbek tilida tabiiy, aniq va foydali javob bering. "
+        "Oldingi suhbat va xotiradan foydalaning. Barqaror, kelajakda foydali faktni "
+        "aniqlasangiz javob oxirida XOTIRA: va alohida punktlar bilan qaytaring; "
+        "bu blok foydalanuvchiga yuborilmaydi. Saqlashga arzigulik fakt bo'lmasa XOTIRA: yo'q deb yozing.\n\n"
+        "FOYDALANUVCHI XOTIRASI:\n" + memory_text
+    )
+
+    try:
+        raw, status, detail = await _dispatch_with_personal_key(
+            user.id, provider, model, message.text.strip(), system, history, "AL YORDAMCHI private"
+        )
+        if not raw:
+            logger.error("AL_PRIVATE_AI_FAILED request_id=%s owner=%s provider=%s model=%s status=%s detail=%s", request_id, user.id, provider, model, status, detail)
+            await message.reply_text("❌ AL Yordamchi AI javobini ololmadi. Xatolik logga yozildi; birozdan so‘ng qayta urinib ko‘ring.")
+            return True
+
+        reply, memories_to_save = _extract_reply_and_memories(raw)
+        if not reply:
+            logger.error("AL_PRIVATE_EMPTY_REPLY request_id=%s owner=%s provider=%s model=%s", request_id, user.id, provider, model)
+            await message.reply_text("❌ AL Yordamchi bo‘sh javob qaytardi. Qayta urinib ko‘ring.")
+            return True
+
+        sent = await message.reply_text(reply[:4096])
+        if db_dsn:
+            try:
+                await al_yordamchi_db.a_append_history(db_dsn, user.id, user.id, "user", message.text.strip())
+                await al_yordamchi_db.a_append_history(db_dsn, user.id, user.id, "assistant", reply)
+                for memory in memories_to_save:
+                    await al_yordamchi_db.a_add_memory(db_dsn, user.id, memory)
+                logger.info("AL_PRIVATE_CONTEXT_SAVED request_id=%s owner=%s history_saved=true memories_saved=%s", request_id, user.id, len(memories_to_save))
+            except Exception:
+                logger.exception("AL_PRIVATE_CONTEXT_SAVE_FAILED request_id=%s owner=%s", request_id, user.id)
+        elif memories_to_save:
+            logger.warning("AL_PRIVATE_MEMORY_NOT_SAVED request_id=%s owner=%s reason=DATABASE_NOT_CONFIGURED extracted=%s", request_id, user.id, len(memories_to_save))
+
+        elapsed_ms = int((asyncio.get_running_loop().time() - started) * 1000)
+        logger.info("AL_PRIVATE_REPLY_OK request_id=%s owner=%s chat=%s message_id=%s provider=%s model=%s elapsed_ms=%s memory_candidates=%s", request_id, user.id, message.chat.id, getattr(sent, "message_id", None), provider, model, elapsed_ms, len(memories_to_save))
+    except Exception:
+        elapsed_ms = int((asyncio.get_running_loop().time() - started) * 1000)
+        logger.exception("AL_PRIVATE_REQUEST_CRASH request_id=%s owner=%s provider=%s model=%s elapsed_ms=%s", request_id, user.id, provider, model, elapsed_ms)
+        try:
+            await message.reply_text("❌ AL Yordamchida ichki xatolik yuz berdi. Tafsilot Render logida request_id orqali topiladi.")
+        except Exception:
+            logger.exception("AL_PRIVATE_ERROR_NOTICE_FAILED request_id=%s owner=%s", request_id, user.id)
+    return True
+
+
 async def process_business_message(message, context) -> bool:
     """AI yordamchi ustuvor bo'lsa True; aks holda eski auto-reply ishlashi uchun False."""
     if not message or not message.business_connection_id or not message.chat:
@@ -589,6 +707,7 @@ async def process_business_message(message, context) -> bool:
 
     owner_id = business_storage.get_user_id_for_connection(message.business_connection_id)
     if not owner_id:
+        logger.warning("AL_BUSINESS_SKIP reason=UNKNOWN_CONNECTION connection_id=%s chat_id=%s", message.business_connection_id, message.chat.id)
         return False
 
     # AL Yordamchi Business suhbatlari boshqa funksiyalarning wizard/Conversation
@@ -597,7 +716,9 @@ async def process_business_message(message, context) -> bool:
 
     cfg = user_ai_keys.get_assistant_config(owner_id)
     if not cfg.get("enabled") or not cfg.get("provider") or not cfg.get("model"):
+        logger.info("AL_BUSINESS_SKIP owner=%s peer=%s reason=ASSISTANT_DISABLED_OR_INCOMPLETE enabled=%s provider=%s model=%s", owner_id, message.chat.id, bool(cfg.get("enabled")), cfg.get("provider"), cfg.get("model"))
         return False
+    logger.info("AL_BUSINESS_REQUEST_START owner=%s peer=%s provider=%s model=%s text_length=%s", owner_id, message.chat.id, cfg.get("provider"), cfg.get("model"), len(getattr(message, "text", "") or ""))
     personal_key = _personal_key(owner_id, cfg.get("provider"))
     if not personal_key:
         logger.warning("AL_NO_PERSONAL_KEY owner=%s provider=%s", owner_id, cfg.get("provider"))
@@ -718,8 +839,8 @@ async def process_business_message(message, context) -> bool:
             for mem in memories_to_save:
                 await al_yordamchi_db.a_add_memory(db_dsn, owner_id, mem)
         logger.info(
-            "AL_REPLY_OK owner=%s peer=%s message_id=%s",
-            owner_id, peer_id, getattr(sent, "message_id", None),
+            "AL_REPLY_OK owner=%s peer=%s message_id=%s provider=%s model=%s memory_candidates=%s",
+            owner_id, peer_id, getattr(sent, "message_id", None), cfg.get("provider"), cfg.get("model"), len(memories_to_save),
         )
     except Exception:
         logger.exception("AL_REPLY_FAILED owner=%s peer=%s", owner_id, peer_id)

@@ -97,6 +97,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     chat = update.effective_chat
     user = update.effective_user
+    request_id = getattr(update, "update_id", None)
+    logger.info("MESSAGE_ROUTE_ENTER request_id=%s user_id=%s chat_id=%s chat_type=%s handler=universal_chat", request_id, getattr(user, "id", None), getattr(chat, "id", None), getattr(chat, "type", None))
+    # AL Yordamchi faol bo'lsa Universal Chat mutlaqo zaxira sifatida ham ishlamasin.
+    # Asosiy to'xtatish handlers/al_yordamchi.py group=-4 da; bu ikkinchi himoya.
+    if user and chat and chat.type == "private":
+        try:
+            import user_ai_keys
+            al_cfg = user_ai_keys.get_assistant_config(user.id)
+            if al_cfg.get("enabled"):
+                logger.warning("UNIVERSAL_CHAT_BLOCKED request_id=%s user_id=%s chat_id=%s reason=AL_PRIVATE_MODE_ACTIVE", request_id, user.id, chat.id)
+                return
+        except Exception:
+            logger.exception("UNIVERSAL_CHAT_BLOCKED request_id=%s user_id=%s reason=AL_STATE_CHECK_FAILED", request_id, getattr(user, "id", None))
+            return
     # Universal AI faqat boshqa funksiya faol bo‘lmaganda ishlaydi.
     # ConversationHandler xabarni ushlay olmagan holatda ham pastga tushib
     # ketadigan matnlar shu markaziy tekshiruvda bloklanadi.
@@ -237,7 +251,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_text = stripped or user_text
 
     intent = detect_intent(user_text)
-    logger.info(f"💬 Universal chat xabari: chat_id={chat.id}, aniqlangan intent='{intent}'.")
+    logger.info("UNIVERSAL_CHAT_SELECTED request_id=%s user_id=%s chat_id=%s intent=%s ai=universal", request_id, getattr(user, "id", None), chat.id, intent)
 
     await context.bot.send_chat_action(chat.id, ChatAction.TYPING)
 
@@ -265,6 +279,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def _chat_with_history(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str):
     history = context.chat_data.setdefault("history", [])
 
+    request_id = getattr(update, "update_id", None)
+    logger.info("UNIVERSAL_AI_REQUEST_START request_id=%s user_id=%s chat_id=%s provider=%s model=%s history_messages=%s", request_id, getattr(update.effective_user, "id", None), getattr(update.effective_chat, "id", None), getattr(UNIVERSAL_CHAT_AI, "provider", None), getattr(UNIVERSAL_CHAT_AI, "model", None), len(history))
     response = await ask_ai(
         UNIVERSAL_CHAT_AI,
         user_text,
@@ -275,10 +291,11 @@ async def _chat_with_history(update: Update, context: ContextTypes.DEFAULT_TYPE,
     )
 
     if not response:
-        logger.error(f"💬 Universal chat javob QAYTARMADI: chat_id={chat.id} — sababi yuqoridagi ai_clients loglarida.")
+        logger.error("UNIVERSAL_AI_REQUEST_FAILED request_id=%s user_id=%s chat_id=%s reason=EMPTY_RESPONSE", request_id, getattr(update.effective_user, "id", None), getattr(update.effective_chat, "id", None))
         await update.message.reply_text("❌ Hozircha javob berib bo'lmadi. Birozdan so'ng qayta urinib ko'ring.")
         return
 
+    logger.info("UNIVERSAL_AI_RESPONSE_RECEIVED request_id=%s user_id=%s chat_id=%s response_length=%s", request_id, getattr(update.effective_user, "id", None), getattr(update.effective_chat, "id", None), len(response))
     history.append({"role": "user", "content": user_text})
     history.append({"role": "assistant", "content": response})
     max_items = MAX_HISTORY_TURNS * 2
