@@ -1,92 +1,100 @@
 #!/usr/bin/env python3
-# Run from the Student AI repository root:
-# python apply_topic_slide_recommendation.py
-
 from pathlib import Path
+import sys
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(sys.argv[1] if len(sys.argv) > 1 else ".")
 
-def replace_once(path, old, new):
-    file = ROOT / path
-    source = file.read_text(encoding="utf-8")
-    count = source.count(old)
-    if count != 1:
-        raise SystemExit(f"{path}: expected one matching block, found {count}.")
-    file.write_text(source.replace(old, new, 1), encoding="utf-8")
+def edit(path, transform):
+    p = ROOT / path
+    if not p.exists():
+        raise SystemExit(f"Fayl topilmadi: {p}")
+    old = p.read_text(encoding="utf-8")
+    new = transform(old)
+    if new == old:
+        raise SystemExit(f"O'zgarish qo'llanmadi yoki allaqachon mavjud: {p}")
+    p.write_text(new, encoding="utf-8")
+    print(f"OK: {path}")
 
-theme_file = ROOT / "slide_themes.py"
-theme_text = theme_file.read_text(encoding="utf-8")
-if "def recommend_theme(topic: str)" not in theme_text:
-    theme_text += r'''
-
-def recommend_theme(topic: str) -> str:
-    """Mavzu kalit so'zlari asosida eng mos original Student AI dizaynini tavsiya qiladi."""
-    value = str(topic or "").lower().replace("’", "'").replace("‘", "'")
-    groups = (
-        ("medical", ("tibbiyot", "salomat", "kasallik", "anatomi", "yurak", "qon aylanish", "shifokor", "farmats", "inson organizm")),
-        ("technology", ("sun'iy intellekt", "texnolog", "dastur", "kompyuter", "robot", "raqamli", "kiber", "algoritm", "internet", "neyron")),
-        ("finance", ("iqtisod", "moliya", "bank", "bozor", "investits", "biznes", "marketing", "menejment", "buxgalter", "makro")),
-        ("history", ("tarix", "qadimgi", "siviliz", "urush", "mustaqillik", "temur", "xonlik", "tarixiy")),
-        ("nature", ("ekolog", "tabiat", "iqlim", "hayvon", "o'simlik", "geograf", "atrof-muhit")),
-        ("science", ("fizika", "kimyo", "matematika", "astronom", "laborator", "formula", "energiya", "tadqiqot")),
-        ("education", ("ta'lim", "pedagog", "maktab", "universitet", "dars", "o'qit", "talaba", "metodika")),
-        ("creative", ("san'at", "dizayn", "adabiyot", "she'r", "musiqa", "madaniyat", "kino", "fotograf")),
-        ("academic", ("kurs ishi", "referat", "dissertats", "ilmiy ish", "nazariya", "mustaqil ish")),
-    )
-    for theme, words in groups:
-        if any(word in value for word in words):
+def update_themes(src):
+    if "def recommend_theme(topic):" in src:
+        raise SystemExit("recommend_theme() allaqachon mavjud.")
+    marker = "\nPALETTES = {"
+    fn = '''
+def recommend_theme(topic):
+    """Mavzu kalit so'zlari asosida mos slayd dizaynini tavsiya qiladi."""
+    t = str(topic or "").casefold()
+    groups = {
+        "medical": ("tibb", "shif", "kasallik", "sog'liq", "sog‘liq", "med", "health", "doctor", "medicine", "медицин"),
+        "technology": ("texnolog", "sun'iy intellekt", "sun’iy intellekt", "robot", "dastur", "kompyuter", "internet", "technology", "software", "технолог"),
+        "finance": ("moliya", "iqtisod", "bank", "invest", "finance", "econom", "бизнес", "финанс", "эконом"),
+        "history": ("tarix", "amir temur", "buyuk ipak", "history", "civilization", "истори"),
+        "nature": ("tabiat", "ekolog", "iqlim", "o'simlik", "o‘simlik", "hayvon", "nature", "environment", "climate", "природ"),
+        "science": ("ilm", "fizika", "kimyo", "biolog", "astronom", "science", "research", "наук", "физик", "хими"),
+        "education": ("ta'lim", "ta’lim", "maktab", "universitet", "o'qit", "o‘qit", "education", "learning", "school", "образован"),
+        "creative": ("san'at", "san’at", "dizayn", "musiqa", "adabiyot", "creative", "design", "music", "искусств"),
+    }
+    for theme, words in groups.items():
+        if any(word in t for word in words):
             return theme
     return "modern_blue"
+
 '''
-    theme_file.write_text(theme_text, encoding="utf-8")
+    if marker not in src:
+        raise SystemExit("slide_themes.py tuzilishi kutilganidan farq qiladi.")
+    return src.replace(marker, "\n" + fn + marker, 1)
 
-handler_path = "handlers/pptx_gen.py"
-replace_once(handler_path,
-    "from slide_themes import THEMES, PALETTES, FRAMES, FONTS",
-    "from slide_themes import THEMES, PALETTES, FRAMES, FONTS, recommend_theme")
-replace_once(handler_path,
-    "_NEXT_STEP={sp.STEP_COUNT:sp.STEP_DESIGN,sp.STEP_DESIGN:sp.STEP_FRAME,sp.STEP_FRAME:sp.STEP_PALETTE,\n            sp.STEP_PALETTE:sp.STEP_FONT}",
-    "_NEXT_STEP={sp.STEP_DESIGN:sp.STEP_COUNT,sp.STEP_COUNT:sp.STEP_FRAME,sp.STEP_FRAME:sp.STEP_PALETTE,\n            sp.STEP_PALETTE:sp.STEP_FONT}")
+def update_handler(src):
+    if "recommend_theme" in src:
+        raise SystemExit("pptx_gen.py allaqachon yangilangan.")
+    src = src.replace(
+        "from slide_themes import THEMES, PALETTES, FRAMES, FONTS",
+        "from slide_themes import THEMES, PALETTES, FRAMES, FONTS, recommend_theme", 1)
+    old_map = "_NEXT_STEP={sp.STEP_COUNT:sp.STEP_DESIGN,sp.STEP_DESIGN:sp.STEP_FRAME,sp.STEP_FRAME:sp.STEP_PALETTE,\n            sp.STEP_PALETTE:sp.STEP_FONT}"
+    new_map = "_NEXT_STEP={sp.STEP_DESIGN:sp.STEP_COUNT,sp.STEP_COUNT:sp.STEP_FRAME,sp.STEP_FRAME:sp.STEP_PALETTE,\n            sp.STEP_PALETTE:sp.STEP_FONT}"
+    if old_map not in src:
+        raise SystemExit("_NEXT_STEP bloki topilmadi.")
+    src = src.replace(old_map, new_map, 1)
+    old_topic = '''    ud["px_topic"]=topic
+    ud.setdefault("pptx_settings",dict(sp.DEFAULT_SETTINGS))
+    chat_id=update.effective_chat.id
+    # Mavzu so'rovi xabarini tozalaymiz va birinchi VIZUAL namunani ko'rsatamiz.
+    if ud.get("px_prompt_id"):
+        await _best_effort(context.bot.delete_message(chat_id=chat_id,message_id=ud["px_prompt_id"]),"Mavzu so‘rovini o‘chirish")
+    await _best_effort(update.message.reply_chat_action(ChatAction.UPLOAD_PHOTO),"chat action")
+    await _show_step(context,chat_id,None,sp.STEP_COUNT,0)
+    return PX_COUNT'''
+    new_topic = '''    ud["px_topic"]=topic
+    ud.setdefault("pptx_settings",dict(sp.DEFAULT_SETTINGS))
+    recommended= recommend_theme(topic)
+    ud["pptx_settings"]["design"]=recommended
+    ud["px_recommended_theme"]=recommended
+    chat_id=update.effective_chat.id
+    # Mavzu tahlil qilinadi va mos dizayn birinchi bo'lib tavsiya etiladi.
+    if ud.get("px_prompt_id"):
+        await _best_effort(context.bot.delete_message(chat_id=chat_id,message_id=ud["px_prompt_id"]),"Mavzu so‘rovini o‘chirish")
+    await _best_effort(update.message.reply_chat_action(ChatAction.UPLOAD_PHOTO),"chat action")
+    design_idx=_DESIGN_KEYS.index(recommended)
+    await _show_step(context,chat_id,None,sp.STEP_DESIGN,design_idx)
+    return PX_DESIGN'''
+    if old_topic not in src:
+        raise SystemExit("receive_topic bloki topilmadi.")
+    return src.replace(old_topic, new_topic, 1)
 
-old_caption = '''def _carousel_caption(step,idx):
-    icon,title=sp.STEP_TITLES[step]
-    _,label=sp.items(step)[idx]
-    return (f"{icon} <b>{html.escape(title)}: {html.escape(label)}</b>\\n"
-            f"Namuna {idx+1} / {sp.total(step)}\\n\\n"
-            f"{html.escape(sp.describe(step,idx))}\\n\\n"
-            "Yoqsa «✅ Tasdiqlash»ni bosing yoki ⬅️ ➡️ bilan boshqa namunalarni ko‘ring.")'''
-new_caption = '''def _carousel_caption(step,idx,recommended_design=None):
-    icon,title=sp.STEP_TITLES[step]
-    _,label=sp.items(step)[idx]
-    note = "⭐ Mavzuingiz uchun tavsiya etilgan dizayn.\\n\\n" if step==sp.STEP_DESIGN and sp.items(step)[idx][0]==recommended_design else ""
-    return (f"{icon} <b>{html.escape(title)}: {html.escape(label)}</b>\\n"
-            f"Namuna {idx+1} / {sp.total(step)}\\n\\n"
-            f"{note}{html.escape(sp.describe(step,idx))}\\n\\n"
-            "Yoqsa «✅ Tasdiqlash»ni bosing yoki ⬅️ ➡️ bilan boshqa namunalarni ko‘ring.")'''
-replace_once(handler_path, old_caption, new_caption)
-replace_once(handler_path, "_carousel_caption(step,idx),",
-             "_carousel_caption(step,idx,ud.get('px_recommended_design')),")
-replace_once(handler_path,
-    "    await _show_step(context,chat_id,None,sp.STEP_COUNT,0)\n    return PX_COUNT",
-    "    ud[\"px_recommended_design\"] = recommend_theme(topic)\n"
-    "    design_idx = next((i for i,(key,_) in enumerate(sp.items(sp.STEP_DESIGN)) if key==ud[\"px_recommended_design\"]),0)\n"
-    "    await _show_step(context,chat_id,None,sp.STEP_DESIGN,design_idx)\n"
-    "    return PX_DESIGN")
+def update_tests(src):
+    if "test_recommend_theme_matches_topic_categories" in src:
+        raise SystemExit("Tavsiya testlari allaqachon mavjud.")
+    return src + '''
 
-test_file = ROOT / "tests/test_pptx_professional.py"
-test_text = test_file.read_text(encoding="utf-8")
-if "def test_topic_recommends_relevant_slide_theme" not in test_text:
-    test_text += '''
-
-def test_topic_recommends_relevant_slide_theme():
+def test_recommend_theme_matches_topic_categories():
     from slide_themes import recommend_theme
-    assert recommend_theme("Inson yuragi va qon aylanish tizimi") == "medical"
+    assert recommend_theme("Yurak kasalliklari va salomatlik") == "medical"
     assert recommend_theme("Sun'iy intellekt va robototexnika") == "technology"
-    assert recommend_theme("O‘zbekistonning qadimgi tarixi") == "history"
-    assert recommend_theme("Makroiqtisodiy muvozanat va investitsiya") == "finance"
-    assert recommend_theme("Oddiy noma'lum mavzu") == "modern_blue"
+    assert recommend_theme("O'zbekiston tarixi") == "history"
+    assert recommend_theme("Tabiat va ekologiya") == "nature"
+    assert recommend_theme("Umumiy mavzu") == "modern_blue"
 '''
-    test_file.write_text(test_text, encoding="utf-8")
 
-print("O'zgargan fayllar: slide_themes.py, handlers/pptx_gen.py, tests/test_pptx_professional.py")
-print("Endi testlarni ishga tushirib, GitHub'ga commit/push qiling.")
+edit("slide_themes.py", update_themes)
+edit("handlers/pptx_gen.py", update_handler)
+edit("tests/test_pptx_professional.py", update_tests)
+print("Patch qo'llandi. Test: pytest -q tests/test_pptx_professional.py")
