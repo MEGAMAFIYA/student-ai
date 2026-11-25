@@ -1,4 +1,3 @@
-
 """20 professional slide themes and accessible color palettes."""
 from pptx.dml.color import RGBColor
 
@@ -24,6 +23,25 @@ THEMES = {
 "newspaper": ("Newspaper","#F4F0E7","#222222","#252525","news"),
 "infographic": ("Infographic","#F4F7FB","#F07836","#233247","info"),
 }
+
+def recommend_theme(topic):
+    """Mavzu kalit so'zlariga qarab mos dizayn kalitini qaytaradi."""
+    t = str(topic or "").casefold()
+    groups = {
+        "medical": ("tibb", "shif", "kasallik", "sog'liq", "sog‘liq", "med", "health", "doctor", "medicine", "медицин"),
+        "technology": ("texnolog", "sun'iy intellekt", "sun’iy intellekt", "robot", "dastur", "kompyuter", "internet", "technology", "software", "технолог"),
+        "finance": ("moliya", "iqtisod", "bank", "invest", "finance", "econom", "бизнес", "финанс", "эконом"),
+        "history": ("tarix", "amir temur", "buyuk ipak", "history", "civilization", "истори"),
+        "nature": ("tabiat", "ekolog", "iqlim", "o'simlik", "o‘simlik", "hayvon", "nature", "environment", "climate", "природ"),
+        "science": ("ilm", "fizika", "kimyo", "biolog", "astronom", "science", "research", "наук", "физик", "хими"),
+        "education": ("ta'lim", "ta’lim", "maktab", "universitet", "o'qit", "o‘qit", "education", "learning", "school", "образован"),
+        "creative": ("san'at", "san’at", "dizayn", "musiqa", "adabiyot", "creative", "design", "music", "искусств"),
+    }
+    for theme, words in groups.items():
+        if any(word in t for word in words):
+            return theme
+    return "modern_blue"
+
 PALETTES = {
 "blue_white": ("Ko‘k va oq","#FFFFFF","#1D4E89","#243447"),
 "black_gold": ("Qora va oltin","#171717","#D5AD42","#F4E8C8"),

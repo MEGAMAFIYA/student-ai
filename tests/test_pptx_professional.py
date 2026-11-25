@@ -1,6 +1,6 @@
 
 from pptx import Presentation
-from slide_themes import THEMES, FRAMES, PALETTES, FONTS
+from slide_themes import THEMES, FRAMES, PALETTES, FONTS, recommend_theme
 from pptx_tools import build_presentation
 from slide_images import make_illustration
 from slide_export import pptx_to_pdf
@@ -13,6 +13,13 @@ def _sample():
     ]
     images={i:make_illustration("Sinov mavzusi",s["heading"],"#1677C8",i) for i,s in enumerate(slides)}
     return slides,images
+
+def test_recommend_theme_matches_topic_categories():
+    assert recommend_theme("Yurak kasalliklari va salomatlik") == "medical"
+    assert recommend_theme("Sun'iy intellekt va robototexnika") == "technology"
+    assert recommend_theme("O'zbekiston tarixi") == "history"
+    assert recommend_theme("Tabiat va ekologiya") == "nature"
+    assert recommend_theme("Umumiy mavzu") == "modern_blue"
 
 def test_all_twenty_themes_create_valid_pptx():
     slides,images=_sample()
