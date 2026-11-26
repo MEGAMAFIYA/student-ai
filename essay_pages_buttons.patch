@@ -1,0 +1,66 @@
+diff --git a/handlers/essay.py b/handlers/essay.py
+--- a/handlers/essay.py
++++ b/handlers/essay.py
+@@
+ async def receive_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
+     query = update.callback_query
+     await query.answer()
+     work_type = query.data.split(":")[-1]
+     context.user_data["es_type"] = work_type
+     label = "Referat" if work_type == "referat" else "Insho"
++    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
++    page_rows = [
++        [InlineKeyboardButton(f"📄 {n} bet", callback_data=f"essay:pages:{n}") for n in (5, 10)],
++        [InlineKeyboardButton(f"📄 {n} bet", callback_data=f"essay:pages:{n}") for n in (15, 20)],
++        [InlineKeyboardButton(f"📄 {n} bet", callback_data=f"essay:pages:{n}") for n in (25, 30)],
++    ]
+     await query.edit_message_text(
+-        f"✅ {label}.\n\nPDF necha betdan iborat bo'lishi kerak? (masalan: 5, 10, 15)",
++        f"✅ {label}.\n\nPDF necha bet bo'lsin? Quyidagi tugmalardan birini tanlang:",
+         parse_mode=ParseMode.MARKDOWN,
++        reply_markup=InlineKeyboardMarkup(page_rows),
+     )
+     return ES_PAGES
+
+
++async def receive_pages_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
++    query = update.callback_query
++    await query.answer()
++    try:
++        pages = int(query.data.rsplit(":", 1)[-1])
++    except (TypeError, ValueError):
++        await query.edit_message_text("❗️ Bet sonini tanlashda xatolik. Iltimos, qaytadan boshlang.")
++        context.user_data.clear()
++        return ConversationHandler.END
++
++    if pages not in (5, 10, 15, 20, 25, 30):
++        await query.answer("Noto'g'ri bet soni.", show_alert=True)
++        return ES_PAGES
++
++    context.user_data["es_pages"] = pages
++    await query.edit_message_text(
++        f"✅ {pages} bet tanlandi.\n\nEndi referat/insho mavzusini yuboring:"
++    )
++    return ES_TOPIC
++
++
+ async def receive_pages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+     digits = re.sub(r"[^0-9]", "", update.message.text.strip())
+@@
+-    if pages > MAX_PAGES:
++    if pages not in (5, 10, 15, 20, 25, 30):
+         await update.message.reply_text(f"❗️ {MAX_PAGES} betdan katta bo'lmasin. Iltimos, kichikroq son kiriting.")
+         return ES_PAGES
+diff --git a/bot.py b/bot.py
+--- a/bot.py
++++ b/bot.py
+@@
+         states={
+             essay.ES_TYPE: [CallbackQueryHandler(essay.receive_type, pattern="^essay:type:")],
+-            essay.ES_PAGES: [MessageHandler(filters.TEXT & ~filters.COMMAND, essay.receive_pages)],
++            essay.ES_PAGES: [
++                CallbackQueryHandler(essay.receive_pages_callback, pattern=r"^essay:pages:(5|10|15|20|25|30)$"),
++                MessageHandler(filters.TEXT & ~filters.COMMAND, essay.receive_pages),
++            ],
+             essay.ES_TOPIC: [MessageHandler(filters.TEXT & ~filters.COMMAND, essay.receive_topic_and_generate)],
+         },
