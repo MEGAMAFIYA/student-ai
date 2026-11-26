@@ -1,7 +1,16 @@
 diff --git a/handlers/essay.py b/handlers/essay.py
 --- a/handlers/essay.py
 +++ b/handlers/essay.py
-@@
+@@ -32,7 +32,7 @@
+ WORDS_PER_PAGE = 380
+-MAX_PAGES = 40
++ALLOWED_PAGE_COUNTS = (5, 10, 15, 20, 25, 30)
+ MIN_ACCEPTABLE_WORDS = 50
+ MIN_PART_WORDS = 40
+ RETRY_ATTEMPTS = 2
+ RETRY_DELAY_SEC = 3
+ MAX_EXPAND_ROUNDS = 10
+@@ -73,25 +73,57 @@
  async def receive_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
      query = update.callback_query
      await query.answer()
@@ -21,19 +30,21 @@ diff --git a/handlers/essay.py b/handlers/essay.py
 +        reply_markup=InlineKeyboardMarkup(page_rows),
      )
      return ES_PAGES
-
-
+ 
+ 
 +async def receive_pages_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 +    query = update.callback_query
 +    await query.answer()
 +    try:
 +        pages = int(query.data.rsplit(":", 1)[-1])
-+    except (TypeError, ValueError):
-+        await query.edit_message_text("❗️ Bet sonini tanlashda xatolik. Iltimos, qaytadan boshlang.")
++    except (AttributeError, TypeError, ValueError):
++        await query.edit_message_text(
++            "❗️ Bet sonini tanlashda xatolik. Iltimos, /start orqali qayta boshlang."
++        )
 +        context.user_data.clear()
 +        return ConversationHandler.END
 +
-+    if pages not in (5, 10, 15, 20, 25, 30):
++    if pages not in ALLOWED_PAGE_COUNTS:
 +        await query.answer("Noto'g'ri bet soni.", show_alert=True)
 +        return ES_PAGES
 +
@@ -46,15 +57,35 @@ diff --git a/handlers/essay.py b/handlers/essay.py
 +
  async def receive_pages(update: Update, context: ContextTypes.DEFAULT_TYPE):
      digits = re.sub(r"[^0-9]", "", update.message.text.strip())
-@@
--    if pages > MAX_PAGES:
-+    if pages not in (5, 10, 15, 20, 25, 30):
-         await update.message.reply_text(f"❗️ {MAX_PAGES} betdan katta bo'lmasin. Iltimos, kichikroq son kiriting.")
+     if not digits or int(digits) <= 0:
+         await update.message.reply_text("❗️ Iltimos, faqat son yuboring. Masalan: 10")
          return ES_PAGES
+     pages = int(digits)
+-    if pages > MAX_PAGES:
+-        await update.message.reply_text(f"❗️ {MAX_PAGES} betdan katta bo'lmasin. Iltimos, kichikroq son kiriting.")
++    if pages not in ALLOWED_PAGE_COUNTS:
++        await update.message.reply_text(
++            "❗️ Bet sonini 5, 10, 15, 20, 25 yoki 30 qilib tanlang."
++        )
+         return ES_PAGES
+     context.user_data["es_pages"] = pages
+     await update.message.reply_text(f"✅ {pages} bet.\n\nEndi mavzuni yuboring:", parse_mode=ParseMode.MARKDOWN)
+     return ES_TOPIC
 diff --git a/bot.py b/bot.py
 --- a/bot.py
 +++ b/bot.py
-@@
+@@ -432,5 +432,9 @@
+ async def _al_private_text_router(update, context):
+     """AL setup yoki AL private chat xabarini boshqa AI handlerlariga o'tkazmaydi."""
++    # Referat/Insho conversation'ining matnli bosqichlarini AL router yutib yubormasin.
++    # essay.entry() bu bayroqni flow="essay" qilib o'rnatadi va yakunda tozalaydi.
++    if context.user_data.get("flow") == "essay":
++        return
+     handled = await al_yordamchi.receive_setup_text(update, context)
+     if handled:
+         logger.info(
+@@ -1527,7 +1531,10 @@
+         entry_points=[CallbackQueryHandler(wallet_ui.require_payment("essay")(essay.entry), pattern="^menu:essay$")],
          states={
              essay.ES_TYPE: [CallbackQueryHandler(essay.receive_type, pattern="^essay:type:")],
 -            essay.ES_PAGES: [MessageHandler(filters.TEXT & ~filters.COMMAND, essay.receive_pages)],
@@ -64,3 +95,4 @@ diff --git a/bot.py b/bot.py
 +            ],
              essay.ES_TOPIC: [MessageHandler(filters.TEXT & ~filters.COMMAND, essay.receive_topic_and_generate)],
          },
+         fallbacks=_cancel_fallbacks(),
