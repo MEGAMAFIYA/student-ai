@@ -459,6 +459,156 @@ class EditAd(AdsBase):
         self.assertIsNone(ads.apply_edit(self.app(), "yoq", text="x"))
 
 
+class PauseAndSeconds(AdsBase):
+    def _cb(self, kb):
+        return [b.callback_data for row in kb.inline_keyboard for b in row]
+
+    def test_parse_interval(self):
+        self.assertEqual(ads.parse_interval("5"), ("min", 5))
+        self.assertEqual(ads.parse_interval("10"), ("min", 10))
+        self.assertEqual(ads.parse_interval("3s"), ("sec", 3))
+        self.assertEqual(ads.parse_interval("2 sek"), ("sec", 2))
+        self.assertEqual(ads.parse_interval("5 soniya"), ("sec", 5))
+        for bad in ("0", "11", "6s", "0s", "abc", "", "-1"):
+            self.assertIsNone(ads.parse_interval(bad), bad)
+
+    def test_keyboards_have_seconds_1_to_5(self):
+        self.assertEqual([c for c in self._cb(ads.minutes_keyboard()) if c.startswith("dev:adssec:")],
+                         [f"dev:adssec:{n}" for n in range(1, 6)])
+        cbs = self._cb(ads.edit_minutes_keyboard("abc"))
+        self.assertEqual([c for c in cbs if c.startswith("dev:adseditsec:abc:")],
+                         [f"dev:adseditsec:abc:{n}" for n in range(1, 6)])
+        for a in ("adssec", "adseditsec", "adspause", "adsplay"):
+            self.assertIn(a, ads.ACTIONS)
+
+    def test_interval_seconds_and_labels(self):
+        m = storage.add_ad(-1, "G", "x", 3, 1)
+        s = storage.add_ad(-2, "G", "x", 0, 1, interval_sec=4)
+        self.assertEqual((ads.interval_seconds(m), ads.interval_seconds(s)), (180, 4))
+        self.assertEqual((ads.interval_label(m), ads.interval_label(s)), ("har 3 daqiqada", "har 4 soniyada"))
+        self.assertIn("4 sek", ads.menu_text() + str([b.text for r in ads.menu_keyboard().inline_keyboard for b in r]))
+
+    def test_menu_has_pause_and_play_buttons(self):
+        ad = storage.add_ad(-1, "G", "x", 1, 1)
+        self.assertIn(f"dev:adspause:{ad['id']}", self._cb(ads.menu_keyboard()))
+        storage.update_ad(ad["id"], paused=True)
+        cbs = self._cb(ads.menu_keyboard())
+        self.assertIn(f"dev:adsplay:{ad['id']}", cbs)
+        self.assertNotIn(f"dev:adspause:{ad['id']}", cbs)
+        self.assertIn("Pauzada", ads.menu_text())
+        self.assertIn(f"dev:adsplay:{ad['id']}:v", self._cb(ads.view_keyboard(ad["id"], paused=True)))
+        self.assertIn(f"dev:adspause:{ad['id']}:v", self._cb(ads.view_keyboard(ad["id"])))
+
+    async def test_pause_cancels_task_keeps_ad_and_resume_restarts(self):
+        self.client = FakeClient({-1001: Channel(1)})
+        app = self.app()
+        ad = storage.add_ad(-1001, "G", "salom", 1, 5)
+        ads.start_ad(app, ad)
+        task = ads._tasks[ad["id"]]
+        res = ads.pause_ad(ad["id"])
+        await asyncio.sleep(0)
+        self.assertTrue(res["paused"])
+        self.assertTrue(task.cancelled() or task.done())
+        self.assertNotIn(ad["id"], ads._tasks)
+        self.assertEqual(len(storage.get_ads()), 1)  # o'chirilmaydi
+        res = ads.resume_ad(app, ad["id"])
+        self.assertFalse(res["paused"])
+        self.assertIn(ad["id"], ads._tasks)
+
+    async def test_paused_ad_is_never_sent_and_not_rescheduled(self):
+        self.client = FakeClient({-1001: Channel(1)})
+        app = self.app()
+        ad = storage.add_ad(-1001, "G", "salom", 1, 5)
+        storage.update_ad(ad["id"], paused=True)
+        ads.reschedule_all(app)
+        self.assertEqual(ads._tasks, {})
+        ads.start_ad(app, storage.get_ad(ad["id"]), first_delay=0)  # himoya: loopning o'zi ham yubormaydi
+        await asyncio.sleep(0.05)
+        self.assertEqual(self.client.clicked, [])
+
+    async def test_edit_interval_on_paused_ad_does_not_start_it(self):
+        ad = storage.add_ad(-1001, "G", "x", 1, 5)
+        ads.pause_ad(ad["id"])
+        new = ads.apply_edit(self.app(), ad["id"], **ads.interval_fields("sec", 2))
+        self.assertEqual((new["interval_sec"], new["interval_min"], new["paused"]), (2, 0, True))
+        self.assertNotIn(ad["id"], ads._tasks)
+
+    async def test_loop_uses_seconds_as_delay(self):
+        self.client = FakeClient({-1001: Channel(1)})
+        ad = storage.add_ad(-1001, "G", "salom", 0, 5, interval_sec=3)
+        delays = []
+        real_sleep = asyncio.sleep
+
+        async def fake_sleep(d):
+            delays.append(d)
+            await real_sleep(0)
+
+        with patch.object(ads.asyncio, "sleep", fake_sleep):
+            ads.start_ad(self.app(), ad, first_delay=0)
+            for _ in range(200):
+                if len(delays) >= 3:
+                    break
+                await real_sleep(0.01)
+        self.assertEqual(delays[0], 0)
+        self.assertIn(3, delays[1:])
+        self.assertNotIn(0 * 60, delays[1:])
+
+    async def test_dev_flow_seconds_and_pause_callbacks(self):
+        # developer modulini almashtirish uchun DevFlow dagi usul
+        self.client = FakeClient({-1001234567890: Channel(1234567890, "G")})
+        app = self.app()
+        ctx = types.SimpleNamespace(user_data={}, bot=app.bot, application=app)
+        upd = types.SimpleNamespace(effective_user=types.SimpleNamespace(id=9))
+        screens = []
+
+        async def safe_edit(query, text, reply_markup=None, parse_mode=None):
+            screens.append(text)
+
+        import handlers
+        fake_dev = types.ModuleType("handlers.developer")
+        fake_dev._safe_edit_query = safe_edit
+        fake_dev._edit_menu = None
+        old, old_attr = sys.modules.get("handlers.developer"), getattr(handlers, "developer", None)
+        sys.modules["handlers.developer"] = fake_dev
+        handlers.developer = fake_dev
+        try:
+            ctx.user_data["dev_action"] = {"type": "ads_minutes", "chat_id": -1001234567890,
+                                           "chat_title": "G", "text": "salom"}
+            await ads.handle_dev_callback("adssec", ["dev", "adssec", "6"], upd, ctx, None, "MENU", "TEXT")
+            self.assertEqual(ctx.user_data["dev_action"]["type"], "ads_minutes")  # 6 sek — noto'g'ri
+            await ads.handle_dev_callback("adssec", ["dev", "adssec", "3"], upd, ctx, None, "MENU", "TEXT")
+            self.assertEqual((ctx.user_data["dev_action"]["interval_sec"], ctx.user_data["dev_action"]["interval_min"]), (3, 0))
+            self.assertIn("har 3 soniyada", screens[-1])
+            await ads.handle_dev_callback("adsok", ["dev", "adsok"], upd, ctx, None, "MENU", "TEXT")
+            ad = storage.get_ads()[0]
+            self.assertEqual(ad["interval_sec"], 3)
+            self.assertEqual(ads.interval_seconds(ad), 3)
+
+            await ads.handle_dev_callback("adspause", ["dev", "adspause", ad["id"]], upd, ctx, None, "MENU", "TEXT")
+            self.assertTrue(storage.get_ad(ad["id"])["paused"])
+            self.assertNotIn(ad["id"], ads._tasks)
+            await ads.handle_dev_callback("adsplay", ["dev", "adsplay", ad["id"], "v"], upd, ctx, None, "MENU", "TEXT")
+            self.assertFalse(storage.get_ad(ad["id"])["paused"])
+            self.assertIn(ad["id"], ads._tasks)
+
+            # tahrirlash: soniyadan daqiqaga qaytish
+            await ads.handle_dev_callback("adseditmin", ["dev", "adseditmin", ad["id"], "2"], upd, ctx, None, "MENU", "TEXT")
+            a2 = storage.get_ad(ad["id"])
+            self.assertEqual((a2["interval_min"], a2["interval_sec"]), (2, None))
+            await ads.handle_dev_callback("adseditsec", ["dev", "adseditsec", ad["id"], "5"], upd, ctx, None, "MENU", "TEXT")
+            a3 = storage.get_ad(ad["id"])
+            self.assertEqual((a3["interval_min"], a3["interval_sec"]), (0, 5))
+        finally:
+            if old is None:
+                sys.modules.pop("handlers.developer", None)
+            else:
+                sys.modules["handlers.developer"] = old
+            if old_attr is None:
+                handlers.__dict__.pop("developer", None)
+            else:
+                handlers.developer = old_attr
+
+
 class CancelRegistryTest(unittest.IsolatedAsyncioTestCase):
     async def test_cancel_stops_running_task(self):
         import cancel_registry

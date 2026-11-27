@@ -1678,7 +1678,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # oldingi "kutilayotgan matn kiritish" holatini tozalaydi — pastda
     # tegishli branch (edit/keyaddprov/keyrepl/keymodel/bulkprov/keybulkscope)
     # kerak bo'lsa uni qaytadan o'rnatadi.
-    if action not in ("edit", "bulkprov", "keyaddprov", "keyrepl", "keymodel", "keybulkscope", "imgaddmanual", "imgmodelmanual", "priceedit", "balsearch", "ptsong", "ptemoji", "ptdelay", "ptrevert", "gh", "github", "mt_stop", "giftconfirm", "adsmin", "adsok", "grpok"):
+    if action not in ("edit", "bulkprov", "keyaddprov", "keyrepl", "keymodel", "keybulkscope", "imgaddmanual", "imgmodelmanual", "priceedit", "balsearch", "ptsong", "ptemoji", "ptdelay", "ptrevert", "gh", "github", "mt_stop", "giftconfirm", "adsmin", "adssec", "adsok", "grpok"):
         context.user_data.pop("dev_action", None)
 
     # ---------- Asosiy menyu ----------

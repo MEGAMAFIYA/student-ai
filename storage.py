@@ -53,7 +53,7 @@ _DEFAULT_DATA = {
     "inline_logs": [],  # [{"ts","user_id","username","query","status","detail"}] — inline (@Bot ...) jurnali
     "movies": {},      # {"<movie_id>": {"id","title","file_id","mime_type","file_name","size","uploaded_by","created_ts"}} — kino katalogi
     "keepalive": {},   # {"<render_service_id>": {"name","url","enabled_ts"}} — 😴 Render "Uxlamaslik" ro'yxati
-    "ads": {},         # {"<ad_id>": {"id","chat_id","chat_title","text","interval_min","created_by","created_ts"}} — 📢 guruh reklamalari
+    "ads": {},         # {"<ad_id>": {"id","chat_id","chat_title","text","interval_min","interval_sec","paused","created_by","created_ts"}} — 📢 guruh reklamalari
     "course_image_prefs": {},
     "render_pending_deploys": [],  # deploy ID va servis — tugagach admin xabari uchun  # {"<user_id>": {"enabled"?, "provider"?, "model"?, "count"?}} — 🖼 kurs ishi rasm sozlamalari (faqat foydalanuvchi tanlagan maydonlar)
 }
@@ -338,7 +338,8 @@ def remove_reminder(reminder_id: str) -> bool:
 MAX_ADS = 50
 
 
-def add_ad(chat_id: int, chat_title: str, text: str, interval_min: int, created_by: int) -> dict:
+def add_ad(chat_id: int, chat_title: str, text: str, interval_min: int, created_by: int,
+           interval_sec: int | None = None) -> dict:
     with _lock:
         if len(_data["ads"]) >= MAX_ADS:
             raise ValueError(f"Faol reklamalar soni chegarasi ({MAX_ADS}) to'lgan.")
@@ -348,6 +349,8 @@ def add_ad(chat_id: int, chat_title: str, text: str, interval_min: int, created_
             "chat_title": str(chat_title or "")[:120],
             "text": str(text),
             "interval_min": int(interval_min),
+            "interval_sec": int(interval_sec) if interval_sec else None,  # berilsa — daqiqa o'rniga soniyada
+            "paused": False,                                               # ⏸ pauzada bo'lsa yuborilmaydi
             "created_by": int(created_by),
             "created_ts": time.time(),
         }

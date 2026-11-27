@@ -3,7 +3,8 @@
 
 Oqim:
   1. 📢 Reklama bosiladi → FAOL reklamalar ro'yxati chiqadi (yo'q bo'lsa — bo'sh).
-  2. ➕ Reklama qo'shish → guruh ID → matn → daqiqa (1..10) → tasdiqlash.
+  2. ➕ Reklama qo'shish → guruh ID → matn → interval (1..10 daqiqa yoki 1..5 soniya) → tasdiqlash.
+  2b. Mavjud reklamani ⏸ pauzaga qo'yish / ▶️ qayta yoqish (o'chirmasdan).
   3. Tasdiqlangach BIRINCHI xabar darhol yuboriladi, so'ng har N daqiqada
      shu matn qayta-qayta yuboriladi.
 
@@ -43,14 +44,16 @@ import telegram_mtproto
 logger = logging.getLogger(__name__)
 
 MIN_INTERVAL = 1
-MAX_INTERVAL = 10
+MAX_INTERVAL = 10            # daqiqa
+MIN_SEC = 1
+MAX_SEC = 5                  # soniya (1..5) — "tez" rejim
 MAX_TEXT_LEN = 4096          # Telegram bitta xabar chegarasi
 MAX_FAILURES = 5             # ketma-ket shuncha xatodan keyin reklama to'xtatiladi
 RESTART_FIRST_DELAY_SEC = 60  # qayta ishga tushgandan keyin birinchi yuborishgacha (maks.)
 BUTTON_LABEL = "🤖 Talaba AI"
 
-ACTIONS = {"ads", "adsadd", "adsview", "adsdel", "adsdelyes", "adsmin", "adsok",
-           "adsedit", "adseditf", "adseditmin"}
+ACTIONS = {"ads", "adsadd", "adsview", "adsdel", "adsdelyes", "adsmin", "adssec", "adsok",
+           "adsedit", "adseditf", "adseditmin", "adseditsec", "adspause", "adsplay"}
 
 # Bu xatolar takrorlanmaydi — yuborishning o'zi imkonsiz bo'lib qolgan (Telethon
 # xato klasslari nomi bo'yicha tekshiriladi: Telethon testlarda bo'lmasligi mumkin).
@@ -90,6 +93,50 @@ def _plain(text_html: str) -> str:
 def _preview(text_html: str, limit: int = 300) -> str:
     plain = _plain(text_html).strip()
     return plain if len(plain) <= limit else plain[:limit].rstrip() + "…"
+
+
+def interval_seconds(ad: dict) -> int:
+    """Reklama intervali soniyada: interval_sec berilgan bo'lsa shu, aks holda daqiqa*60."""
+    sec = ad.get("interval_sec")
+    if sec:
+        return int(sec)
+    return int(ad["interval_min"]) * 60
+
+
+def interval_label(ad: dict) -> str:
+    """'har 5 soniyada' / 'har 3 daqiqada' (ad ham, tasdiqlash holati ham bo'ladi)."""
+    sec = ad.get("interval_sec")
+    return f"har {int(sec)} soniyada" if sec else f"har {ad['interval_min']} daqiqada"
+
+
+def interval_short(ad: dict) -> str:
+    sec = ad.get("interval_sec")
+    return f"{int(sec)} sek" if sec else f"{ad['interval_min']} daq"
+
+
+def interval_fields(unit: str, n: int) -> dict:
+    """Tanlangan birlikdan saqlanadigan maydonlar. unit: 'min' yoki 'sec'."""
+    if unit == "sec":
+        return {"interval_min": 0, "interval_sec": int(n)}
+    return {"interval_min": int(n), "interval_sec": None}
+
+
+_INTERVAL_RE = re.compile(r"^(\d{1,3})\s*(s|sek|sec|soniya)?$", re.IGNORECASE)
+
+
+def parse_interval(raw: str):
+    """Matndan interval: '5' → ('min', 5), '3s' / '3 sek' / '3 soniya' → ('sec', 3). Noto'g'ri bo'lsa None."""
+    m = _INTERVAL_RE.match((raw or "").strip())
+    if not m:
+        return None
+    n = int(m.group(1))
+    if m.group(2):
+        return ("sec", n) if MIN_SEC <= n <= MAX_SEC else None
+    return ("min", n) if MIN_INTERVAL <= n <= MAX_INTERVAL else None
+
+
+def _status(ad: dict) -> str:
+    return "⏸ Pauzada" if ad.get("paused") else "▶️ Ishlayapti"
 
 
 def _back(callback_data: str) -> InlineKeyboardMarkup:
@@ -142,12 +189,16 @@ def menu_text() -> str:
     if not ads:
         lines.append("<i>Hozircha faol reklama yo'q.</i>")
     else:
-        lines.append(f"Faol reklamalar: <b>{len(ads)}</b>\n")
+        paused = sum(1 for a in ads if a.get("paused"))
+        head = f"Reklamalar: <b>{len(ads)}</b>"
+        if paused:
+            head += f" (⏸ pauzada: {paused})"
+        lines.append(head + "\n")
         for i, ad in enumerate(ads, start=1):
             title = _esc(ad.get("chat_title") or ad["chat_id"])
             lines.append(
                 f"{i}. 📍 <b>{title}</b> (<code>{ad['chat_id']}</code>)\n"
-                f"   ⏱ har {ad['interval_min']} daqiqada\n"
+                f"   ⏱ {interval_label(ad)} · {_status(ad)}\n"
                 f"   💬 {_esc(_preview(ad['text'], 80))}"
             )
     return "\n".join(lines)
@@ -156,8 +207,11 @@ def menu_text() -> str:
 def menu_keyboard() -> InlineKeyboardMarkup:
     rows = []
     for ad in storage.get_ads():
-        label = f"📍 {ad.get('chat_title') or ad['chat_id']} · {ad['interval_min']} daq"
-        rows.append([InlineKeyboardButton(label[:60], callback_data=f"dev:adsview:{ad['id']}")])
+        paused = bool(ad.get("paused"))
+        label = f"{'⏸' if paused else '📍'} {ad.get('chat_title') or ad['chat_id']} · {interval_short(ad)}"
+        toggle = (InlineKeyboardButton("▶️", callback_data=f"dev:adsplay:{ad['id']}") if paused
+                  else InlineKeyboardButton("⏸", callback_data=f"dev:adspause:{ad['id']}"))
+        rows.append([InlineKeyboardButton(label[:50], callback_data=f"dev:adsview:{ad['id']}"), toggle])
     rows.append([InlineKeyboardButton("➕ Reklama qo'shish", callback_data="dev:adsadd")])
     rows.append([InlineKeyboardButton("🔄 Yangilash", callback_data="dev:ads")])
     rows.append([InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:menu")])
@@ -168,13 +222,17 @@ def view_text(ad: dict) -> str:
     return (
         "📢 <b>Reklama</b>\n\n"
         f"📍 Guruh: <b>{_esc(ad.get('chat_title') or '—')}</b> (<code>{ad['chat_id']}</code>)\n"
-        f"⏱ Interval: har <b>{ad['interval_min']}</b> daqiqada\n\n"
+        f"⏱ Interval: <b>{interval_label(ad)}</b>\n"
+        f"📶 Holat: <b>{_status(ad)}</b>\n\n"
         f"💬 Matn:\n{_esc(_preview(ad['text'], 800))}"
     )
 
 
-def view_keyboard(ad_id: str) -> InlineKeyboardMarkup:
+def view_keyboard(ad_id: str, paused: bool = False) -> InlineKeyboardMarkup:
+    toggle = (InlineKeyboardButton("▶️ Davom ettirish (play)", callback_data=f"dev:adsplay:{ad_id}:v") if paused
+              else InlineKeyboardButton("⏸ Pauza", callback_data=f"dev:adspause:{ad_id}:v"))
     return InlineKeyboardMarkup([
+        [toggle],
         [InlineKeyboardButton("✏️ Tahrirlash", callback_data=f"dev:adsedit:{ad_id}")],
         [InlineKeyboardButton("🗑 To'xtatish va o'chirish", callback_data=f"dev:adsdel:{ad_id}")],
         [InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:ads")],
@@ -204,8 +262,9 @@ def text_prompt_text(chat_title: str) -> str:
 def minutes_prompt_text() -> str:
     return (
         "➕ <b>Reklama qo'shish</b> — 3/3\n\n"
-        f"Necha <b>daqiqada</b> bir marta yuborilsin?\n"
-        f"{MIN_INTERVAL} dan {MAX_INTERVAL} gacha tugmani bosing yoki raqam yozing."
+        f"Qancha vaqtda bir marta yuborilsin?\n"
+        f"• <b>Daqiqa</b>: {MIN_INTERVAL}–{MAX_INTERVAL} (raqam tugmalari yoki raqam yozing)\n"
+        f"• <b>Soniya</b>: {MIN_SEC}–{MAX_SEC} (\"sek\" tugmalari yoki <code>3s</code> deb yozing)"
     )
 
 
@@ -215,6 +274,8 @@ def minutes_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(str(n), callback_data=f"dev:adsmin:{n}") for n in nums[i:i + 5]]
         for i in range(0, len(nums), 5)
     ]
+    rows.append([InlineKeyboardButton(f"{n} sek", callback_data=f"dev:adssec:{n}")
+                 for n in range(MIN_SEC, MAX_SEC + 1)])
     rows.append([InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:ads")])
     return InlineKeyboardMarkup(rows)
 
@@ -223,10 +284,10 @@ def confirm_text(action: dict) -> str:
     return (
         "✅ <b>Tasdiqlang</b>\n\n"
         f"📍 Guruh: <b>{_esc(action['chat_title'])}</b> (<code>{action['chat_id']}</code>)\n"
-        f"⏱ Interval: har <b>{action['interval_min']}</b> daqiqada\n\n"
+        f"⏱ Interval: <b>{interval_label(action)}</b>\n\n"
         f"💬 Matn:\n{_esc(_preview(action['text'], 600))}\n\n"
-        "Tasdiqlasangiz, birinchi xabar <b>darhol</b> yuboriladi, keyin har "
-        f"{action['interval_min']} daqiqada takrorlanadi."
+        "Tasdiqlasangiz, birinchi xabar <b>darhol</b> yuboriladi, keyin "
+        f"{interval_label(action)} takrorlanadi."
     )
 
 
@@ -246,7 +307,7 @@ def edit_menu_text(ad: dict) -> str:
     return (
         "✏️ <b>Reklamani tahrirlash</b>\n\n"
         f"📍 Guruh: <b>{_esc(ad.get('chat_title') or '—')}</b> (<code>{ad['chat_id']}</code>)\n"
-        f"⏱ Interval: har <b>{ad['interval_min']}</b> daqiqada\n\n"
+        f"⏱ Interval: <b>{interval_label(ad)}</b>\n\n"
         f"💬 Matn:\n{_esc(_preview(ad['text'], 600))}\n\n"
         "Qaysi ma'lumotni o'zgartirmoqchisiz?"
     )
@@ -284,8 +345,9 @@ def edit_group_prompt(ad: dict) -> str:
 def edit_minutes_prompt(ad: dict) -> str:
     return (
         "✏️ <b>Intervalni o'zgartirish</b>\n\n"
-        f"Hozir: har <b>{ad['interval_min']}</b> daqiqada.\n"
-        f"Yangi qiymatni tanlang ({MIN_INTERVAL}–{MAX_INTERVAL}) yoki raqam yozing."
+        f"Hozir: <b>{interval_label(ad)}</b>.\n"
+        f"Yangi qiymatni tanlang: daqiqa {MIN_INTERVAL}–{MAX_INTERVAL}, soniya {MIN_SEC}–{MAX_SEC} "
+        "(yozsangiz: <code>5</code> = daqiqa, <code>3s</code> = soniya)."
     )
 
 
@@ -295,6 +357,8 @@ def edit_minutes_keyboard(ad_id: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(str(n), callback_data=f"dev:adseditmin:{ad_id}:{n}") for n in nums[i:i + 5]]
         for i in range(0, len(nums), 5)
     ]
+    rows.append([InlineKeyboardButton(f"{n} sek", callback_data=f"dev:adseditsec:{ad_id}:{n}")
+                 for n in range(MIN_SEC, MAX_SEC + 1)])
     rows.append([InlineKeyboardButton("❌ Bekor qilish", callback_data=f"dev:adsedit:{ad_id}")])
     return InlineKeyboardMarkup(rows)
 
@@ -303,7 +367,8 @@ def apply_edit(application, ad_id: str, **fields) -> dict | None:
     """Reklamani saqlangan holda yangilaydi. Interval yoki guruh o'zgarsa, fon vazifasi
     yangi sozlama bilan qayta rejalashtiriladi (matn har yuborishda storage'dan o'qiladi)."""
     ad = storage.update_ad(ad_id, **fields)
-    if ad and ("interval_min" in fields or "chat_id" in fields):
+    if ad and not ad.get("paused") and (
+            "interval_min" in fields or "interval_sec" in fields or "chat_id" in fields):
         start_ad(application, ad)
     return ad
 
@@ -480,10 +545,12 @@ async def _ad_loop(application, ad_id: str, first_delay: float):
         ad = storage.get_ad(ad_id)
         if not ad:
             return  # admin o'chirgan
+        if ad.get("paused"):
+            return  # ⏸ pauzaga qo'yilgan — ▶️ bosilganda qayta ishga tushiriladi
         try:
             await send_ad(ad)
             failures = 0
-            delay = ad["interval_min"] * 60
+            delay = interval_seconds(ad)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -504,13 +571,13 @@ async def _ad_loop(application, ad_id: str, first_delay: float):
                     f"{MAX_FAILURES} marta ketma-ket yuborib bo'lmadi ({describe_error(exc)})",
                 )
                 return
-            delay = ad["interval_min"] * 60
+            delay = interval_seconds(ad)
 
 
 def start_ad(application, ad: dict, first_delay: float | None = None) -> None:
     stop_task(ad["id"])
     if first_delay is None:
-        first_delay = ad["interval_min"] * 60
+        first_delay = interval_seconds(ad)
     _tasks[ad["id"]] = asyncio.create_task(_ad_loop(application, ad["id"], first_delay))
 
 
@@ -522,21 +589,37 @@ def stop_task(ad_id: str) -> None:
 
 def reschedule_all(application) -> None:
     """Bot ishga tushganda (post_init) chaqiriladi — saqlangan barcha reklamalar tiklanadi."""
-    ads = storage.get_ads()
+    ads = [a for a in storage.get_ads() if not a.get("paused")]
     for ad in ads:
-        start_ad(application, ad, first_delay=min(ad["interval_min"] * 60, RESTART_FIRST_DELAY_SEC))
-    logger.info("📢 Reklamalar qayta rejalashtirildi: %d ta.", len(ads))
+        start_ad(application, ad, first_delay=min(interval_seconds(ad), RESTART_FIRST_DELAY_SEC))
+    logger.info("📢 Reklamalar qayta rejalashtirildi: %d ta (pauzadagilar o'tkazib yuborildi).", len(ads))
+
+
+def pause_ad(ad_id: str) -> dict | None:
+    """⏸ Reklamani to'xtatib turadi (o'chirmaydi): fon vazifasi bekor qilinadi, holat saqlanadi
+    (bot qayta ishga tushsa ham pauzada qoladi)."""
+    ad = storage.update_ad(ad_id, paused=True)
+    stop_task(ad_id)
+    return ad
+
+
+def resume_ad(application, ad_id: str) -> dict | None:
+    """▶️ Pauzadagi reklamani qayta ishga tushiradi: birinchi xabar darhol, keyingilari intervalda."""
+    ad = storage.update_ad(ad_id, paused=False)
+    if ad:
+        start_ad(application, ad, first_delay=0)
+    return ad
 
 
 async def activate(application, *, chat_id: int, chat_title: str, text: str,
-                   interval_min: int, created_by: int) -> dict:
+                   interval_min: int, created_by: int, interval_sec: int | None = None) -> dict:
     """Reklamani saqlaydi, birinchi xabarni DARHOL yuboradi (shu bilan guruh/huquq ham
     tekshiriladi) va takroriy yuborishni boshlaydi. Birinchi yuborish muvaffaqiyatsiz
     bo'lsa — reklama o'chiriladi (hech narsa qolmaydi) va xato ko'tariladi.
     (Inline handler reklamani storage'dan o'qiydi, shuning uchun avval saqlanadi.)"""
     if len(storage.get_ads()) >= storage.MAX_ADS:
         raise ValueError(f"Faol reklamalar soni chegarasi ({storage.MAX_ADS}) to'lgan.")
-    ad = storage.add_ad(chat_id, chat_title, text, interval_min, created_by)
+    ad = storage.add_ad(chat_id, chat_title, text, interval_min, created_by, interval_sec=interval_sec)
     try:
         await send_ad(ad)
     except BaseException:
@@ -598,7 +681,9 @@ async def handle_dev_callback(action, parts, update, context, query, DEV_MENU, D
             await edit(query, edit_minutes_prompt(ad), reply_markup=edit_minutes_keyboard(ad_id), parse_mode="HTML")
         return DEV_WAIT_TEXT
 
-    if action == "adseditmin":
+    if action in ("adseditmin", "adseditsec"):
+        unit = "sec" if action == "adseditsec" else "min"
+        lo, hi = (MIN_SEC, MAX_SEC) if unit == "sec" else (MIN_INTERVAL, MAX_INTERVAL)
         ad_id = parts[2] if len(parts) > 2 else ""
         try:
             minutes = int(parts[3])
@@ -609,12 +694,12 @@ async def handle_dev_callback(action, parts, update, context, query, DEV_MENU, D
             await edit(query, "⚠️ Bu reklama topilmadi (o'chirilgan bo'lishi mumkin).",
                        reply_markup=_back("dev:ads"), parse_mode="HTML")
             return DEV_MENU
-        if not (MIN_INTERVAL <= minutes <= MAX_INTERVAL):
-            await edit(query, "⚠️ Daqiqa noto'g'ri.\n\n" + edit_minutes_prompt(ad),
+        if not (lo <= minutes <= hi):
+            await edit(query, "⚠️ Qiymat noto'g'ri.\n\n" + edit_minutes_prompt(ad),
                        reply_markup=edit_minutes_keyboard(ad_id), parse_mode="HTML")
             return DEV_WAIT_TEXT
         context.user_data.pop("dev_action", None)
-        ad = apply_edit(context.application, ad_id, interval_min=minutes)
+        ad = apply_edit(context.application, ad_id, **interval_fields(unit, minutes))
         await edit(query, "✅ Interval yangilandi.\n\n" + edit_menu_text(ad),
                    reply_markup=edit_menu_keyboard(ad_id), parse_mode="HTML")
         return DEV_MENU
@@ -626,7 +711,29 @@ async def handle_dev_callback(action, parts, update, context, query, DEV_MENU, D
             await edit(query, "⚠️ Bu reklama topilmadi (o'chirilgan bo'lishi mumkin).",
                        reply_markup=_back("dev:ads"), parse_mode="HTML")
             return DEV_MENU
-        await edit(query, view_text(ad), reply_markup=view_keyboard(ad["id"]), parse_mode="HTML")
+        await edit(query, view_text(ad), reply_markup=view_keyboard(ad["id"], bool(ad.get("paused"))),
+                   parse_mode="HTML")
+        return DEV_MENU
+
+    if action in ("adspause", "adsplay"):
+        context.user_data.pop("dev_action", None)
+        ad_id = parts[2] if len(parts) > 2 else ""
+        from_view = len(parts) > 3 and parts[3] == "v"
+        if not storage.get_ad(ad_id):
+            await edit(query, "⚠️ Bu reklama topilmadi (o'chirilgan bo'lishi mumkin).",
+                       reply_markup=_back("dev:ads"), parse_mode="HTML")
+            return DEV_MENU
+        if action == "adspause":
+            ad = pause_ad(ad_id)
+            note = "⏸ Reklama pauzaga qo'yildi. Qayta yoqish uchun ▶️ bosing."
+        else:
+            ad = resume_ad(context.application, ad_id)
+            note = "▶️ Reklama qayta ishga tushirildi (birinchi xabar hozir yuboriladi)."
+        if from_view:
+            await edit(query, note + "\n\n" + view_text(ad),
+                       reply_markup=view_keyboard(ad_id, bool(ad.get("paused"))), parse_mode="HTML")
+        else:
+            await edit(query, note + "\n\n" + menu_text(), reply_markup=menu_keyboard(), parse_mode="HTML")
         return DEV_MENU
 
     if action == "adsdel":
@@ -650,7 +757,9 @@ async def handle_dev_callback(action, parts, update, context, query, DEV_MENU, D
                    reply_markup=menu_keyboard(), parse_mode="HTML")
         return DEV_MENU
 
-    if action == "adsmin":
+    if action in ("adsmin", "adssec"):
+        unit = "sec" if action == "adssec" else "min"
+        lo, hi = (MIN_SEC, MAX_SEC) if unit == "sec" else (MIN_INTERVAL, MAX_INTERVAL)
         pending = context.user_data.get("dev_action") or {}
         if pending.get("type") != "ads_minutes":
             await edit(query, "⚠️ Reklama sessiyasi topilmadi. Qaytadan boshlang.\n\n" + menu_text(),
@@ -660,11 +769,11 @@ async def handle_dev_callback(action, parts, update, context, query, DEV_MENU, D
             minutes = int(parts[2])
         except (IndexError, ValueError):
             minutes = 0
-        if not (MIN_INTERVAL <= minutes <= MAX_INTERVAL):
-            await edit(query, "⚠️ Daqiqa noto'g'ri.\n\n" + minutes_prompt_text(),
+        if not (lo <= minutes <= hi):
+            await edit(query, "⚠️ Qiymat noto'g'ri.\n\n" + minutes_prompt_text(),
                        reply_markup=minutes_keyboard(), parse_mode="HTML")
             return DEV_WAIT_TEXT
-        confirm = {**pending, "type": "ads_confirm", "interval_min": minutes}
+        confirm = {**pending, "type": "ads_confirm", **interval_fields(unit, minutes)}
         context.user_data["dev_action"] = confirm
         await edit(query, confirm_text(confirm), reply_markup=confirm_keyboard(), parse_mode="HTML")
         return DEV_MENU
@@ -683,6 +792,7 @@ async def handle_dev_callback(action, parts, update, context, query, DEV_MENU, D
                 context.application,
                 chat_id=pending["chat_id"], chat_title=pending["chat_title"],
                 text=pending["text"], interval_min=pending["interval_min"],
+                interval_sec=pending.get("interval_sec"),
                 created_by=update.effective_user.id,
             )
         except Exception as exc:
@@ -698,7 +808,7 @@ async def handle_dev_callback(action, parts, update, context, query, DEV_MENU, D
             query,
             "✅ <b>Reklama faollashtirildi.</b>\n\n"
             f"Birinchi xabar <b>{_esc(ad['chat_title'])}</b> guruhiga yuborildi. "
-            f"Keyingilari har {ad['interval_min']} daqiqada yuboriladi.\n\n" + menu_text(),
+            f"Keyingilari {interval_label(ad)} yuboriladi.\n\n" + menu_text(),
             reply_markup=menu_keyboard(), parse_mode="HTML",
         )
         return DEV_MENU
@@ -758,16 +868,18 @@ async def handle_dev_text(action, update, context, DEV_MENU, DEV_WAIT_TEXT):
         if not ad:
             await edit_menu(context, "⚠️ Bu reklama topilmadi (o'chirilgan bo'lishi mumkin).\n\n" + menu_text(), menu_keyboard())
             return DEV_MENU
-        if not raw.isdigit() or not (MIN_INTERVAL <= int(raw) <= MAX_INTERVAL):
+        parsed = parse_interval(raw)
+        if not parsed:
             await edit_menu(
                 context,
-                f"⚠️ Faqat {MIN_INTERVAL} dan {MAX_INTERVAL} gacha butun son kiriting.\n\n" + edit_minutes_prompt(ad),
+                f"⚠️ Daqiqa uchun {MIN_INTERVAL}–{MAX_INTERVAL}, soniya uchun {MIN_SEC}–{MAX_SEC} "
+                "(masalan <code>3s</code>) kiriting.\n\n" + edit_minutes_prompt(ad),
                 edit_minutes_keyboard(ad["id"]),
             )
             context.user_data["dev_action"] = action
             return DEV_WAIT_TEXT
         context.user_data.pop("dev_action", None)
-        ad = apply_edit(context.application, ad["id"], interval_min=int(raw))
+        ad = apply_edit(context.application, ad["id"], **interval_fields(*parsed))
         await edit_menu(context, "✅ Interval yangilandi.\n\n" + edit_menu_text(ad), edit_menu_keyboard(ad["id"]))
         return DEV_MENU
 
@@ -811,15 +923,17 @@ async def handle_dev_text(action, update, context, DEV_MENU, DEV_WAIT_TEXT):
         return DEV_WAIT_TEXT
 
     if kind == "ads_minutes":
-        if not raw.isdigit() or not (MIN_INTERVAL <= int(raw) <= MAX_INTERVAL):
+        parsed = parse_interval(raw)
+        if not parsed:
             await edit_menu(
                 context,
-                f"⚠️ Faqat {MIN_INTERVAL} dan {MAX_INTERVAL} gacha butun son kiriting.\n\n" + minutes_prompt_text(),
+                f"⚠️ Daqiqa uchun {MIN_INTERVAL}–{MAX_INTERVAL}, soniya uchun {MIN_SEC}–{MAX_SEC} "
+                "(masalan <code>3s</code>) kiriting.\n\n" + minutes_prompt_text(),
                 minutes_keyboard(),
             )
             context.user_data["dev_action"] = action
             return DEV_WAIT_TEXT
-        confirm = {**action, "type": "ads_confirm", "interval_min": int(raw)}
+        confirm = {**action, "type": "ads_confirm", **interval_fields(*parsed)}
         context.user_data["dev_action"] = confirm
         await edit_menu(context, confirm_text(confirm), confirm_keyboard())
         return DEV_MENU
