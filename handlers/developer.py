@@ -286,6 +286,7 @@ def _main_menu_keyboard() -> InlineKeyboardMarkup:
          InlineKeyboardButton("☁️ GitHub", callback_data="dev:github")],
         [InlineKeyboardButton("🔍 Inline jurnali", callback_data="dev:inlinelog:all"),
          InlineKeyboardButton("📢 Reklama", callback_data="dev:ads")],
+        [InlineKeyboardButton("👥 Guruh", callback_data="dev:grp")],
         [InlineKeyboardButton("❌ Yopish", callback_data="dev:close")],
     ]
     return InlineKeyboardMarkup(rows)
@@ -1677,7 +1678,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # oldingi "kutilayotgan matn kiritish" holatini tozalaydi — pastda
     # tegishli branch (edit/keyaddprov/keyrepl/keymodel/bulkprov/keybulkscope)
     # kerak bo'lsa uni qaytadan o'rnatadi.
-    if action not in ("edit", "bulkprov", "keyaddprov", "keyrepl", "keymodel", "keybulkscope", "imgaddmanual", "imgmodelmanual", "priceedit", "balsearch", "ptsong", "ptemoji", "ptdelay", "ptrevert", "gh", "github", "mt_stop", "giftconfirm", "adsmin", "adsok"):
+    if action not in ("edit", "bulkprov", "keyaddprov", "keyrepl", "keymodel", "keybulkscope", "imgaddmanual", "imgmodelmanual", "priceedit", "balsearch", "ptsong", "ptemoji", "ptdelay", "ptrevert", "gh", "github", "mt_stop", "giftconfirm", "adsmin", "adsok", "grpok"):
         context.user_data.pop("dev_action", None)
 
     # ---------- Asosiy menyu ----------
@@ -1848,6 +1849,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from handlers import ads as ads_ui
     if action in ads_ui.ACTIONS:
         return await ads_ui.handle_dev_callback(action, parts, update, context, query, DEV_MENU, DEV_WAIT_TEXT)
+    # ---------- 👥 Guruh (kontakt yig'ish / qo'shish) ----------
+    from handlers import groups as groups_ui
+    if action in groups_ui.ACTIONS:
+        return await groups_ui.handle_dev_callback(action, parts, update, context, query, DEV_MENU, DEV_WAIT_TEXT)
     # ---------- 🧪 Loyiha testlari ----------
     if action == "tests":
         await _safe_edit_query(query, "🧪 <b>tests/ papkasi tekshirilmoqda...</b>\nBarcha testlar ishga tushirilmoqda, biroz kuting.", parse_mode="HTML")
@@ -3095,6 +3100,10 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(action_type).startswith("ads_"):
         from handlers import ads as ads_ui
         return await ads_ui.handle_dev_text(action, update, context, DEV_MENU, DEV_WAIT_TEXT)
+
+    if str(action_type).startswith("grp_"):
+        from handlers import groups as groups_ui
+        return await groups_ui.handle_dev_text(action, update, context, DEV_MENU, DEV_WAIT_TEXT)
 
     if action_type == "github_new_path":
         # Path is intentionally accepted separately from content to support
