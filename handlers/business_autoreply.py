@@ -107,7 +107,7 @@ async def bossiyons_cmd(update, context):
 
 async def receive_reply_text(update, context):
     if not context.user_data.get(_WAITING_TEXT):
-        return
+        return False  # bu xabar bizniki emas — keyingi handlerlarga o'tsin
     message = update.effective_message
     user = update.effective_user
     if not message or not user or message.chat.type != "private":
@@ -115,19 +115,19 @@ async def receive_reply_text(update, context):
             "AUTOREPLY_TEXT_IGNORED reason=NOT_PRIVATE_OR_MISSING user_id=%s",
             getattr(user, "id", None),
         )
-        return
+        return False
     text = (message.text or "").strip()
     if not text:
         logger.warning("AUTOREPLY_TEXT_REJECTED user_id=%s reason=EMPTY", user.id)
         await message.reply_text("Iltimos, oddiy matn yuboring.")
-        return
+        return True
     if len(text) > 4096:
         logger.warning(
             "AUTOREPLY_TEXT_REJECTED user_id=%s reason=TOO_LONG length=%s",
             user.id, len(text),
         )
         await message.reply_text("Matn 4096 belgidan oshmasligi kerak. Qisqartirib qayta yuboring.")
-        return
+        return True
     context.user_data[_WAITING_TEXT] = False
     context.user_data[_DRAFT_KEY] = text
     keyboard = InlineKeyboardMarkup([
@@ -137,6 +137,7 @@ async def receive_reply_text(update, context):
     ])
     await message.reply_text("Kimlarga avtomatik javob yuborilsin?", reply_markup=keyboard)
     logger.info("AUTOREPLY_TEXT_ACCEPTED user_id=%s text_length=%s", user.id, len(text))
+    return True
 
 
 async def choice_callback(update, context):

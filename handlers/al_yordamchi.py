@@ -405,8 +405,10 @@ async def receive_setup_text(update, context):
         # ishlatadi. Shuning uchun AL YORDAMCHI handleri oddiy holatda eski
         # /bossiyons matn kutish oqimini o'ziga delegatsiya qiladi.
         from handlers import business_autoreply
-        await business_autoreply.receive_reply_text(update, context)
-        return True
+        # MUHIM: faqat /bossiyons matni haqiqatan qabul qilingandagina True qaytadi.
+        # Aks holda (masalan /developer > Reklama'da guruh ID yozilganda) xabar
+        # keyingi handlerlarga (ConversationHandler'larga) o'tishi kerak.
+        return bool(await business_autoreply.receive_reply_text(update, context))
     message = update.effective_message
     user = update.effective_user
     if not message or not user or message.chat.type != "private" or not message.text:
