@@ -24,7 +24,9 @@ logger = logging.getLogger(__name__)
 ACTIONS = {"grp", "grpcol", "grpadd", "grpok", "grpstop"}
 
 COLLECT_DELAY_SEC = 1.0        # kontakt saqlashlar orasidagi pauza
-ADD_DELAY_SEC = 4.0            # guruhga qo'shishlar orasidagi pauza (Telegram tez qo'shishni jazolaydi)
+ADD_DELAY_SEC = 4.0            # qo'shish so'rovlari orasidagi pauza (Telegram tez qo'shishni jazolaydi)
+ADD_BATCH_SIZE = 100           # supergruppa/kanalda BITTA so'rovda nechta odam qo'shiladi (Telegram max = 100).
+                               # PeerFlood chiqsa 20-30 ga kamaytiring. 1 = eski usul (bittadan).
 MAX_FLOOD_WAIT_SEC = 120       # shundan uzoq FloodWait bo'lsa — kutmasdan to'xtaymiz
 MAX_CONSECUTIVE_FAILS = 10     # ketma-ket shuncha xatodan keyin to'xtaymiz
 PROGRESS_EVERY_SEC = 4.0       # jarayon xabarini yangilash oralig'i
@@ -116,8 +118,12 @@ def _confirm_text(pending: dict) -> str:
                 "Bot, o'chirilgan akkaunt va allaqachon kontaktda bor odamlar o'tkazib yuboriladi.")
     else:
         size = f" ({count} ta kontakt)" if count else ""
-        body = (f"Akkauntdagi barcha kontaktlar{size} <b>{title}</b> guruhiga qo'shiladi. "
-                f"Telegram cheklovi uchun har biri orasida ~{int(ADD_DELAY_SEC)} soniya pauza bo'ladi.")
+        if ADD_BATCH_SIZE > 1:
+            note = (f"Supergruppada {ADD_BATCH_SIZE} tadan paket qilib, bir vaqtda qo'shiladi "
+                    f"(paketlar orasida ~{int(ADD_DELAY_SEC)} soniya pauza).")
+        else:
+            note = f"Telegram cheklovi uchun har biri orasida ~{int(ADD_DELAY_SEC)} soniya pauza bo'ladi."
+        body = f"Akkauntdagi barcha kontaktlar{size} <b>{title}</b> guruhiga qo'shiladi. {note}"
     return f"{_kind_label(pending['kind'])}\n\n{body}\n\nBoshlaymizmi?"
 
 
@@ -190,6 +196,21 @@ def _invite_request(entity, user):
         return InviteToChannelRequest(entity, [user])
     from telethon.tl.functions.messages import AddChatUserRequest
     return AddChatUserRequest(chat_id=entity.id, user_id=user, fwd_limit=50)
+
+
+def _is_channel(entity) -> bool:
+    return type(entity).__name__ == "Channel"
+
+
+def _invite_many_request(entity, users):
+    """Supergruppa/kanalga bir so'rovda ko'p odam qo'shish (oddiy guruhda bunday imkon yo'q)."""
+    from telethon.tl.functions.channels import InviteToChannelRequest
+    return InviteToChannelRequest(entity, list(users))
+
+
+def _missing_ids(result) -> set:
+    """Paketdan qo'shib bo'lmagan (maxfiylik va h.k.) foydalanuvchilar ID lari."""
+    return {getattr(m, "user_id", None) for m in (getattr(result, "missing_invitees", None) or [])}
 
 
 async def _get_contacts(client) -> list:
@@ -271,8 +292,53 @@ async def collect_contacts(client, entity, state, on_progress, my_id=None):
         await asyncio.sleep(COLLECT_DELAY_SEC)
 
 
+async def _add_one(client, entity, user, state, on_progress, fails: int):
+    """Bitta odamni qo'shadi. (fails, to'xtatish_kerakmi) qaytaradi."""
+    try:
+        await _call(client, _invite_request(entity, user), state, on_progress)
+        state["ok"] += 1
+        return 0, False
+    except Exception as exc:
+        name = type(exc).__name__
+        if name in _FATAL_ERRORS:
+            state["error"] = _fatal_message(exc)
+            return fails, True
+        reason = _ADD_REASONS.get(name)
+        if reason == "allaqachon a'zo":
+            state["skipped"] += 1
+        else:
+            state["failed"] += 1
+            state["reasons"][reason or name] += 1
+        if reason:
+            return 0, False  # bu foydalanuvchining o'z sababi — umumiy muammo emas
+        fails += 1
+        logger.info("👥 Guruhga qo'shilmadi: user=%s %s: %s", getattr(user, "id", "?"), name, exc)
+        if fails >= MAX_CONSECUTIVE_FAILS:
+            state["error"] = f"Ketma-ket {fails} ta xato: {name}. Jarayon to'xtatildi."
+            return fails, True
+        return fails, False
+
+
+async def _add_one_by_one(client, entity, users, state, on_progress) -> bool:
+    """Bittalab qo'shadi (pauza bilan). To'xtatish kerak bo'lsa True qaytaradi."""
+    fails = 0
+    for user in users:
+        if state["stop"]:
+            return True
+        fails, halt = await _add_one(client, entity, user, state, on_progress, fails)
+        await on_progress()
+        if halt:
+            return True
+        await asyncio.sleep(ADD_DELAY_SEC)
+    return False
+
+
 async def add_contacts_to_group(client, entity, contacts, state, on_progress, my_id=None):
-    """Akkaunt kontaktlarini guruhga qo'shadi (guruhdagilar o'tkazib yuboriladi)."""
+    """Akkaunt kontaktlarini guruhga qo'shadi (guruhdagilar o'tkazib yuboriladi).
+
+    Supergruppa/kanalda ADD_BATCH_SIZE tadan paket qilib BIR so'rovda qo'shadi;
+    oddiy guruhda Telegram faqat bittalab qo'shishga ruxsat beradi.
+    """
     existing = set()
     try:
         async for member in client.iter_participants(entity):
@@ -280,39 +346,43 @@ async def add_contacts_to_group(client, entity, contacts, state, on_progress, my
     except Exception as exc:  # a'zolar ro'yxati yopiq bo'lishi mumkin — shunchaki o'tkazib yuboramiz
         logger.info("👥 Guruh a'zolarini o'qib bo'lmadi: %s: %s", type(exc).__name__, exc)
 
-    fails = 0
+    todo = []
     for user in contacts:
-        if state["stop"]:
-            break
         if _is_skippable(user, my_id) or user.id in existing:
             state["skipped"] += 1
-            await on_progress()
-            continue
+        else:
+            todo.append(user)
+    await on_progress()
+
+    if not (_is_channel(entity) and ADD_BATCH_SIZE > 1):
+        await _add_one_by_one(client, entity, todo, state, on_progress)
+        return
+
+    size = max(1, int(ADD_BATCH_SIZE))
+    for i in range(0, len(todo), size):
+        if state["stop"]:
+            break
+        batch = todo[i:i + size]
         try:
-            await _call(client, _invite_request(entity, user), state, on_progress)
-            state["ok"] += 1
-            fails = 0
+            result = await _call(client, _invite_many_request(entity, batch), state, on_progress)
         except Exception as exc:
             name = type(exc).__name__
             if name in _FATAL_ERRORS:
                 state["error"] = _fatal_message(exc)
                 break
-            reason = _ADD_REASONS.get(name)
-            if reason == "allaqachon a'zo":
-                state["skipped"] += 1
-            else:
-                state["failed"] += 1
-                state["reasons"][reason or name] += 1
-            if reason:
-                fails = 0  # bu foydalanuvchining o'z sababi — umumiy muammo emas
-            else:
-                fails += 1
-                logger.info("👥 Guruhga qo'shilmadi: user=%s %s: %s", getattr(user, "id", "?"), name, exc)
-                if fails >= MAX_CONSECUTIVE_FAILS:
-                    state["error"] = f"Ketma-ket {fails} ta xato: {name}. Jarayon to'xtatildi."
-                    break
+            # Paket butunlay rad etildi (masalan, bitta odam tufayli) — shu paketni bittalab qo'shamiz
+            logger.info("👥 Paket rad etildi (%s), bittalab urinamiz: %s", name, exc)
+            if await _add_one_by_one(client, entity, batch, state, on_progress):
+                break
+            continue
+        missing = _missing_ids(result)
+        if missing:
+            state["failed"] += len(missing)
+            state["reasons"]["maxfiylik sozlamasi"] += len(missing)
+        state["ok"] += len(batch) - len(missing)
         await on_progress()
-        await asyncio.sleep(ADD_DELAY_SEC)
+        if i + size < len(todo):
+            await asyncio.sleep(ADD_DELAY_SEC)
 
 
 async def _run_job(bot, chat_id, message_id, job: dict, group_chat_id: int):

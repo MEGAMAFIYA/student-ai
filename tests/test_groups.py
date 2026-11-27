@@ -27,7 +27,7 @@ def U(uid, first="Ali", last="", **kw):
 
 class FakeClient:
     def __init__(self, members=(), fail=None):
-        self.members, self.fail, self.calls = list(members), fail or {}, []
+        self.members, self.fail, self.calls, self.missing = list(members), fail or {}, [], []
 
     async def iter_participants_gen(self):
         for m in self.members:
@@ -38,6 +38,11 @@ class FakeClient:
 
     async def __call__(self, request):
         self.calls.append(request)
+        if request[0] == "invite_many":
+            for u in request[1]:
+                if self.fail.get(u.id) is not None:
+                    raise self.fail[u.id]
+            return types.SimpleNamespace(missing_invitees=[types.SimpleNamespace(user_id=i) for i in self.missing if i in {u.id for u in request[1]}])
         exc = self.fail.get(request[1].id)
         if isinstance(exc, list):
             exc = exc.pop(0) if exc else None
@@ -55,16 +60,19 @@ class GroupsTest(unittest.TestCase):
         groups.COLLECT_DELAY_SEC = groups.ADD_DELAY_SEC = 0
         groups._add_contact_request = lambda u: ("contact", u)
         groups._invite_request = lambda e, u: ("invite", u)
+        groups._invite_many_request = lambda e, us: ("invite_many", list(us))
+        groups.ADD_BATCH_SIZE = 100
 
     def run_collect(self, client, my_id=1):
         st = groups._new_state()
         asyncio.run(groups.collect_contacts(client, object(), st, _noop, my_id))
         return st
 
-    def run_add(self, client, contacts, existing=(), my_id=1):
+    def run_add(self, client, contacts, existing=(), my_id=1, channel=False):
         client.members = [U(i) for i in existing]
         st = groups._new_state(len(contacts))
         entity = types.SimpleNamespace(id=5)
+        groups._is_channel = lambda e: channel
         asyncio.run(groups.add_contacts_to_group(client, entity, contacts, st, _noop, my_id))
         return st
 
@@ -136,6 +144,37 @@ class GroupsTest(unittest.TestCase):
         c = FakeClient(fail={11: _mk("PeerFloodError", {})})
         st = self.run_add(c, [U(10), U(11), U(12)])
         self.assertEqual(st["ok"], 1)
+        self.assertTrue(st["error"])
+        self.assertEqual(len(c.calls), 2)
+
+    # ---- paketli qo'shish (supergruppa) ----
+    def test_add_batches_all_in_one_request(self):
+        c = FakeClient()
+        st = self.run_add(c, [U(i) for i in range(10, 60)], channel=True)
+        self.assertEqual(len(c.calls), 1)
+        self.assertEqual(len(c.calls[0][1]), 50)
+        self.assertEqual(st["ok"], 50)
+
+    def test_add_batch_splits_by_size_and_counts_missing(self):
+        groups.ADD_BATCH_SIZE = 20
+        c = FakeClient()
+        c.missing = [10]
+        st = self.run_add(c, [U(i) for i in range(10, 50)], channel=True)
+        self.assertEqual(len(c.calls), 2)
+        self.assertEqual((st["ok"], st["failed"]), (39, 1))
+        self.assertEqual(st["reasons"]["maxfiylik sozlamasi"], 1)
+
+    def test_add_batch_falls_back_to_single_on_batch_error(self):
+        c = FakeClient(fail={11: _mk("UserPrivacyRestrictedError", {})})
+        st = self.run_add(c, [U(10), U(11), U(12)], channel=True)
+        self.assertEqual((st["ok"], st["failed"]), (2, 1))
+        self.assertEqual(len(c.calls), 4)  # 1 paket + 3 bittalab
+
+    def test_add_batch_stops_on_peer_flood(self):
+        groups.ADD_BATCH_SIZE = 2
+        c = FakeClient(fail={12: _mk("PeerFloodError", {})})
+        st = self.run_add(c, [U(10), U(11), U(12), U(13), U(14)], channel=True)
+        self.assertEqual(st["ok"], 2)
         self.assertTrue(st["error"])
         self.assertEqual(len(c.calls), 2)
 
