@@ -18,6 +18,9 @@ PEM = "-----BEGIN KEY-----\n" + "\n".join("MIIEvQIBADANBgkqhkiG9w0BAQEFAASC" for
 
 ITEMS = [
     {"key": "BOT_TOKEN", "value": "123456:ABC-def_GHI"},
+    {"key": "TELEGRAM_TOKEN", "value": "7777777777:AAHsecretSECRETsecretSECRETsecret123"},
+    {"key": "MY_ODD_NAME", "value": "8888888888:AAGodd-name_ODDname_ODDname_ODD12345"},
+    {"key": "TELEGRAM_BOT_TOKEN", "value": None},
     {"key": "DATABASE_URL", "value": "postgresql://u:p%40ss@h:5432/db?a=1&b=<x>&c=\"'"},
     {"key": "PEM", "value": PEM},
     {"key": "UZ", "value": "o‘zbek ʻtil — «test» 😀"},
@@ -29,7 +32,8 @@ ITEMS = [
     {"key": "BAD-KEY", "value": "x"},
 ]
 SERVICE = {"id": "srv-abc123", "name": "student-ai"}
-EXPECTED = {i["key"]: i["value"] for i in ITEMS if i["value"] is not None}
+BOT_TOKEN_KEYS = ["BOT_TOKEN", "TELEGRAM_TOKEN", "MY_ODD_NAME"]
+EXPECTED = {i["key"]: i["value"] for i in ITEMS if i["value"] is not None and i["key"] not in BOT_TOKEN_KEYS}
 
 
 def _strip_attachments(pdf: bytes) -> bytes:
@@ -50,6 +54,29 @@ class EnvPdfRoundTripTests(unittest.TestCase):
 
     def _vars(self, data: bytes) -> dict[str, str]:
         return {v["key"]: v["value"] for v in env_pdf.parse_env_pdf(data)["vars"]}
+
+    def test_bot_token_is_never_in_pdf(self):
+        from pypdf import PdfReader
+        self.assertEqual(sorted(self.info["excluded"]), sorted(BOT_TOKEN_KEYS))
+        vars_ = self._vars(self.pdf)
+        for k in BOT_TOKEN_KEYS:
+            self.assertNotIn(k, vars_)
+        secrets = ("123456:ABC-def_GHI", "AAHsecretSECRET", "AAGodd-name")
+        reader = PdfReader(io.BytesIO(self.pdf))
+        visible = "".join(p.extract_text() or "" for p in reader.pages)
+        blob = self.pdf + b"".join(b for v in reader.attachments.values() for b in v)
+        for sec in secrets:
+            self.assertNotIn(sec, visible)
+            self.assertNotIn(sec.encode(), blob)
+        # tushunarli izoh bor, "missing" ro'yxatida ham token nomi yo'q
+        self.assertIn("bot tokeni", visible)
+        self.assertNotIn("TELEGRAM_BOT_TOKEN", self.info["missing"])
+
+    def test_is_bot_token(self):
+        self.assertTrue(env_pdf.is_bot_token("telegram_token"))
+        self.assertTrue(env_pdf.is_bot_token("X", "123456789:" + "A" * 35))
+        for k in ("GITHUB_TOKEN", "UPSTASH_REDIS_REST_TOKEN", "KINO_STREAM_TOKEN_SECRET", "TG_SESSION", "DATABASE_URL"):
+            self.assertFalse(env_pdf.is_bot_token(k, "x"))
 
     def test_info_reports_count_and_missing(self):
         self.assertEqual(self.info["count"], len(EXPECTED))

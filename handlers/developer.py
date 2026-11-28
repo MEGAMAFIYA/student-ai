@@ -2707,13 +2707,17 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"\n⚠️ Qiymati berilmagani uchun tushib qolgan: {', '.join(info['missing'][:10])}"
                 if info["missing"] else ""
             )
+            excluded_note = (
+                f"\n🚫 Bot tokeni PDF'ga kiritilmadi: {', '.join(info['excluded'][:5])}"
+                if info.get("excluded") else ""
+            )
             await context.bot.send_document(
                 chat_id=update.effective_chat.id,
                 document=io.BytesIO(pdf_bytes),
                 filename=render_env_pdf.safe_filename(service),
                 caption=(
                     f"🔐 {_render_service_name(service)} — ENV PDF\n"
-                    f"🧾 Jami: {info['count']} ta\n"
+                    f"🧾 Jami: {info['count']} ta{excluded_note}\n"
                     "⚠️ Ichida MAXFIY kalitlar bor. Begonaga bermang, ishlatib bo'lgach Telegramdan o'chiring."
                     f"{missing_note}"
                 )[:1000],

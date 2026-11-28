@@ -15,6 +15,10 @@ PDF ikki qatlamli:
    ko'p qatorli kalitlar (masalan private key) va maxsus belgilar buzilmaydi.
    SHA-256 nazorat summasi PDF buzilgan/o'zgartirilgan bo'lsa xabar beradi.
 
+Telegram BOT TOKENI xavfsizlik uchun PDF'ga HECH QACHON kiritilmaydi (na ko'rinadigan
+qismga, na mashina qismiga): nomi bo'yicha (TELEGRAM_TOKEN, BOT_TOKEN, ...) yoki qiymati
+bot token shaklida (``123456789:AA...``) bo'lsa o'tkazib yuboriladi.
+
 Qiymatlar hech qachon logga yozilmaydi.
 """
 
@@ -46,6 +50,10 @@ KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 # Render hisobiga ulanish kalitlari: boshqa hisobga ko'chirishda eskisini
 # yangisining ustiga yozib yuborish xavfli, shuning uchun alohida ajratiladi.
 RENDER_CREDENTIAL_RE = re.compile(r"^RENDER_(API_KEY|OWNER_ID|SERVICE_ID|ACCOUNT_NAME)\d*$")
+
+# Telegram bot tokeni: nomi bo'yicha yoki qiymat shakli bo'yicha (nom boshqacha bo'lsa ham ushlash uchun).
+BOT_TOKEN_NAME_RE = re.compile(r"^(TELEGRAM_(BOT_)?TOKEN|TELEGRAM_API_TOKEN|BOT_TOKEN|TG_BOT_TOKEN)\d*$", re.IGNORECASE)
+BOT_TOKEN_VALUE_RE = re.compile(r"^\d{6,12}:[A-Za-z0-9_-]{30,}$")
 
 _CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
@@ -81,12 +89,32 @@ def normalize_env_vars(items: Iterable[dict[str, Any]]) -> tuple[list[dict[str, 
     return [{"key": k, "value": v} for k, v in out.items()], missing
 
 
+def is_bot_token(key: str, value: str | None = None) -> bool:
+    """Bu o'zgaruvchi Telegram bot tokenimi (PDF'ga kiritilmasligi kerak)."""
+    if BOT_TOKEN_NAME_RE.match(str(key).strip()):
+        return True
+    return bool(value is not None and BOT_TOKEN_VALUE_RE.match(str(value).strip()))
+
+
+def drop_bot_token(variables: list[dict[str, str]]) -> tuple[list[dict[str, str]], list[str]]:
+    """Bot tokenlarini ro'yxatdan chiqaradi. Qaytaradi: (qolganlari, chiqarilgan KEY nomlari)."""
+    kept: list[dict[str, str]] = []
+    excluded: list[str] = []
+    for item in variables:
+        if is_bot_token(item["key"], item["value"]):
+            excluded.append(item["key"])
+        else:
+            kept.append(item)
+    return kept, excluded
+
+
 def _checksum(variables: list[dict[str, str]]) -> str:
     canon = json.dumps(variables, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(canon.encode("utf-8")).hexdigest()
 
 
-def _payload(service: dict[str, Any], variables: list[dict[str, str]], missing: list[str]) -> dict[str, Any]:
+def _payload(service: dict[str, Any], variables: list[dict[str, str]], missing: list[str],
+             excluded: list[str] | None = None) -> dict[str, Any]:
     return {
         "format": FORMAT_ID,
         "version": FORMAT_VERSION,
@@ -95,6 +123,7 @@ def _payload(service: dict[str, Any], variables: list[dict[str, str]], missing: 
         "exported_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "count": len(variables),
         "missing": missing,
+        "excluded": list(excluded or []),  # faqat NOMLARI (qiymati hech qayerda saqlanmaydi)
         "sha256": _checksum(variables),
         "vars": variables,
     }
@@ -157,7 +186,8 @@ def _encode_machine_block(payload: dict[str, Any]) -> list[str]:
 def build_env_pdf(service: dict[str, Any], env_items: list[dict[str, Any]]) -> tuple[bytes, dict[str, Any]]:
     """ENV'larni PDF baytlariga aylantiradi.
 
-    Qaytaradi: (pdf_bytes, {"count": int, "missing": [...]})
+    Telegram bot tokeni PDF'ga kiritilmaydi.
+    Qaytaradi: (pdf_bytes, {"count": int, "missing": [...], "excluded": [...]})
     """
     from pypdf import PdfReader, PdfWriter
     from reportlab.lib.pagesizes import A4
@@ -166,7 +196,9 @@ def build_env_pdf(service: dict[str, Any], env_items: list[dict[str, Any]]) -> t
     from reportlab.platypus import KeepTogether, Paragraph, Preformatted, SimpleDocTemplate, Spacer
 
     variables, missing = normalize_env_vars(env_items)
-    payload = _payload(service, variables, missing)
+    variables, excluded = drop_bot_token(variables)
+    missing = [k for k in missing if not is_bot_token(k)]
+    payload = _payload(service, variables, missing, excluded)
     sans, bold, mono, uni = _register_fonts()
 
     styles = getSampleStyleSheet()
@@ -195,6 +227,11 @@ def build_env_pdf(service: dict[str, Any], env_items: list[dict[str, Any]]) -> t
             meta_style,
         ),
         Paragraph("MAXFIY! Bu faylda barcha kalitlar ochiq ko'rinishda. Begonaga bermang, ishlatib bo'lgach o'chiring.", warn_style),
+        *([Paragraph(
+            "Xavfsizlik uchun Telegram bot tokeni PDF'ga kiritilmagan: "
+            + html.escape(", ".join(_display(k, uni) for k in excluded)) + ".",
+            meta_style,
+        )] if excluded else []),
         Paragraph("Bu PDF'ni o'zgartirmang: botdagi «ENV PDF yuklash» aynan shu faylni o'qiydi.", meta_style),
         Spacer(1, 2 * mm),
     ]
@@ -220,7 +257,7 @@ def build_env_pdf(service: dict[str, Any], env_items: list[dict[str, Any]]) -> t
     writer.add_attachment(ATTACHMENT_NAME, json.dumps(payload, ensure_ascii=False).encode("utf-8"))
     out = io.BytesIO()
     writer.write(out)
-    return out.getvalue(), {"count": payload["count"], "missing": missing}
+    return out.getvalue(), {"count": payload["count"], "missing": missing, "excluded": excluded}
 
 
 # ---------------------------------------------------------------------------
