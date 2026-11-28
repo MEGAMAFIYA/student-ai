@@ -53,6 +53,7 @@ _DEFAULT_DATA = {
     "inline_logs": [],  # [{"ts","user_id","username","query","status","detail"}] — inline (@Bot ...) jurnali
     "movies": {},      # {"<movie_id>": {"id","title","file_id","mime_type","file_name","size","uploaded_by","created_ts"}} — kino katalogi
     "keepalive": {},   # {"<render_service_id>": {"name","url","enabled_ts"}} — 😴 Render "Uxlamaslik" ro'yxati
+    "group_settings": {},  # {"add_batch": int, "add_delay": int} — 👥 Guruh > ⚙️ Sozlamalar
     "ads": {},         # {"<ad_id>": {"id","chat_id","chat_title","text","interval_min","interval_sec","paused","created_by","created_ts"}} — 📢 guruh reklamalari
     "course_image_prefs": {},
     "render_pending_deploys": [],  # deploy ID va servis — tugagach admin xabari uchun  # {"<user_id>": {"enabled"?, "provider"?, "model"?, "count"?}} — 🖼 kurs ishi rasm sozlamalari (faqat foydalanuvchi tanlagan maydonlar)
@@ -336,6 +337,17 @@ def remove_reminder(reminder_id: str) -> bool:
 # saqlashda keraksiz yuk va commitlar paydo bo'lardi.
 
 MAX_ADS = 50
+
+
+def get_group_setting(key: str, default=None):
+    with _lock:
+        return _data["group_settings"].get(key, default)
+
+
+def set_group_setting(key: str, value) -> None:
+    with _lock:
+        _data["group_settings"][key] = value
+        _save()
 
 
 def add_ad(chat_id: int, chat_title: str, text: str, interval_min: int, created_by: int,

@@ -28,6 +28,7 @@ def U(uid, first="Ali", last="", **kw):
 class FakeClient:
     def __init__(self, members=(), fail=None):
         self.members, self.fail, self.calls, self.missing = list(members), fail or {}, [], []
+        self.report_added, self.silent_drop, self.total, self.spam_text = False, set(), None, None
 
     async def iter_participants_gen(self):
         for m in self.members:
@@ -36,13 +37,42 @@ class FakeClient:
     def iter_participants(self, entity):
         return self.iter_participants_gen()
 
+    async def get_participants(self, entity, limit=0):
+        return types.SimpleNamespace(total=self.total)
+
+    def conversation(self, name, timeout=20):
+        client = self
+
+        class Conv:
+            async def __aenter__(self_):
+                return self_
+
+            async def __aexit__(self_, *a):
+                return False
+
+            async def send_message(self_, text):
+                client.calls.append(("spambot", text))
+
+            async def get_response(self_):
+                if client.spam_text is None:
+                    raise RuntimeError("timeout")
+                return types.SimpleNamespace(raw_text=client.spam_text)
+        return Conv()
+
     async def __call__(self, request):
         self.calls.append(request)
         if request[0] == "invite_many":
             for u in request[1]:
                 if self.fail.get(u.id) is not None:
                     raise self.fail[u.id]
-            return types.SimpleNamespace(missing_invitees=[types.SimpleNamespace(user_id=i) for i in self.missing if i in {u.id for u in request[1]}])
+            ids = {u.id for u in request[1]}
+            res = types.SimpleNamespace(missing_invitees=[types.SimpleNamespace(user_id=i) for i in self.missing if i in ids])
+            if self.report_added:
+                # Telegram haqiqiy qo'shilganlarni service xabarda qaytaradi
+                real = [u.id for u in request[1] if u.id not in self.missing and u.id not in self.silent_drop]
+                msg = types.SimpleNamespace(action=types.SimpleNamespace(users=real))
+                res.updates = types.SimpleNamespace(updates=[types.SimpleNamespace(message=msg)] if real else [])
+            return res
         exc = self.fail.get(request[1].id)
         if isinstance(exc, list):
             exc = exc.pop(0) if exc else None
@@ -177,6 +207,116 @@ class GroupsTest(unittest.TestCase):
         self.assertEqual(st["ok"], 2)
         self.assertTrue(st["error"])
         self.assertEqual(len(c.calls), 2)
+
+    # ---- haqiqiy qo'shilganlarni sanash ----
+    def test_only_really_added_users_are_counted(self):
+        c = FakeClient()
+        c.report_added = True
+        c.silent_drop = {11}  # Telegram "ok" dedi, lekin 11 ni qo'shmadi
+        st = self.run_add(c, [U(10), U(11), U(12)], channel=True)
+        self.assertEqual((st["ok"], st["failed"]), (2, 1))
+        self.assertEqual(st["reasons"]["Telegram qo'shmadi"], 1)
+
+    def test_added_ids_parsing(self):
+        res = types.SimpleNamespace(updates=types.SimpleNamespace(updates=[
+            types.SimpleNamespace(message=types.SimpleNamespace(action=types.SimpleNamespace(users=[1, 2]))),
+            types.SimpleNamespace(message=None), types.SimpleNamespace()]))
+        self.assertEqual(groups._added_ids(res), {1, 2})
+        self.assertEqual(groups._added_ids(True), set())
+
+    # ---- sozlamalar ----
+    def test_default_batch_is_two_and_settings_change_it(self):
+        import storage
+        from unittest.mock import patch
+        with patch.object(storage, "_save", lambda: None):
+            old = dict(storage._data["group_settings"])
+            storage._data["group_settings"] = {}
+            try:
+                groups.ADD_BATCH_SIZE = 2
+                self.assertEqual(groups._batch_size(), 2)
+                storage.set_group_setting("add_batch", 10)
+                self.assertEqual(groups._batch_size(), 10)
+                storage.set_group_setting("add_batch", 5000)
+                self.assertEqual(groups._batch_size(), 100)
+                cbs = [b.callback_data for r in groups.settings_keyboard().inline_keyboard for b in r]
+                for n in groups.BATCH_CHOICES:
+                    self.assertIn(f"dev:grpbatch:{n}", cbs)
+                for n in groups.DELAY_CHOICES:
+                    self.assertIn(f"dev:grpdelay:{n}", cbs)
+                for a in ("grpset", "grpbatch", "grpdelay"):
+                    self.assertIn(a, groups.ACTIONS)
+            finally:
+                storage._data["group_settings"] = old
+
+    def test_settings_callback_saves_and_rejects_invalid(self):
+        import storage
+        from unittest.mock import patch
+        screens = []
+
+        async def safe_edit(query, text, reply_markup=None, parse_mode=None):
+            screens.append(text)
+        import handlers
+        fake_dev = types.ModuleType("handlers.developer")
+        fake_dev._safe_edit_query = safe_edit
+        old, old_attr = sys.modules.get("handlers.developer"), getattr(handlers, "developer", None)
+        sys.modules["handlers.developer"] = fake_dev
+        handlers.developer = fake_dev
+        ctx = types.SimpleNamespace(user_data={})
+        saved = dict(storage._data["group_settings"])
+        try:
+            with patch.object(storage, "_save", lambda: None):
+                storage._data["group_settings"] = {}
+                asyncio.run(groups.handle_dev_callback("grpbatch", ["dev", "grpbatch", "3"], None, ctx, None, "M", "T"))
+                self.assertEqual(storage.get_group_setting("add_batch"), 3)
+                asyncio.run(groups.handle_dev_callback("grpbatch", ["dev", "grpbatch", "77"], None, ctx, None, "M", "T"))
+                self.assertEqual(storage.get_group_setting("add_batch"), 3)
+                asyncio.run(groups.handle_dev_callback("grpdelay", ["dev", "grpdelay", "8"], None, ctx, None, "M", "T"))
+                self.assertEqual(storage.get_group_setting("add_delay"), 8)
+                self.assertIn("Guruh sozlamalari", screens[-1])
+        finally:
+            storage._data["group_settings"] = saved
+            if old is None:
+                sys.modules.pop("handlers.developer", None)
+            else:
+                sys.modules["handlers.developer"] = old
+            if old_attr is None:
+                handlers.__dict__.pop("developer", None)
+            else:
+                handlers.developer = old_attr
+
+    # ---- spam holati ----
+    def test_needs_spam_check_cases(self):
+        n = groups._needs_spam_check
+        st = groups._new_state()
+        self.assertFalse(n(st))
+        st.update(ok=5)
+        st.update(members_before=10, members_after=15)
+        self.assertFalse(n(st))
+        st.update(members_after=10)  # "qo'shildi" lekin son o'zgarmadi
+        self.assertTrue(n(st))
+        st2 = groups._new_state(); st2["error"] = "Telegram akkauntni spam deb cheklab qo'ydi (PeerFlood)."
+        self.assertTrue(n(st2))
+        st3 = groups._new_state(); st3.update(ok=0, failed=3)
+        self.assertTrue(n(st3))
+
+    def test_spambot_report_text_and_failure(self):
+        c = FakeClient()
+        c.spam_text = "Afsuski, akkauntingizga cheklov qo'yilgan. <b>1 dekabrgacha</b>"
+        txt = asyncio.run(groups._spambot_report(c))
+        self.assertIn("cheklov", txt)
+        self.assertIn(("spambot", "/start"), c.calls)
+        c2 = FakeClient()  # javob kelmasa — None, xato ko'tarilmaydi
+        self.assertIsNone(asyncio.run(groups._spambot_report(c2)))
+
+    def test_final_text_shows_members_and_spam_report(self):
+        st = groups._new_state()
+        st.update(ok=81, members_before=120, members_after=120, unconfirmed=81,
+                  spam_report="Cheklov bor <x>")
+        txt = groups._final_text("add", "G", st)
+        self.assertIn("120 → 120", txt)
+        self.assertIn("tasdiqlamadi", txt)
+        self.assertIn("@SpamBot", txt)
+        self.assertIn("Cheklov bor &lt;x&gt;", txt)
 
     # ---- matnlar ----
     def test_final_text_mentions_counts(self):

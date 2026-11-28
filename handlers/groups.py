@@ -16,17 +16,20 @@ from collections import Counter
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+import storage
 import telegram_mtproto
 from handlers import ads
 
 logger = logging.getLogger(__name__)
 
-ACTIONS = {"grp", "grpcol", "grpadd", "grpok", "grpstop"}
+ACTIONS = {"grp", "grpcol", "grpadd", "grpok", "grpstop", "grpset", "grpbatch", "grpdelay"}
 
 COLLECT_DELAY_SEC = 1.0        # kontakt saqlashlar orasidagi pauza
 ADD_DELAY_SEC = 4.0            # qo'shish so'rovlari orasidagi pauza (Telegram tez qo'shishni jazolaydi)
-ADD_BATCH_SIZE = 100           # supergruppa/kanalda BITTA so'rovda nechta odam qo'shiladi (Telegram max = 100).
-                               # PeerFlood chiqsa 20-30 ga kamaytiring. 1 = eski usul (bittadan).
+ADD_BATCH_SIZE = 2             # supergruppada BITTA so'rovda nechta odam qo'shiladi (standart: 2).
+                               # /developer > Guruh > ⚙️ Sozlamalar orqali o'zgartiriladi (Telegram max = 100).
+BATCH_CHOICES = (1, 2, 3, 5, 10, 20, 50, 100)
+DELAY_CHOICES = (2, 4, 8, 15, 30)
 MAX_FLOOD_WAIT_SEC = 120       # shundan uzoq FloodWait bo'lsa — kutmasdan to'xtaymiz
 MAX_CONSECUTIVE_FAILS = 10     # ketma-ket shuncha xatodan keyin to'xtaymiz
 PROGRESS_EVERY_SEC = 4.0       # jarayon xabarini yangilash oralig'i
@@ -50,6 +53,22 @@ _ADD_REASONS = {
     "UserIdInvalidError": "topilmadi",
     "UserBotError": "bot",
 }
+
+def _batch_size() -> int:
+    """Sozlamalardagi paket hajmi (saqlanmagan bo'lsa — ADD_BATCH_SIZE)."""
+    try:
+        return max(1, min(100, int(storage.get_group_setting("add_batch", ADD_BATCH_SIZE))))
+    except (TypeError, ValueError):
+        return max(1, int(ADD_BATCH_SIZE))
+
+
+def _add_delay() -> float:
+    """Sozlamalardagi so'rovlar orasidagi pauza (soniya)."""
+    try:
+        return max(0.0, float(storage.get_group_setting("add_delay", ADD_DELAY_SEC)))
+    except (TypeError, ValueError):
+        return float(ADD_DELAY_SEC)
+
 
 # Bitta ish bir vaqtda: {"kind", "title", "stop", "task"}
 _job: dict | None = None
@@ -90,8 +109,37 @@ def menu_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton("📥 Kontakt yig'ish", callback_data="dev:grpcol"),
             InlineKeyboardButton("📤 Kontakt qo'shish", callback_data="dev:grpadd"),
         ])
+    if _job is None:
+        rows.append([InlineKeyboardButton("⚙️ Sozlamalar", callback_data="dev:grpset")])
     rows.append([InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:menu")])
     return InlineKeyboardMarkup(rows)
+
+
+def settings_text() -> str:
+    return (
+        "⚙️ <b>Guruh sozlamalari</b> (📤 Kontakt qo'shish)\n\n"
+        f"👥 Bir so'rovda qo'shiladigan odam: <b>{_batch_size()}</b>\n"
+        f"⏱ So'rovlar orasidagi pauza: <b>{_add_delay():g}</b> soniya\n\n"
+        "<i>Avval 1–2 tadan sinab ko'ring: hammasi qo'shilsa, asta-sekin oshiring. "
+        "Telegram \"kuting\" desa yoki akkaunt spam cheklovida bo'lsa, kamaytiring. "
+        "Katta paket (50–100) akkauntni tez cheklatadi. Faqat supergruppada ishlaydi; "
+        "oddiy guruhda doim bittadan.</i>"
+    )
+
+
+def settings_keyboard() -> InlineKeyboardMarkup:
+    cur_b, cur_d = _batch_size(), _add_delay()
+    def mark(n, cur):
+        return f"✅ {n}" if float(n) == float(cur) else str(n)
+    b = [InlineKeyboardButton(mark(n, cur_b), callback_data=f"dev:grpbatch:{n}") for n in BATCH_CHOICES]
+    d = [InlineKeyboardButton(mark(n, cur_d), callback_data=f"dev:grpdelay:{n}") for n in DELAY_CHOICES]
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("👥 Bir so'rovda nechta odam:", callback_data="dev:grpset")],
+        b[:4], b[4:],
+        [InlineKeyboardButton("⏱ Pauza (soniya):", callback_data="dev:grpset")],
+        d,
+        [InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:grp")],
+    ])
 
 
 def _kind_label(kind: str) -> str:
@@ -118,11 +166,11 @@ def _confirm_text(pending: dict) -> str:
                 "Bot, o'chirilgan akkaunt va allaqachon kontaktda bor odamlar o'tkazib yuboriladi.")
     else:
         size = f" ({count} ta kontakt)" if count else ""
-        if ADD_BATCH_SIZE > 1:
-            note = (f"Supergruppada {ADD_BATCH_SIZE} tadan paket qilib, bir vaqtda qo'shiladi "
-                    f"(paketlar orasida ~{int(ADD_DELAY_SEC)} soniya pauza).")
+        if _batch_size() > 1:
+            note = (f"Supergruppada {_batch_size()} tadan paket qilib qo'shiladi "
+                    f"(paketlar orasida ~{_add_delay():g} soniya pauza).")
         else:
-            note = f"Telegram cheklovi uchun har biri orasida ~{int(ADD_DELAY_SEC)} soniya pauza bo'ladi."
+            note = f"Telegram cheklovi uchun har biri orasida ~{_add_delay():g} soniya pauza bo'ladi."
         body = f"Akkauntdagi barcha kontaktlar{size} <b>{title}</b> guruhiga qo'shiladi. {note}"
     return f"{_kind_label(pending['kind'])}\n\n{body}\n\nBoshlaymizmi?"
 
@@ -166,8 +214,15 @@ def _final_text(kind: str, title: str, state: dict) -> str:
     if state["reasons"]:
         detail = ", ".join(f"{name}: {n}" for name, n in state["reasons"].most_common())
         lines.append(f"<i>Sabablar — {_esc(detail)}</i>")
+    if state.get("members_before") is not None and state.get("members_after") is not None:
+        lines.append(f"\n👥 Guruh a'zolari: {state['members_before']} → {state['members_after']}")
+    if state.get("unconfirmed") and kind == "add":
+        lines.append("⚠️ <i>Telegram \"qo'shildi\" deb javob berdi, lekin qo'shilganini tasdiqlamadi — "
+                     "yuqoridagi a'zolar sonini tekshiring.</i>")
     if state.get("error"):
         lines.append(f"\n❌ {_esc(state['error'])}")
+    if state.get("spam_report"):
+        lines.append(f"\n🛡 <b>Akkaunt holati (@SpamBot):</b>\n<i>{_esc(state['spam_report'])}</i>")
     return "\n".join(lines)
 
 
@@ -232,7 +287,8 @@ def _is_skippable(user, my_id) -> bool:
 
 def _new_state(total=None) -> dict:
     return {"ok": 0, "skipped": 0, "failed": 0, "reasons": Counter(), "total": total,
-            "stop": False, "error": None, "waiting": 0}
+            "stop": False, "error": None, "waiting": 0,
+            "members_before": None, "members_after": None, "spam_report": None, "unconfirmed": 0}
 
 
 def _fatal_message(exc: Exception) -> str:
@@ -292,6 +348,54 @@ async def collect_contacts(client, entity, state, on_progress, my_id=None):
         await asyncio.sleep(COLLECT_DELAY_SEC)
 
 
+def _added_ids(result):
+    """Telegram javobidan HAQIQATAN qo'shilgan foydalanuvchilar ID lari (service xabarlardan).
+    Aniqlab bo'lmasa — bo'sh to'plam (bunda a'zolar soni oxirida tekshiriladi)."""
+    ids = set()
+    updates = getattr(result, "updates", result)
+    for upd in (getattr(updates, "updates", None) or []):
+        action = getattr(getattr(upd, "message", None), "action", None)
+        for uid in (getattr(action, "users", None) or []):
+            try:
+                ids.add(int(uid))
+            except (TypeError, ValueError):
+                pass
+    return ids
+
+
+async def _member_count(client, entity):
+    try:
+        participants = await client.get_participants(entity, limit=0)
+        return getattr(participants, "total", None)
+    except Exception as exc:
+        logger.info("👥 A'zolar soni aniqlanmadi: %s: %s", type(exc).__name__, exc)
+        return None
+
+
+async def _spambot_report(client) -> str | None:
+    """Akkauntga spam-cheklov qo'yilganini @SpamBot dan so'raydi va uning javobini qaytaradi."""
+    try:
+        async with client.conversation("SpamBot", timeout=20) as conv:
+            await conv.send_message("/start")
+            reply = await conv.get_response()
+        text = (getattr(reply, "raw_text", None) or getattr(reply, "message", "") or "").strip()
+        return text[:700] or None
+    except Exception as exc:
+        logger.info("👥 @SpamBot dan holat olinmadi: %s: %s", type(exc).__name__, exc)
+        return None
+
+
+def _needs_spam_check(state: dict) -> bool:
+    """Qo'shish natijasi shubhali bo'lsa (PeerFlood, hech kim qo'shilmadi, 'qo'shildi' lekin son o'zgarmadi)."""
+    err = state.get("error") or ""
+    if "PeerFlood" in err or "spam" in err.lower() or "cheklov" in err.lower():
+        return True
+    if state["ok"] == 0 and state["failed"] > 0:
+        return True
+    before, after = state.get("members_before"), state.get("members_after")
+    return bool(state["ok"] > 0 and before is not None and after is not None and after <= before)
+
+
 async def _add_one(client, entity, user, state, on_progress, fails: int):
     """Bitta odamni qo'shadi. (fails, to'xtatish_kerakmi) qaytaradi."""
     try:
@@ -329,14 +433,14 @@ async def _add_one_by_one(client, entity, users, state, on_progress) -> bool:
         await on_progress()
         if halt:
             return True
-        await asyncio.sleep(ADD_DELAY_SEC)
+        await asyncio.sleep(_add_delay())
     return False
 
 
 async def add_contacts_to_group(client, entity, contacts, state, on_progress, my_id=None):
     """Akkaunt kontaktlarini guruhga qo'shadi (guruhdagilar o'tkazib yuboriladi).
 
-    Supergruppa/kanalda ADD_BATCH_SIZE tadan paket qilib BIR so'rovda qo'shadi;
+    Supergruppa/kanalda sozlamadagi (standart 2) tadan paket qilib BIR so'rovda qo'shadi;
     oddiy guruhda Telegram faqat bittalab qo'shishga ruxsat beradi.
     """
     existing = set()
@@ -354,11 +458,11 @@ async def add_contacts_to_group(client, entity, contacts, state, on_progress, my
             todo.append(user)
     await on_progress()
 
-    if not (_is_channel(entity) and ADD_BATCH_SIZE > 1):
+    size = _batch_size()
+    if not (_is_channel(entity) and size > 1):
         await _add_one_by_one(client, entity, todo, state, on_progress)
         return
 
-    size = max(1, int(ADD_BATCH_SIZE))
     for i in range(0, len(todo), size):
         if state["stop"]:
             break
@@ -379,10 +483,20 @@ async def add_contacts_to_group(client, entity, contacts, state, on_progress, my
         if missing:
             state["failed"] += len(missing)
             state["reasons"]["maxfiylik sozlamasi"] += len(missing)
-        state["ok"] += len(batch) - len(missing)
+        added = _added_ids(result) - missing
+        if added:
+            # Telegram o'zi qaysilar qo'shilganini aytdi — faqat shularni sanaymiz
+            state["ok"] += len(added)
+            rest = len(batch) - len(missing) - len(added)
+            if rest > 0:
+                state["failed"] += rest
+                state["reasons"]["Telegram qo'shmadi"] += rest
+        else:
+            # Javobdan bilib bo'lmadi — vaqtincha "qo'shildi" deymiz, oxirida a'zolar sonini solishtiramiz
+            state["ok"] += len(batch) - len(missing)
         await on_progress()
         if i + size < len(todo):
-            await asyncio.sleep(ADD_DELAY_SEC)
+            await asyncio.sleep(_add_delay())
 
 
 async def _run_job(bot, chat_id, message_id, job: dict, group_chat_id: int):
@@ -415,7 +529,14 @@ async def _run_job(bot, chat_id, message_id, job: dict, group_chat_id: int):
         else:
             contacts = await _get_contacts(client)
             state["total"] = len(contacts)
+            state["members_before"] = await _member_count(client, entity)
             await add_contacts_to_group(client, entity, contacts, state, on_progress, my_id)
+            state["members_after"] = await _member_count(client, entity)
+            before, after = state["members_before"], state["members_after"]
+            if state["ok"] > 0 and before is not None and after is not None and after <= before:
+                state["unconfirmed"] = state["ok"]
+            if _needs_spam_check(state):
+                state["spam_report"] = await _spambot_report(client)
     except Exception as exc:
         logger.warning("👥 Guruh amali xato: %s: %s", type(exc).__name__, exc, exc_info=True)
         state["error"] = _fatal_message(exc)
@@ -450,6 +571,22 @@ async def handle_dev_callback(action, parts, update, context, query, DEV_MENU, D
     if action == "grp":
         context.user_data.pop("dev_action", None)
         await edit(query, menu_text(), reply_markup=menu_keyboard(), parse_mode="HTML")
+        return DEV_MENU
+
+    if action == "grpset":
+        context.user_data.pop("dev_action", None)
+        await edit(query, settings_text(), reply_markup=settings_keyboard(), parse_mode="HTML")
+        return DEV_MENU
+
+    if action in ("grpbatch", "grpdelay"):
+        try:
+            value = int(parts[2])
+        except (IndexError, ValueError):
+            value = 0
+        allowed = BATCH_CHOICES if action == "grpbatch" else DELAY_CHOICES
+        if value in allowed:
+            storage.set_group_setting("add_batch" if action == "grpbatch" else "add_delay", value)
+        await edit(query, settings_text(), reply_markup=settings_keyboard(), parse_mode="HTML")
         return DEV_MENU
 
     if action in ("grpcol", "grpadd"):
