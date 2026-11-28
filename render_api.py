@@ -244,6 +244,13 @@ async def update_service(api_key: str, service_id: str, changes: dict[str, Any])
     return dict(await _request("PATCH", f"/services/{service_id}", api_key=api_key, json=body))
 
 
+async def update_service_commands(api_key: str, service_id: str, settings: dict[str, str]) -> dict[str, Any]:
+    """Build Command / Start Command ni o'rnatadi (PDF import uchun)."""
+    import render_env_pdf
+    body = render_env_pdf.settings_patch_body(settings)
+    return dict(await _request("PATCH", f"/services/{service_id}", api_key=api_key, json=body))
+
+
 def get_public_url(service: dict[str, Any]) -> str:
     """Servisning umumiy (public) URL manzili. Background worker, cron job va
     private servislarda bunday URL yo'q — u holda bo'sh satr qaytadi."""

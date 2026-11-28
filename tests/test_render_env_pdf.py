@@ -31,7 +31,9 @@ ITEMS = [
     {"key": "GENERATED", "value": None},
     {"key": "BAD-KEY", "value": "x"},
 ]
-SERVICE = {"id": "srv-abc123", "name": "student-ai"}
+SERVICE = {"id": "srv-abc123", "name": "student-ai", "serviceDetails": {"envSpecificDetails": {
+    "buildCommand": "pip install -r requirements.txt && echo 'x' > a.txt",
+    "startCommand": "python bot.py --port $PORT"}}}
 BOT_TOKEN_KEYS = ["BOT_TOKEN", "TELEGRAM_TOKEN", "MY_ODD_NAME"]
 EXPECTED = {i["key"]: i["value"] for i in ITEMS if i["value"] is not None and i["key"] not in BOT_TOKEN_KEYS}
 
@@ -71,6 +73,45 @@ class EnvPdfRoundTripTests(unittest.TestCase):
         # tushunarli izoh bor, "missing" ro'yxatida ham token nomi yo'q
         self.assertIn("bot tokeni", visible)
         self.assertNotIn("TELEGRAM_BOT_TOKEN", self.info["missing"])
+
+    def test_build_and_start_command_are_in_pdf_and_restored(self):
+        from pypdf import PdfReader
+        expected = {"buildCommand": "pip install -r requirements.txt && echo 'x' > a.txt",
+                    "startCommand": "python bot.py --port $PORT"}
+        self.assertEqual(self.info["settings"], expected)
+        self.assertEqual(env_pdf.parse_env_pdf(self.pdf)["settings"], expected)
+        # biriktirma yo'qolsa ham zaxira matndan tiklanadi
+        self.assertEqual(env_pdf.parse_env_pdf(_strip_attachments(self.pdf))["settings"], expected)
+        visible = "".join(p.extract_text() or "" for p in PdfReader(io.BytesIO(self.pdf)).pages)
+        self.assertIn("Build Command", visible)
+        self.assertIn("Start Command", visible)
+        self.assertIn("python bot.py", visible)
+
+    def test_settings_are_covered_by_checksum(self):
+        import json
+        payload = env_pdf.parse_env_pdf(self.pdf)
+        payload["settings"]["startCommand"] = "rm -rf /"
+        with self.assertRaises(env_pdf.EnvPdfError):
+            env_pdf._validate_payload(json.loads(json.dumps(payload)))
+
+    def test_old_v1_pdf_without_settings_still_validates(self):
+        vars_ = [{"key": "A", "value": "1"}]
+        old = {"format": env_pdf.FORMAT_ID, "version": 1, "vars": vars_, "sha256": env_pdf._checksum(vars_)}
+        self.assertEqual(env_pdf._validate_payload(old)["vars"], vars_)
+
+    def test_service_without_commands_gives_empty_settings(self):
+        pdf, info = env_pdf.build_env_pdf({"id": "s", "name": "n"}, [{"key": "A", "value": "1"}])
+        self.assertEqual(info["settings"], {})
+        self.assertEqual(env_pdf.clean_settings(env_pdf.parse_env_pdf(pdf).get("settings")), {})
+
+    def test_extract_clean_and_patch_body(self):
+        self.assertEqual(env_pdf.extract_settings({"serviceDetails": {"envSpecificDetails": {"buildCommand": " ", "startCommand": "x"}}}),
+                         {"startCommand": "x"})
+        self.assertEqual(env_pdf.clean_settings({"buildCommand": "b", "evil": "z", "startCommand": 5}), {"buildCommand": "b"})
+        self.assertEqual(env_pdf.settings_patch_body({"buildCommand": "b", "startCommand": "s", "evil": "z"}),
+                         {"serviceDetails": {"envSpecificDetails": {"buildCommand": "b", "startCommand": "s"}}})
+        with self.assertRaises(ValueError):
+            env_pdf.settings_patch_body({})
 
     def test_is_bot_token(self):
         self.assertTrue(env_pdf.is_bot_token("telegram_token"))

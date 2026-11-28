@@ -2707,6 +2707,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"\n⚠️ Qiymati berilmagani uchun tushib qolgan: {', '.join(info['missing'][:10])}"
                 if info["missing"] else ""
             )
+            settings_note = (
+                "\n⚙️ Render sozlamalari: " + ", ".join(render_env_pdf.SETTING_LABELS[k] for k in info["settings"])
+                if info.get("settings") else ""
+            )
             excluded_note = (
                 f"\n🚫 Bot tokeni PDF'ga kiritilmadi: {', '.join(info['excluded'][:5])}"
                 if info.get("excluded") else ""
@@ -2717,7 +2721,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 filename=render_env_pdf.safe_filename(service),
                 caption=(
                     f"🔐 {_render_service_name(service)} — ENV PDF\n"
-                    f"🧾 Jami: {info['count']} ta{excluded_note}\n"
+                    f"🧾 Jami: {info['count']} ta{settings_note}{excluded_note}\n"
                     "⚠️ Ichida MAXFIY kalitlar bor. Begonaga bermang, ishlatib bo'lgach Telegramdan o'chiring."
                     f"{missing_note}"
                 )[:1000],
@@ -2743,7 +2747,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📥 <b>ENV PDF yuklash</b>\n\n"
             "«📄 ENV'larni PDF qilish» orqali olingan <b>PDF faylni</b> shu yerga yuboring.\n"
             "PDF'dagi barcha environment variable'lar shu servisga o'rnatiladi "
-            "(mavjud bo'lsa qiymati almashtiriladi; PDF'da yo'q o'zgaruvchilar o'chirilmaydi).\n\n"
+            "(mavjud bo'lsa qiymati almashtiriladi; PDF'da yo'q o'zgaruvchilar o'chirilmaydi). "
+            "PDF'da <b>Build Command</b> / <b>Start Command</b> bo'lsa, ular ham servisga o'rnatiladi.\n\n"
             "Xavfsizlik uchun yuborilgan PDF xabari chatdan o'chiriladi.",
             reply_markup=_back_keyboard(f"dev:rsettings:{service_id}"), parse_mode="HTML",
         )
@@ -2765,7 +2770,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             entries = [(k, v) for k, v in entries if k not in set(skipped_creds)]
         await _apply_env_import(
             context, service_id, pending.get("account_id", ""), entries,
-            pending.get("invalid", []), skipped_creds,
+            pending.get("invalid", []), skipped_creds, pending.get("settings") or {},
         )
         return DEV_MENU
 
@@ -3641,8 +3646,9 @@ async def _apply_env_import(
     entries: list[tuple[str, str]],
     invalid_keys: list[str],
     skipped_creds: list[str] | None = None,
+    settings: dict[str, str] | None = None,
 ):
-    """PDF'dan olingan ENV'larni Render servisiga ketma-ket o'rnatadi.
+    """PDF'dan olingan ENV'larni (va Build/Start Command ni) Render servisiga o'rnatadi.
 
     Qiymatlar hech qayerda ko'rsatilmaydi va logga yozilmaydi.
     """
@@ -3673,9 +3679,30 @@ async def _apply_env_import(
             except Exception:
                 pass
 
+    settings = settings or {}
+    settings_ok = None
+    settings_err = ""
+    if settings and not aborted:
+        try:
+            await render_api.update_service_commands(account["key"], service_id, settings)
+            settings_ok = True
+        except Exception as exc:
+            settings_ok = False
+            settings_err = render_api.human_error(exc)
+
     lines = [
-        ("⚠️" if failed else "✅") + f" <b>ENV PDF import tugadi:</b> {ok}/{total} ta o'rnatildi.",
+        ("⚠️" if (failed or settings_ok is False) else "✅")
+        + f" <b>ENV PDF import tugadi:</b> {ok}/{total} ta o'rnatildi.",
     ]
+    if settings_ok:
+        lines.append("\n⚙️ <b>Render sozlamalari o'rnatildi:</b>")
+        for skey, label in render_env_pdf.SETTING_LABELS.items():
+            if skey in settings:
+                lines.append(f"• {label}: <code>{_esc(settings[skey][:300])}</code>")
+    elif settings_ok is False:
+        lines.append(f"\n❌ <b>Build/Start Command o'rnatilmadi:</b> {_esc(settings_err)}")
+    elif settings and aborted:
+        lines.append("\n⏭ Build/Start Command o'rnatilmadi (jarayon to'xtatilgan).")
     if failed:
         lines.append("\n❌ <b>O'rnatilmadi:</b>")
         for key, reason in failed[:15]:
@@ -3688,7 +3715,7 @@ async def _apply_env_import(
         lines.append("\n⏭ O'tkazib yuborildi (Render ulanish kalitlari): " + ", ".join(f"<code>{_esc(k)}</code>" for k in skipped_creds))
     if invalid_keys:
         lines.append("\n⏭ Noto'g'ri nomli, o'tkazib yuborildi: " + ", ".join(f"<code>{_esc(k)}</code>" for k in invalid_keys[:10]))
-    if ok:
+    if ok or settings_ok:
         lines.append("\nO'zgarishlar kuchga kirishi uchun 🚀 Deploy qiling.")
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🚀 Deploy", callback_data=f"dev:rdeploy:{service_id}")],
@@ -3749,8 +3776,9 @@ async def on_env_pdf_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return DEV_WAIT_ENVPDF
 
     entries, invalid = render_env_pdf.split_valid(payload["vars"])
-    if not entries:
-        await _edit_menu(context, "⚠️ PDF'da o'rnatiladigan o'zgaruvchi topilmadi.", back)
+    settings = render_env_pdf.clean_settings(payload.get("settings"))
+    if not entries and not settings:
+        await _edit_menu(context, "⚠️ PDF'da o'rnatiladigan o'zgaruvchi yoki sozlama topilmadi.", back)
         return DEV_WAIT_ENVPDF
 
     context.user_data.pop("dev_action", None)
@@ -3763,6 +3791,7 @@ async def on_env_pdf_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "account_id": action.get("account_id", ""),
             "entries": entries,
             "invalid": invalid,
+            "settings": settings,
         }
         await _edit_menu(
             context,
@@ -3780,7 +3809,7 @@ async def on_env_pdf_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return DEV_MENU
 
     await _edit_menu(context, f"📥 <b>ENV'lar o'rnatilmoqda...</b> 0/{len(entries)}", back)
-    await _apply_env_import(context, service_id, action.get("account_id", ""), entries, invalid)
+    await _apply_env_import(context, service_id, action.get("account_id", ""), entries, invalid, None, settings)
     return DEV_MENU
 
 
