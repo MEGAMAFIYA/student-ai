@@ -29,13 +29,30 @@ class FakeClient:
     def __init__(self, members=(), fail=None):
         self.members, self.fail, self.calls, self.missing = list(members), fail or {}, [], []
         self.report_added, self.silent_drop, self.total, self.spam_text = False, set(), None, None
+        self.by_entity, self.deleted, self.delete_error, self.messages = {}, [], None, []
 
     async def iter_participants_gen(self):
         for m in self.members:
             yield m
 
     def iter_participants(self, entity):
-        return self.iter_participants_gen()
+        members = self.by_entity.get(getattr(entity, "id", None), self.members)
+
+        async def gen():
+            for m in members:
+                yield m
+        return gen()
+
+    async def delete_messages(self, entity, ids):
+        if self.delete_error is not None:
+            raise self.delete_error
+        self.deleted.extend(ids)
+
+    def iter_messages(self, entity, limit=None):
+        async def gen():
+            for m in self.messages[:limit]:
+                yield m
+        return gen()
 
     async def get_participants(self, entity, limit=0):
         return types.SimpleNamespace(total=self.total)
@@ -70,7 +87,7 @@ class FakeClient:
             if self.report_added:
                 # Telegram haqiqiy qo'shilganlarni service xabarda qaytaradi
                 real = [u.id for u in request[1] if u.id not in self.missing and u.id not in self.silent_drop]
-                msg = types.SimpleNamespace(action=types.SimpleNamespace(users=real))
+                msg = types.SimpleNamespace(id=9000 + (real[0] if real else 0), action=types.SimpleNamespace(users=real))
                 res.updates = types.SimpleNamespace(updates=[types.SimpleNamespace(message=msg)] if real else [])
             return res
         exc = self.fail.get(request[1].id)
@@ -83,6 +100,10 @@ class FakeClient:
 
 async def _noop(force=False):
     pass
+
+
+class _FakeQuery:
+    message = types.SimpleNamespace(chat_id=1, message_id=2)
 
 
 class GroupsTest(unittest.TestCase):
@@ -317,6 +338,289 @@ class GroupsTest(unittest.TestCase):
         self.assertIn("tasdiqlamadi", txt)
         self.assertIn("@SpamBot", txt)
         self.assertIn("Cheklov bor &lt;x&gt;", txt)
+
+    # ---- 🧹 «qo'shdi» xabarlarini o'chirish ----
+    def test_service_messages_deleted_after_batch_add(self):
+        c = FakeClient()
+        c.report_added = True
+        st = self.run_add(c, [U(10), U(11)], channel=True)
+        self.assertEqual(c.deleted, [9010])
+        self.assertEqual((st["svc_deleted"], st["svc_failed"]), (1, 0))
+
+    def test_service_message_deleted_after_single_add(self):
+        c = FakeClient()
+
+        class C2(FakeClient):
+            async def __call__(self, request):
+                await FakeClient.__call__(self, request)
+                msg = types.SimpleNamespace(id=777, action=types.SimpleNamespace(users=[request[1].id]))
+                return types.SimpleNamespace(updates=[types.SimpleNamespace(message=msg)])  # Updates.updates ro'yxati
+        c = C2()
+        st = self.run_add(c, [U(10)], channel=False)
+        self.assertEqual(c.deleted, [777])
+        self.assertEqual(st["svc_deleted"], 1)
+
+    def test_delete_without_rights_is_reported_once_and_not_retried(self):
+        c = FakeClient()
+        c.report_added = True
+        c.delete_error = _mk("ChatAdminRequiredError", {})
+        st = self.run_add(c, [U(10), U(11), U(12), U(13)], channel=True)
+        groups.ADD_BATCH_SIZE = 2
+        self.assertEqual(st["svc_deleted"], 0)
+        self.assertGreaterEqual(st["svc_failed"], 1)
+        self.assertEqual(st["svc_error"], "ChatAdminRequiredError")
+        self.assertIn("o'chirib bo'lmadi", groups._final_text("add", "G", st))
+
+    def test_sweep_deletes_only_own_add_messages(self):
+        class MessageActionChatAddUser:
+            users = [1]
+
+        class MessageActionChatJoinedByLink:
+            users = None
+        c = FakeClient()
+        c.messages = [
+            types.SimpleNamespace(id=1, action=MessageActionChatAddUser(), sender_id=7),
+            types.SimpleNamespace(id=2, action=MessageActionChatAddUser(), sender_id=99),   # boshqaniki
+            types.SimpleNamespace(id=3, action=MessageActionChatJoinedByLink(), sender_id=7),
+            types.SimpleNamespace(id=4, action=None, sender_id=7),
+        ]
+        st = groups._new_state()
+        st["ok"] = 1
+        asyncio.run(groups._sweep_service_messages(c, object(), st, 7))
+        self.assertEqual(c.deleted, [1])
+        st2 = groups._new_state()
+        st2["ok"] = 1
+        asyncio.run(groups._sweep_service_messages(c, object(), st2, None))  # my_id noma'lum — tegmaydi
+        self.assertEqual(c.deleted, [1])
+
+    # ---- 💾 saqlash va davom ettirish ----
+    def test_done_users_are_skipped_on_resume_collect_and_add(self):
+        c = FakeClient([U(10), U(11), U(12)])
+        st = groups._new_state()
+        st["done"] = {10, 11}
+        asyncio.run(groups.collect_contacts(c, object(), st, _noop, 1))
+        self.assertEqual([r[1].id for r in c.calls], [12])
+        self.assertEqual(st["ok"], 1)
+        groups._is_channel = lambda e: False
+        c2 = FakeClient()
+        c2.members = []
+        st2 = groups._new_state()
+        st2["done"] = {10}
+        asyncio.run(groups.add_contacts_to_group(c2, types.SimpleNamespace(id=5), [U(10), U(11)], st2, _noop, 1))
+        self.assertEqual([r[1].id for r in c2.calls], [11])
+
+    def test_fatal_error_user_is_not_marked_done(self):
+        c = FakeClient([U(10), U(11), U(12)], fail={11: _mk("PeerFloodError", {})})
+        st = self.run_collect(c)
+        self.assertEqual(st["done"], {10})  # 11 bajarilmagan — davom ettirishda qayta uriniladi
+
+    def test_record_roundtrip_and_storage(self):
+        import storage
+        from unittest.mock import patch
+        st = groups._new_state(50)
+        st.update(ok=3, skipped=2, failed=1, error="x")
+        st["done"] = {5, 1, 9}
+        st["reasons"]["maxfiylik sozlamasi"] = 1
+        job = {"kind": "transfer", "title": "A → B", "group_chat_id": -100, "target_id": -200,
+               "target_title": "B", "state": st, "created_ts": 1.0}
+        rec = groups._record(job, "paused")
+        import json
+        json.dumps(rec)  # JSON bo'lishi shart
+        back = groups._state_from_record(rec)
+        self.assertEqual((back["ok"], back["skipped"], back["failed"], back["total"]), (3, 2, 1, 50))
+        self.assertEqual(back["done"], {1, 5, 9})
+        self.assertEqual(back["reasons"]["maxfiylik sozlamasi"], 1)
+        with patch.object(storage, "_save", lambda: None):
+            old = dict(storage._data["group_jobs"])
+            storage._data["group_jobs"] = {}
+            try:
+                storage.save_group_job("transfer", rec)
+                self.assertEqual(storage.get_group_job("transfer")["target_id"], -200)
+                self.assertIn("Davom etish", str([b.text for r in groups.menu_keyboard().inline_keyboard for b in r]))
+                cbs = [b.callback_data for r in groups.menu_keyboard().inline_keyboard for b in r]
+                self.assertIn("dev:grpres:transfer", cbs)
+                self.assertIn("dev:grpdrop:transfer", cbs)
+                self.assertIn("dev:grpmov", cbs)
+                self.assertIn("Saqlangan", groups.menu_text())
+                self.assertTrue(storage.remove_group_job("transfer"))
+                self.assertIsNone(storage.get_group_job("transfer"))
+            finally:
+                storage._data["group_jobs"] = old
+
+    def _run_job(self, client, job, entities):
+        import storage
+        from unittest.mock import patch
+        import handlers
+        screens = []
+
+        async def safe_edit_bot(bot, chat_id, message_id, text, reply_markup=None, parse_mode=None):
+            screens.append((text, reply_markup))
+        fake_dev = types.ModuleType("handlers.developer")
+        fake_dev._safe_edit_bot = safe_edit_bot
+        old, old_attr = sys.modules.get("handlers.developer"), getattr(handlers, "developer", None)
+        sys.modules["handlers.developer"] = fake_dev
+        handlers.developer = fake_dev
+
+        async def acc():
+            return client
+
+        async def res(c, ref):
+            return entities[ref]
+        try:
+            with patch.object(groups.ads, "_account_client", acc), \
+                 patch.object(groups.ads, "_resolve_entity", res), \
+                 patch.object(groups.ads, "_session_user_id", 1), \
+                 patch.object(storage, "_save", lambda: None):
+                asyncio.run(groups._run_job(object(), 1, 2, job))
+        finally:
+            if old is None:
+                sys.modules.pop("handlers.developer", None)
+            else:
+                sys.modules["handlers.developer"] = old
+            if old_attr is None:
+                handlers.__dict__.pop("developer", None)
+            else:
+                handlers.developer = old_attr
+        return screens
+
+    def test_transfer_moves_members_and_pause_then_resume(self):
+        import storage
+        from unittest.mock import patch
+        groups._is_channel = lambda e: False  # bittalab rejim
+        src, dst = types.SimpleNamespace(id=100), types.SimpleNamespace(id=200)
+        c = FakeClient()
+        c.by_entity = {100: [U(10), U(11), U(12, bot=True), U(13)], 200: [U(99)]}
+        c.fail = {11: _mk("PeerFloodError", {})}
+        mk = lambda st: {"kind": "transfer", "title": "A → B", "group_chat_id": 100, "target_id": 200,
+                         "target_title": "B", "state": st, "created_ts": 1.0}
+        saved = dict(storage._data["group_jobs"])
+        storage._data["group_jobs"] = {}
+        try:
+            with patch.object(storage, "_save", lambda: None):
+                job = mk(groups._new_state())
+                screens = self._run_job(c, job, {100: src, 200: dst})
+                self.assertEqual([r[1].id for r in c.calls if r[0] == "invite"], [10, 11])  # 11 da PeerFlood
+                self.assertEqual(job["state"]["ok"], 1)
+                rec = storage.get_group_job("transfer")
+                self.assertIsNotNone(rec)                       # saqlandi
+                self.assertEqual(rec["status"], "paused")
+                self.assertEqual(sorted(rec["done"]), [10, 12])  # 11 va 13 hali bajarilmagan
+                text, markup = screens[-1]
+                self.assertIn("saqlandi", text)
+                cbs = [b.callback_data for r in markup.inline_keyboard for b in r]
+                self.assertIn("dev:grpres:transfer", cbs)       # ▶️ Davom etish tugmasi
+                # --- cheklov tugadi: davom etish ---
+                c.fail = {}
+                c.calls.clear()
+                job2 = mk(groups._state_from_record(rec))
+                screens2 = self._run_job(c, job2, {100: src, 200: dst})
+                self.assertEqual([r[1].id for r in c.calls if r[0] == "invite"], [11, 13])  # faqat qolganlari
+                self.assertEqual(job2["state"]["ok"], 3)        # 1 (oldingi) + 2
+                self.assertIsNone(storage.get_group_job("transfer"))   # tugagach saqlangan yozuv o'chadi
+                self.assertIn("Tugadi", screens2[-1][0])
+        finally:
+            storage._data["group_jobs"] = saved
+
+    def test_transfer_flow_asks_two_ids_then_confirms(self):
+        from unittest.mock import patch
+        import handlers
+        screens = []
+
+        async def edit_menu(context, text, keyboard):
+            screens.append(text)
+        async def safe_edit(query, text, reply_markup=None, parse_mode=None):
+            screens.append(text)
+        fake_dev = types.ModuleType("handlers.developer")
+        fake_dev._edit_menu = edit_menu
+        fake_dev._safe_edit_query = safe_edit
+        old, old_attr = sys.modules.get("handlers.developer"), getattr(handlers, "developer", None)
+        sys.modules["handlers.developer"] = fake_dev
+        handlers.developer = fake_dev
+        chats = {"-1001": types.SimpleNamespace(id=-1001, title="Manba"),
+                 "-1002": types.SimpleNamespace(id=-1002, title="Maqsad")}
+
+        async def check_group(raw):
+            return (chats[raw], None) if raw in chats else (None, "topilmadi")
+
+        async def info(chat_id, kind):
+            return 42
+        ctx = types.SimpleNamespace(user_data={})
+
+        def say(text):
+            upd = types.SimpleNamespace(message=types.SimpleNamespace(text=text))
+            return asyncio.run(groups.handle_dev_text(ctx.user_data["dev_action"], upd, ctx, "MENU", "TEXT"))
+        try:
+            with patch.object(groups.ads, "check_group", check_group), patch.object(groups, "_group_info", info):
+                r = asyncio.run(groups.handle_dev_callback("grpmov", ["dev", "grpmov"], None, ctx, _FakeQuery(), "MENU", "TEXT"))
+                self.assertEqual((r, ctx.user_data["dev_action"]["type"]), ("TEXT", "grp_move_src"))
+                self.assertEqual(say("yo'q"), "TEXT")                       # noto'g'ri ID — qayta so'raydi
+                self.assertEqual(ctx.user_data["dev_action"]["type"], "grp_move_src")
+                self.assertEqual(say("-1001"), "TEXT")
+                self.assertEqual(ctx.user_data["dev_action"]["type"], "grp_move_dst")
+                self.assertIn("Manba", screens[-1])
+                self.assertEqual(say("-1001"), "TEXT")                      # bir xil guruh — rad
+                self.assertIn("o'zi", screens[-1])
+                self.assertEqual(say("-1002"), "MENU")
+                pend = ctx.user_data["dev_action"]
+                self.assertEqual((pend["type"], pend["kind"], pend["chat_id"], pend["target_id"]),
+                                 ("grp_confirm", "transfer", -1001, -1002))
+                self.assertIn("Manba", screens[-1])
+                self.assertIn("Maqsad", screens[-1])
+                self.assertIn("Boshlaymizmi", screens[-1])
+        finally:
+            if old is None:
+                sys.modules.pop("handlers.developer", None)
+            else:
+                sys.modules["handlers.developer"] = old
+            if old_attr is None:
+                handlers.__dict__.pop("developer", None)
+            else:
+                handlers.developer = old_attr
+
+    def test_resume_and_drop_callbacks(self):
+        import storage
+        from unittest.mock import patch
+        import handlers
+        screens = []
+
+        async def safe_edit(query, text, reply_markup=None, parse_mode=None):
+            screens.append(text)
+        fake_dev = types.ModuleType("handlers.developer")
+        fake_dev._safe_edit_query = safe_edit
+        old, old_attr = sys.modules.get("handlers.developer"), getattr(handlers, "developer", None)
+        sys.modules["handlers.developer"] = fake_dev
+        handlers.developer = fake_dev
+        launched = []
+
+        async def fake_launch(context, query, job, edit):
+            launched.append(job)
+        saved = dict(storage._data["group_jobs"])
+        ctx = types.SimpleNamespace(user_data={})
+        try:
+            with patch.object(storage, "_save", lambda: None), patch.object(groups, "_launch", fake_launch):
+                storage._data["group_jobs"] = {}
+                asyncio.run(groups.handle_dev_callback("grpres", ["dev", "grpres", "add"], None, ctx, None, "M", "T"))
+                self.assertIn("topilmadi", screens[-1])               # saqlangan ish yo'q
+                storage.save_group_job("add", {"kind": "add", "title": "G", "chat_id": -5, "done": [1, 2],
+                                               "ok": 2, "skipped": 0, "failed": 0, "total": 9})
+                asyncio.run(groups.handle_dev_callback("grpres", ["dev", "grpres", "add"], None, ctx, None, "M", "T"))
+                self.assertEqual(len(launched), 1)
+                self.assertEqual((launched[0]["kind"], launched[0]["group_chat_id"]), ("add", -5))
+                self.assertEqual(launched[0]["state"]["done"], {1, 2})
+                asyncio.run(groups.handle_dev_callback("grpdrop", ["dev", "grpdrop", "add"], None, ctx, None, "M", "T"))
+                self.assertIsNone(storage.get_group_job("add"))
+                for a in ("grpmov", "grpres", "grpdrop"):
+                    self.assertIn(a, groups.ACTIONS)
+        finally:
+            storage._data["group_jobs"] = saved
+            if old is None:
+                sys.modules.pop("handlers.developer", None)
+            else:
+                sys.modules["handlers.developer"] = old
+            if old_attr is None:
+                handlers.__dict__.pop("developer", None)
+            else:
+                handlers.developer = old_attr
 
     # ---- matnlar ----
     def test_final_text_mentions_counts(self):

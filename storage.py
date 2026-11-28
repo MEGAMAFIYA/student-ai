@@ -53,6 +53,7 @@ _DEFAULT_DATA = {
     "inline_logs": [],  # [{"ts","user_id","username","query","status","detail"}] — inline (@Bot ...) jurnali
     "movies": {},      # {"<movie_id>": {"id","title","file_id","mime_type","file_name","size","uploaded_by","created_ts"}} — kino katalogi
     "keepalive": {},   # {"<render_service_id>": {"name","url","enabled_ts"}} — 😴 Render "Uxlamaslik" ro'yxati
+    "group_jobs": {},  # {"collect"|"add"|"transfer": {...}} — 👥 Guruh: to'xtab qolgan ishlar (davom ettirish uchun)
     "group_settings": {},  # {"add_batch": int, "add_delay": int} — 👥 Guruh > ⚙️ Sozlamalar
     "ads": {},         # {"<ad_id>": {"id","chat_id","chat_title","text","interval_min","interval_sec","paused","created_by","created_ts"}} — 📢 guruh reklamalari
     "course_image_prefs": {},
@@ -337,6 +338,32 @@ def remove_reminder(reminder_id: str) -> bool:
 # saqlashda keraksiz yuk va commitlar paydo bo'lardi.
 
 MAX_ADS = 50
+
+
+def get_group_jobs() -> dict:
+    with _lock:
+        return {k: dict(v) for k, v in _data["group_jobs"].items()}
+
+
+def get_group_job(kind: str) -> dict | None:
+    with _lock:
+        rec = _data["group_jobs"].get(kind)
+        return dict(rec) if rec else None
+
+
+def save_group_job(kind: str, record: dict) -> None:
+    """To'xtab qolishi mumkin bo'lgan ish holatini saqlaydi (har turdan bittadan)."""
+    with _lock:
+        _data["group_jobs"][kind] = dict(record)
+        _save()
+
+
+def remove_group_job(kind: str) -> bool:
+    with _lock:
+        removed = _data["group_jobs"].pop(kind, None) is not None
+        if removed:
+            _save()
+        return removed
 
 
 def get_group_setting(key: str, default=None):

@@ -1,8 +1,13 @@
-"""👥 /developer > Guruh — AKKAUNT (TG_SESSION) nomidan ikki amal:
+"""👥 /developer > Guruh — AKKAUNT (TG_SESSION) nomidan uch amal:
 
 📥 Kontakt yig'ish — ID berilgan guruhning barcha a'zolarini akkaunt kontaktlariga
                       (o'z ismi bilan) saqlaydi.
 📤 Kontakt qo'shish — akkauntdagi barcha kontaktlarni ID berilgan guruhga qo'shadi.
+🔁 Kontakt ko'chirish — 1-guruh a'zolarini 2-guruhga qo'shadi (ikkala ID so'raladi).
+
+Uchala amal ham TO'XTAB QOLSA (cheklov, xato, qayta ishga tushish, "To'xtatish") holati
+storage'da saqlanadi (qaysi odamlar bajarilgani); "▶️ Davom etish" qolgan joydan davom ettiradi.
+Qo'shish/ko'chirishda guruhda paydo bo'ladigan "X ... ni qo'shdi" xizmat xabarlari o'chiriladi.
 
 Akkaunt va guruhni topish handlers/ads.py dagi funksiyalar orqali (bitta umumiy
 Telethon client). Amal fon vazifasida bajariladi: jarayon xabari yangilanib turadi,
@@ -22,7 +27,10 @@ from handlers import ads
 
 logger = logging.getLogger(__name__)
 
-ACTIONS = {"grp", "grpcol", "grpadd", "grpok", "grpstop", "grpset", "grpbatch", "grpdelay"}
+ACTIONS = {"grp", "grpcol", "grpadd", "grpmov", "grpok", "grpstop", "grpset", "grpbatch", "grpdelay",
+           "grpres", "grpdrop"}
+KINDS = ("collect", "add", "transfer")
+CHECKPOINT_EVERY_SEC = 3.0     # holatni saqlash oralig'i (davom ettirish uchun)
 
 COLLECT_DELAY_SEC = 1.0        # kontakt saqlashlar orasidagi pauza
 ADD_DELAY_SEC = 4.0            # qo'shish so'rovlari orasidagi pauza (Telegram tez qo'shishni jazolaydi)
@@ -86,17 +94,36 @@ def _back(cb: str = "dev:grp") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Orqaga", callback_data=cb)]])
 
 
+def _saved_jobs() -> list:
+    jobs = storage.get_group_jobs()
+    return [(k, jobs[k]) for k in KINDS if k in jobs]
+
+
+def _processed(rec: dict) -> int:
+    return int(rec.get("ok", 0)) + int(rec.get("skipped", 0)) + int(rec.get("failed", 0))
+
+
 def menu_text() -> str:
     lines = [
         "👥 <b>Guruh</b>\n",
         "📥 <b>Kontakt yig'ish</b> — guruh a'zolarini akkaunt kontaktlariga o'z ismi bilan saqlaydi.",
-        "📤 <b>Kontakt qo'shish</b> — akkauntdagi barcha kontaktlarni guruhga qo'shadi.\n",
-        "<i>Ikkalasi ham akkaunt (TG_SESSION) nomidan bajariladi; akkaunt guruhda a'zo bo'lishi kerak.</i>",
+        "📤 <b>Kontakt qo'shish</b> — akkauntdagi barcha kontaktlarni guruhga qo'shadi.",
+        "🔁 <b>Kontakt ko'chirish</b> — bir guruh a'zolarini boshqa guruhga qo'shadi.\n",
+        "<i>Hammasi akkaunt (TG_SESSION) nomidan bajariladi; akkaunt guruhlarda a'zo bo'lishi kerak. "
+        "To'xtab qolgan ish saqlanadi va «▶️ Davom etish» bilan qolgan joydan davom etadi.</i>",
     ]
     if not telegram_mtproto.is_configured():
         lines.append("\n⚠️ <i>Akkaunt ulanmagan: TG_API_ID, TG_API_HASH va TG_SESSION sozlang.</i>")
     if _job is not None:
         lines.append(f"\n⏳ Hozir ish ketmoqda: {_kind_label(_job['kind'])} — <b>{_esc(_job['title'])}</b>")
+    else:
+        for kind, rec in _saved_jobs():
+            total = f"/{rec['total']}" if rec.get("total") else ""
+            why = f" — {_esc(rec['error'])}" if rec.get("error") else ""
+            lines.append(
+                f"\n💾 Saqlangan: {_kind_label(kind)} — <b>{_esc(rec.get('title', ''))}</b> "
+                f"({_processed(rec)}{total}){why}"
+            )
     return "\n".join(lines)
 
 
@@ -109,7 +136,14 @@ def menu_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton("📥 Kontakt yig'ish", callback_data="dev:grpcol"),
             InlineKeyboardButton("📤 Kontakt qo'shish", callback_data="dev:grpadd"),
         ])
-    if _job is None:
+        rows.append([InlineKeyboardButton("🔁 Kontakt ko'chirish", callback_data="dev:grpmov")])
+        for kind, rec in _saved_jobs():
+            total = f"/{rec['total']}" if rec.get("total") else ""
+            label = f"▶️ Davom etish: {_kind_short(kind)} ({_processed(rec)}{total})"
+            rows.append([
+                InlineKeyboardButton(label[:50], callback_data=f"dev:grpres:{kind}"),
+                InlineKeyboardButton("🗑", callback_data=f"dev:grpdrop:{kind}"),
+            ])
         rows.append([InlineKeyboardButton("⚙️ Sozlamalar", callback_data="dev:grpset")])
     rows.append([InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:menu")])
     return InlineKeyboardMarkup(rows)
@@ -143,7 +177,27 @@ def settings_keyboard() -> InlineKeyboardMarkup:
 
 
 def _kind_label(kind: str) -> str:
-    return "📥 Kontakt yig'ish" if kind == "collect" else "📤 Kontakt qo'shish"
+    return {"collect": "📥 Kontakt yig'ish", "transfer": "🔁 Kontakt ko'chirish"}.get(kind, "📤 Kontakt qo'shish")
+
+
+def _kind_short(kind: str) -> str:
+    return {"collect": "yig'ish", "transfer": "ko'chirish"}.get(kind, "qo'shish")
+
+
+def _move_src_prompt() -> str:
+    return (
+        f"{_kind_label('transfer')} — 1/2\n\n"
+        "Kontaktlari <b>olinadigan</b> guruhning ID sini yuboring.\n"
+        "Masalan: <code>-1001234567890</code> yoki <code>@guruh_username</code>"
+    )
+
+
+def _move_dst_prompt(src_title: str) -> str:
+    return (
+        f"{_kind_label('transfer')} — 2/2\n\n"
+        f"✅ Olinadigan guruh: <b>{_esc(src_title)}</b>\n\n"
+        "Endi ular <b>qo'shiladigan</b> guruhning ID sini yuboring."
+    )
 
 
 def _prompt_text(kind: str) -> str:
@@ -164,6 +218,11 @@ def _confirm_text(pending: dict) -> str:
         size = f" (taxminan {count} a'zo)" if count else ""
         body = (f"<b>{title}</b>{size} guruhining a'zolari akkaunt kontaktlariga o'z ismi bilan saqlanadi. "
                 "Bot, o'chirilgan akkaunt va allaqachon kontaktda bor odamlar o'tkazib yuboriladi.")
+    elif pending["kind"] == "transfer":
+        size = f" (taxminan {count} a'zo)" if count else ""
+        body = (f"<b>{title}</b>{size} guruhining a'zolari <b>{_esc(pending.get('target_title') or '')}</b> "
+                f"guruhiga qo'shiladi (bot, o'chirilgan akkaunt va allaqachon a'zolar o'tkazib yuboriladi). "
+                f"Supergruppada {_batch_size()} tadan, paketlar orasida ~{_add_delay():g} soniya pauza.")
     else:
         size = f" ({count} ta kontakt)" if count else ""
         if _batch_size() > 1:
@@ -172,7 +231,13 @@ def _confirm_text(pending: dict) -> str:
         else:
             note = f"Telegram cheklovi uchun har biri orasida ~{_add_delay():g} soniya pauza bo'ladi."
         body = f"Akkauntdagi barcha kontaktlar{size} <b>{title}</b> guruhiga qo'shiladi. {note}"
-    return f"{_kind_label(pending['kind'])}\n\n{body}\n\nBoshlaymizmi?"
+    extra = ""
+    if pending["kind"] in ("add", "transfer"):
+        extra += "\n🧹 Guruhda chiqadigan «... qo'shdi» xabarlari o'chiriladi (akkauntda o'chirish huquqi bo'lsa)."
+    extra += "\n💾 Jarayon to'xtasa saqlanadi — «▶️ Davom etish» bilan qolgan joydan davom etadi."
+    if storage.get_group_job(pending["kind"]):
+        extra += "\n⚠️ Saqlangan to'xtagan ish bor — yangisi uni almashtiradi."
+    return f"{_kind_label(pending['kind'])}\n\n{body}\n{extra}\n\nBoshlaymizmi?"
 
 
 def _confirm_keyboard() -> InlineKeyboardMarkup:
@@ -180,6 +245,14 @@ def _confirm_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("✅ Boshlash", callback_data="dev:grpok")],
         [InlineKeyboardButton("⬅️ Bekor qilish", callback_data="dev:grp")],
     ])
+
+
+def _final_keyboard(kind: str, resumable: bool) -> InlineKeyboardMarkup:
+    rows = []
+    if resumable:
+        rows.append([InlineKeyboardButton("▶️ Davom etish", callback_data=f"dev:grpres:{kind}")])
+    rows.append([InlineKeyboardButton("⬅️ Orqaga", callback_data="dev:grp")])
+    return InlineKeyboardMarkup(rows)
 
 
 def _stop_keyboard() -> InlineKeyboardMarkup:
@@ -216,13 +289,21 @@ def _final_text(kind: str, title: str, state: dict) -> str:
         lines.append(f"<i>Sabablar — {_esc(detail)}</i>")
     if state.get("members_before") is not None and state.get("members_after") is not None:
         lines.append(f"\n👥 Guruh a'zolari: {state['members_before']} → {state['members_after']}")
-    if state.get("unconfirmed") and kind == "add":
+    if kind in ("add", "transfer"):
+        if state.get("svc_deleted"):
+            lines.append(f"🧹 «Qo'shdi» xabarlari o'chirildi: {state['svc_deleted']}")
+        if state.get("svc_failed"):
+            lines.append(f"⚠️ {state['svc_failed']} ta «qo'shdi» xabarini o'chirib bo'lmadi "
+                         "(akkauntga guruhda xabarlarni o'chirish huquqi bering).")
+    if state.get("unconfirmed") and kind in ("add", "transfer"):
         lines.append("⚠️ <i>Telegram \"qo'shildi\" deb javob berdi, lekin qo'shilganini tasdiqlamadi — "
                      "yuqoridagi a'zolar sonini tekshiring.</i>")
     if state.get("error"):
         lines.append(f"\n❌ {_esc(state['error'])}")
     if state.get("spam_report"):
         lines.append(f"\n🛡 <b>Akkaunt holati (@SpamBot):</b>\n<i>{_esc(state['spam_report'])}</i>")
+    if state.get("error") or state["stop"]:
+        lines.append("\n💾 <i>Jarayon saqlandi. Cheklov tugagach «▶️ Davom etish» ni bosing — qolgan joydan davom etadi.</i>")
     return "\n".join(lines)
 
 
@@ -288,7 +369,29 @@ def _is_skippable(user, my_id) -> bool:
 def _new_state(total=None) -> dict:
     return {"ok": 0, "skipped": 0, "failed": 0, "reasons": Counter(), "total": total,
             "stop": False, "error": None, "waiting": 0,
-            "members_before": None, "members_after": None, "spam_report": None, "unconfirmed": 0}
+            "members_before": None, "members_after": None, "spam_report": None, "unconfirmed": 0,
+            "done": set(),            # bajarilgan foydalanuvchi ID lari (davom ettirishda o'tkaziladi)
+            "svc_deleted": 0, "svc_failed": 0, "svc_error": None}
+
+
+def _record(job: dict, status: str) -> dict:
+    """Ish holatini saqlash uchun (JSON) yozuv."""
+    st = job["state"]
+    return {
+        "kind": job["kind"], "title": job["title"], "chat_id": job["group_chat_id"],
+        "target_id": job.get("target_id"), "target_title": job.get("target_title"),
+        "done": sorted(st["done"]), "ok": st["ok"], "skipped": st["skipped"], "failed": st["failed"],
+        "reasons": dict(st["reasons"]), "total": st.get("total"), "error": st.get("error"),
+        "status": status, "created_ts": job.get("created_ts"), "updated_ts": time.time(),
+    }
+
+
+def _state_from_record(rec: dict) -> dict:
+    st = _new_state(rec.get("total"))
+    st.update(ok=int(rec.get("ok", 0)), skipped=int(rec.get("skipped", 0)), failed=int(rec.get("failed", 0)))
+    st["reasons"] = Counter(rec.get("reasons") or {})
+    st["done"] = {int(i) for i in (rec.get("done") or [])}
+    return st
 
 
 def _fatal_message(exc: Exception) -> str:
@@ -319,26 +422,33 @@ async def _call(client, request, state, on_progress):
 
 
 async def collect_contacts(client, entity, state, on_progress, my_id=None):
-    """Guruh a'zolarini kontaktlarga saqlaydi."""
+    """Guruh a'zolarini kontaktlarga saqlaydi. state["done"] dagilar (oldingi urinishda
+    bajarilgan) jimgina o'tkaziladi — shu tufayli ish qolgan joydan davom etadi."""
     fails = 0
+    done = state["done"]
     async for user in client.iter_participants(entity):
         if state["stop"]:
             break
+        if user.id in done:
+            continue
         if _is_skippable(user, my_id) or getattr(user, "contact", False):
             state["skipped"] += 1
+            done.add(user.id)
             await on_progress()
             continue
         try:
             await _call(client, _add_contact_request(user), state, on_progress)
             state["ok"] += 1
+            done.add(user.id)
             fails = 0
         except Exception as exc:
             name = type(exc).__name__
             if name in _FATAL_ERRORS:
                 state["error"] = _fatal_message(exc)
-                break
+                break  # bu odam bajarilmagan — davom ettirilganda qayta uriniladi
             state["failed"] += 1
             state["reasons"][name] += 1
+            done.add(user.id)
             fails += 1
             logger.info("👥 Kontakt saqlanmadi: user=%s %s: %s", getattr(user, "id", "?"), name, exc)
             if fails >= MAX_CONSECUTIVE_FAILS:
@@ -348,12 +458,19 @@ async def collect_contacts(client, entity, state, on_progress, my_id=None):
         await asyncio.sleep(COLLECT_DELAY_SEC)
 
 
+def _update_items(result) -> list:
+    """Telegram javobidagi update'lar ro'yxati (InvitedUsers.updates.updates yoki Updates.updates)."""
+    inner = getattr(result, "updates", None)
+    if isinstance(inner, (list, tuple)):
+        return list(inner)
+    return list(getattr(inner, "updates", None) or [])
+
+
 def _added_ids(result):
     """Telegram javobidan HAQIQATAN qo'shilgan foydalanuvchilar ID lari (service xabarlardan).
     Aniqlab bo'lmasa — bo'sh to'plam (bunda a'zolar soni oxirida tekshiriladi)."""
     ids = set()
-    updates = getattr(result, "updates", result)
-    for upd in (getattr(updates, "updates", None) or []):
+    for upd in _update_items(result):
         action = getattr(getattr(upd, "message", None), "action", None)
         for uid in (getattr(action, "users", None) or []):
             try:
@@ -361,6 +478,53 @@ def _added_ids(result):
             except (TypeError, ValueError):
                 pass
     return ids
+
+
+def _service_message_ids(result) -> list:
+    """Qo'shish natijasida guruhda paydo bo'lgan «X ... ni qo'shdi» xizmat xabarlari ID lari."""
+    ids = []
+    for upd in _update_items(result):
+        msg = getattr(upd, "message", None)
+        if getattr(getattr(msg, "action", None), "users", None) and getattr(msg, "id", None) is not None:
+            ids.append(int(msg.id))
+    return ids
+
+
+async def _delete_ids(client, entity, ids, state) -> None:
+    """Xizmat xabarlarini o'chiradi. Huquq yo'q bo'lsa — bir marta xato qayd etiladi va qayta urinilmaydi."""
+    ids = sorted(set(ids))
+    if not ids:
+        return
+    if state.get("svc_error"):
+        state["svc_failed"] += len(ids)
+        return
+    try:
+        await client.delete_messages(entity, ids)
+        state["svc_deleted"] += len(ids)
+    except Exception as exc:
+        state["svc_error"] = type(exc).__name__
+        state["svc_failed"] += len(ids)
+        logger.info("👥 «Qo'shdi» xabarlarini o'chirib bo'lmadi: %s: %s", type(exc).__name__, exc)
+
+
+async def _cleanup_service(client, entity, result, state) -> None:
+    await _delete_ids(client, entity, _service_message_ids(result), state)
+
+
+async def _sweep_service_messages(client, entity, state, my_id) -> None:
+    """Oxirgi tekshiruv: akkaunt qo'shgan odamlar haqidagi qolib ketgan xizmat xabarlarini topib o'chiradi."""
+    if my_id is None or state.get("svc_error") or state["ok"] <= 0:
+        return
+    ids = []
+    try:
+        async for msg in client.iter_messages(entity, limit=min(500, 50 + 4 * state["ok"])):
+            action = getattr(msg, "action", None)
+            if type(action).__name__ == "MessageActionChatAddUser" and getattr(msg, "sender_id", None) == my_id:
+                ids.append(msg.id)
+    except Exception as exc:
+        logger.info("👥 Xizmat xabarlarini qidirib bo'lmadi: %s: %s", type(exc).__name__, exc)
+        return
+    await _delete_ids(client, entity, ids, state)
 
 
 async def _member_count(client, entity):
@@ -399,20 +563,23 @@ def _needs_spam_check(state: dict) -> bool:
 async def _add_one(client, entity, user, state, on_progress, fails: int):
     """Bitta odamni qo'shadi. (fails, to'xtatish_kerakmi) qaytaradi."""
     try:
-        await _call(client, _invite_request(entity, user), state, on_progress)
+        result = await _call(client, _invite_request(entity, user), state, on_progress)
         state["ok"] += 1
+        state["done"].add(user.id)
+        await _cleanup_service(client, entity, result, state)
         return 0, False
     except Exception as exc:
         name = type(exc).__name__
         if name in _FATAL_ERRORS:
             state["error"] = _fatal_message(exc)
-            return fails, True
+            return fails, True  # bu odam bajarilmagan — davom ettirilganda qayta uriniladi
         reason = _ADD_REASONS.get(name)
         if reason == "allaqachon a'zo":
             state["skipped"] += 1
         else:
             state["failed"] += 1
             state["reasons"][reason or name] += 1
+        state["done"].add(user.id)
         if reason:
             return 0, False  # bu foydalanuvchining o'z sababi — umumiy muammo emas
         fails += 1
@@ -438,7 +605,7 @@ async def _add_one_by_one(client, entity, users, state, on_progress) -> bool:
 
 
 async def add_contacts_to_group(client, entity, contacts, state, on_progress, my_id=None):
-    """Akkaunt kontaktlarini guruhga qo'shadi (guruhdagilar o'tkazib yuboriladi).
+    """Odamlarni guruhga qo'shadi (guruhdagilar va oldin bajarilganlar o'tkazib yuboriladi).
 
     Supergruppa/kanalda sozlamadagi (standart 2) tadan paket qilib BIR so'rovda qo'shadi;
     oddiy guruhda Telegram faqat bittalab qo'shishga ruxsat beradi.
@@ -450,10 +617,14 @@ async def add_contacts_to_group(client, entity, contacts, state, on_progress, my
     except Exception as exc:  # a'zolar ro'yxati yopiq bo'lishi mumkin — shunchaki o'tkazib yuboramiz
         logger.info("👥 Guruh a'zolarini o'qib bo'lmadi: %s: %s", type(exc).__name__, exc)
 
+    done = state["done"]
     todo = []
     for user in contacts:
+        if user.id in done:
+            continue  # oldingi urinishda bajarilgan
         if _is_skippable(user, my_id) or user.id in existing:
             state["skipped"] += 1
+            done.add(user.id)
         else:
             todo.append(user)
     await on_progress()
@@ -473,7 +644,7 @@ async def add_contacts_to_group(client, entity, contacts, state, on_progress, my
             name = type(exc).__name__
             if name in _FATAL_ERRORS:
                 state["error"] = _fatal_message(exc)
-                break
+                break  # paket bajarilmagan — davom ettirilganda qayta uriniladi
             # Paket butunlay rad etildi (masalan, bitta odam tufayli) — shu paketni bittalab qo'shamiz
             logger.info("👥 Paket rad etildi (%s), bittalab urinamiz: %s", name, exc)
             if await _add_one_by_one(client, entity, batch, state, on_progress):
@@ -494,18 +665,40 @@ async def add_contacts_to_group(client, entity, contacts, state, on_progress, my
         else:
             # Javobdan bilib bo'lmadi — vaqtincha "qo'shildi" deymiz, oxirida a'zolar sonini solishtiramiz
             state["ok"] += len(batch) - len(missing)
+        done.update(u.id for u in batch)
+        await _cleanup_service(client, entity, result, state)
         await on_progress()
         if i + size < len(todo):
             await asyncio.sleep(_add_delay())
 
 
-async def _run_job(bot, chat_id, message_id, job: dict, group_chat_id: int):
-    """Fon vazifasi: ishni bajaradi, jarayonni xabarda ko'rsatadi, oxirida hisobot beradi."""
+async def _add_phase(client, entity, people, state, on_progress, my_id) -> None:
+    """Qo'shish ishining umumiy qismi (📤 va 🔁 uchun): hisoblash, qo'shish, tekshiruvlar."""
+    state["members_before"] = await _member_count(client, entity)
+    await add_contacts_to_group(client, entity, people, state, on_progress, my_id)
+    state["members_after"] = await _member_count(client, entity)
+    before, after = state["members_before"], state["members_after"]
+    if state["ok"] > 0 and before is not None and after is not None and after <= before:
+        state["unconfirmed"] = state["ok"]
+    await _sweep_service_messages(client, entity, state, my_id)
+    if _needs_spam_check(state):
+        state["spam_report"] = await _spambot_report(client)
+
+
+async def _run_job(bot, chat_id, message_id, job: dict):
+    """Fon vazifasi: ishni bajaradi, holatini saqlab boradi, oxirida hisobot beradi."""
     global _job
     from handlers import developer as dev
     kind, title = job["kind"], job["title"]
     state = job["state"]
     last_edit = 0.0
+    last_ck = 0.0
+
+    def checkpoint(status="running"):
+        try:
+            storage.save_group_job(kind, _record(job, status))
+        except Exception as exc:
+            logger.warning("👥 Ish holatini saqlab bo'lmadi: %s: %s", type(exc).__name__, exc)
 
     async def edit(text, markup):
         try:
@@ -514,42 +707,53 @@ async def _run_job(bot, chat_id, message_id, job: dict, group_chat_id: int):
             logger.debug("👥 Jarayon xabarini yangilab bo'lmadi: %s", exc)
 
     async def on_progress(force=False):
-        nonlocal last_edit
+        nonlocal last_edit, last_ck
         now = time.monotonic()
+        if force or now - last_ck >= CHECKPOINT_EVERY_SEC:
+            last_ck = now
+            checkpoint()
         if force or now - last_edit >= PROGRESS_EVERY_SEC:
             last_edit = now
             await edit(_progress_text(kind, title, state), _stop_keyboard())
 
+    checkpoint()  # bot shu zahoti qayta ishga tushsa ham, ish "Davom etish" da ko'rinadi
     try:
         client = await ads._account_client()
-        entity = await ads._resolve_entity(client, group_chat_id)
         my_id = ads._session_user_id
         if kind == "collect":
+            entity = await ads._resolve_entity(client, job["group_chat_id"])
             await collect_contacts(client, entity, state, on_progress, my_id)
+        elif kind == "transfer":
+            src = await ads._resolve_entity(client, job["group_chat_id"])
+            dst = await ads._resolve_entity(client, job["target_id"])
+            people = []
+            async for user in client.iter_participants(src):
+                people.append(user)
+            state["total"] = len(people)
+            await _add_phase(client, dst, people, state, on_progress, my_id)
         else:
+            entity = await ads._resolve_entity(client, job["group_chat_id"])
             contacts = await _get_contacts(client)
             state["total"] = len(contacts)
-            state["members_before"] = await _member_count(client, entity)
-            await add_contacts_to_group(client, entity, contacts, state, on_progress, my_id)
-            state["members_after"] = await _member_count(client, entity)
-            before, after = state["members_before"], state["members_after"]
-            if state["ok"] > 0 and before is not None and after is not None and after <= before:
-                state["unconfirmed"] = state["ok"]
-            if _needs_spam_check(state):
-                state["spam_report"] = await _spambot_report(client)
+            await _add_phase(client, entity, contacts, state, on_progress, my_id)
     except Exception as exc:
         logger.warning("👥 Guruh amali xato: %s: %s", type(exc).__name__, exc, exc_info=True)
         state["error"] = _fatal_message(exc)
     finally:
         _job = None
-    await edit(_final_text(kind, title, state), _back("dev:grp"))
+    finished = not state.get("error") and not state["stop"]
+    if finished:
+        storage.remove_group_job(kind)
+    else:
+        checkpoint("paused")
+    await edit(_final_text(kind, title, state), _final_keyboard(kind, not finished))
 
 
 async def _group_info(chat_id: int, kind: str):
     """Tasdiqlash ekrani uchun son: guruh a'zolari yoki akkaunt kontaktlari soni (bilinmasa None)."""
     try:
         client = await ads._account_client()
-        if kind == "collect":
+        if kind in ("collect", "transfer"):
             entity = await ads._resolve_entity(client, chat_id)
             participants = await client.get_participants(entity, limit=0)
             return getattr(participants, "total", None)
@@ -562,6 +766,16 @@ async def _group_info(chat_id: int, kind: str):
 # ============================================================
 # /developer ga ulanish
 # ============================================================
+
+async def _launch(context, query, job: dict, edit) -> None:
+    """Ishni fon vazifasi sifatida ishga tushiradi (yangi ish ham, davom ettirish ham)."""
+    global _job
+    _job = job
+    chat_id, message_id = query.message.chat_id, query.message.message_id
+    await edit(query, _progress_text(job["kind"], job["title"], job["state"]),
+               reply_markup=_stop_keyboard(), parse_mode="HTML")
+    job["task"] = asyncio.create_task(_run_job(context.bot, chat_id, message_id, job))
+
 
 async def handle_dev_callback(action, parts, update, context, query, DEV_MENU, DEV_WAIT_TEXT):
     global _job
@@ -598,6 +812,35 @@ async def handle_dev_callback(action, parts, update, context, query, DEV_MENU, D
         await edit(query, _prompt_text(kind), reply_markup=_back(), parse_mode="HTML")
         return DEV_WAIT_TEXT
 
+    if action == "grpmov":
+        if _job is not None:
+            await edit(query, menu_text(), reply_markup=menu_keyboard(), parse_mode="HTML")
+            return DEV_MENU
+        context.user_data["dev_action"] = {"type": "grp_move_src"}
+        await edit(query, _move_src_prompt(), reply_markup=_back(), parse_mode="HTML")
+        return DEV_WAIT_TEXT
+
+    if action in ("grpres", "grpdrop"):
+        context.user_data.pop("dev_action", None)
+        kind = parts[2] if len(parts) > 2 else ""
+        rec = storage.get_group_job(kind) if kind in KINDS else None
+        if _job is not None or not rec:
+            note = "" if rec else "⚠️ Saqlangan ish topilmadi.\n\n"
+            await edit(query, note + menu_text(), reply_markup=menu_keyboard(), parse_mode="HTML")
+            return DEV_MENU
+        if action == "grpdrop":
+            storage.remove_group_job(kind)
+            await edit(query, "🗑 Saqlangan ish o'chirildi.\n\n" + menu_text(),
+                       reply_markup=menu_keyboard(), parse_mode="HTML")
+            return DEV_MENU
+        job = {
+            "kind": kind, "title": rec.get("title", ""), "group_chat_id": int(rec["chat_id"]),
+            "target_id": rec.get("target_id"), "target_title": rec.get("target_title"),
+            "state": _state_from_record(rec), "created_ts": rec.get("created_ts") or time.time(),
+        }
+        await _launch(context, query, job, edit)
+        return DEV_MENU
+
     if action == "grpstop":
         if _job is not None:
             _job["state"]["stop"] = True
@@ -616,15 +859,16 @@ async def handle_dev_callback(action, parts, update, context, query, DEV_MENU, D
         if _job is not None:
             await edit(query, menu_text(), reply_markup=menu_keyboard(), parse_mode="HTML")
             return DEV_MENU
-        job = {"kind": pending["kind"], "title": pending["title"], "state": _new_state(pending.get("count")
-               if pending["kind"] == "add" else None)}
-        _job = job
-        chat_id, message_id = query.message.chat_id, query.message.message_id
-        await edit(query, _progress_text(job["kind"], job["title"], job["state"]),
-                   reply_markup=_stop_keyboard(), parse_mode="HTML")
-        job["task"] = asyncio.create_task(
-            _run_job(context.bot, chat_id, message_id, job, int(pending["chat_id"]))
-        )
+        kind = pending["kind"]
+        title = (f"{pending['title']} → {pending.get('target_title') or ''}" if kind == "transfer"
+                 else pending["title"])
+        job = {
+            "kind": kind, "title": title, "group_chat_id": int(pending["chat_id"]),
+            "target_id": pending.get("target_id"), "target_title": pending.get("target_title"),
+            "state": _new_state(pending.get("count") if kind == "add" else None),
+            "created_ts": time.time(),
+        }
+        await _launch(context, query, job, edit)
         return DEV_MENU
 
     return DEV_MENU
@@ -648,6 +892,38 @@ async def handle_dev_text(action, update, context, DEV_MENU, DEV_WAIT_TEXT):
         count = await _group_info(chat.id, kind)
         pending = {"type": "grp_confirm", "kind": kind, "chat_id": chat.id,
                    "title": chat.title, "count": count}
+        context.user_data["dev_action"] = pending
+        await dev._edit_menu(context, _confirm_text(pending), _confirm_keyboard())
+        return DEV_MENU
+
+    if kind_type == "grp_move_src":
+        chat, error = await ads.check_group(raw)
+        if error:
+            await dev._edit_menu(
+                context, f"⚠️ <code>{_esc(raw[:40])}</code>: {error}\n\n" + _move_src_prompt(), _back()
+            )
+            context.user_data["dev_action"] = action
+            return DEV_WAIT_TEXT
+        context.user_data["dev_action"] = {"type": "grp_move_dst", "src_id": chat.id, "src_title": chat.title}
+        await dev._edit_menu(context, _move_dst_prompt(chat.title), _back())
+        return DEV_WAIT_TEXT
+
+    if kind_type == "grp_move_dst":
+        chat, error = await ads.check_group(raw)
+        if not error and chat.id == action.get("src_id"):
+            error = "Bu olinadigan guruhning o'zi. Boshqa guruh ID sini yuboring."
+        if error:
+            await dev._edit_menu(
+                context,
+                f"⚠️ <code>{_esc(raw[:40])}</code>: {error}\n\n" + _move_dst_prompt(action.get("src_title", "")),
+                _back(),
+            )
+            context.user_data["dev_action"] = action
+            return DEV_WAIT_TEXT
+        count = await _group_info(action["src_id"], "transfer")
+        pending = {"type": "grp_confirm", "kind": "transfer", "chat_id": action["src_id"],
+                   "title": action.get("src_title", ""), "target_id": chat.id,
+                   "target_title": chat.title, "count": count}
         context.user_data["dev_action"] = pending
         await dev._edit_menu(context, _confirm_text(pending), _confirm_keyboard())
         return DEV_MENU
